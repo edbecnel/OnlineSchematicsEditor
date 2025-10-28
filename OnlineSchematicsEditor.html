@@ -321,31 +321,15 @@
     // wires
     gWires.replaceChildren();
     for(const w of wires){
-      // Wide transparent hit-target to make clicking easier
-      const hit = document.createElementNS('http://www.w3.org/2000/svg','polyline');
-      hit.setAttribute('fill','none');
-      hit.setAttribute('stroke','transparent');
-      hit.setAttribute('stroke-width','16');
-      hit.setAttribute('pointer-events','stroke');
-      hit.setAttribute('points', w.points.map(p=>`${p.x},${p.y}`).join(' '));
-      hit.setAttribute('data-id', w.id);
-      hit.addEventListener('pointerdown', (e)=>{
-        if(mode==='delete'){ removeWireAtPoint(w, svgPoint(e)); }
-        else if(mode==='select'){ selecting('wire', w.id); }
-        e.stopPropagation();
-      });
-      gWires.appendChild(hit);
-
-      // Visible wire stroke
       const pl = document.createElementNS('http://www.w3.org/2000/svg','polyline');
-      pl.setAttribute('fill','none');
-      pl.setAttribute('stroke','var(--wire)');
-      pl.setAttribute('stroke-width','3');
-      pl.setAttribute('stroke-linecap','round');
-      pl.setAttribute('stroke-linejoin','round');
-      pl.setAttribute('pointer-events','none'); // hit-handling is done by the transparent overlay
+      pl.setAttribute('fill','none'); pl.setAttribute('stroke','var(--wire)'); pl.setAttribute('stroke-width','3'); pl.setAttribute('stroke-linecap','round'); pl.setAttribute('stroke-linejoin','round');
       pl.setAttribute('points', w.points.map(p=>`${p.x},${p.y}`).join(' '));
       pl.setAttribute('data-id', w.id);
+      // delete on click if in delete mode
+      pl.addEventListener('pointerdown', (e)=>{
+        if(mode==='delete'){ removeWireAtPoint(w, svgPoint(e)); } else if(mode==='select'){ selecting('wire', w.id); }
+        e.stopPropagation();
+      });
       gWires.appendChild(pl);
     }
 
@@ -367,29 +351,12 @@
   function removeComponent(id){ components = components.filter(c=>c.id!==id); if(selection.id===id) selection={kind:null,id:null}; redraw(); }
 
   function removeWireAtPoint(w, p){
-    // Delete the *segment* you click on. Split the polyline into two new wires
-    // (left and right of the removed segment). If either side has <2 points, it
-    // is discarded.
-    const threshold = 12; // easier to hit
+    // remove the closest segment to p; if wire breaks into smaller ones, split; MVP: just remove whole wire if close enough
+    const threshold = 8;
     const idx = nearestSegmentIndex(w.points, p);
-    if(idx < 0 || idx >= w.points.length - 1) return;
+    if(idx<0) return;
     const d = pointToSegmentDistance(p, w.points[idx], w.points[idx+1]);
-    if(d > threshold) return;
-
-    const left = w.points.slice(0, idx + 1);
-    const right = w.points.slice(idx + 1);
-
-    // Remove original wire
-    wires = wires.filter(x => x.id !== w.id);
-
-    // Add split pieces back as new wires (if they contain at least one segment)
-    if(left.length >= 2){ wires.push({ id: uid('wire'), points: left }); }
-    if(right.length >= 2){ wires.push({ id: uid('wire'), points: right }); }
-
-    // Clear selection and redraw
-    if(selection.id === w.id){ selection = {kind:null, id:null}; }
-    redraw();
-  }; redraw(); }
+    if(d<=threshold){ wires = wires.filter(x=>x.id!==w.id); if(selection.id===w.id) selection={kind:null,id:null}; redraw(); }
   }
 
   function nearestSegmentIndex(pts, p){
@@ -505,20 +472,7 @@
 
   document.getElementById('clearBtn').addEventListener('click', clearAll);
 
-  function clearAll(){
-    if(!confirm('Clear the canvas? This cannot be undone.')) return;
-    // Reset arrays in-place and state
-    components = [];
-    wires = [];
-    selection = {kind:null, id:null};
-    // Cancel any in-progress wire drawing and clear overlay
-    drawing.active = false;
-    drawing.points = [];
-    gDrawing.replaceChildren();
-    // Reset ID counters
-    counters = { resistor:1, capacitor:1, inductor:1, diode:1, npn:1, pnp:1, wire:1 };
-    redraw();
-  }; redraw(); } }
+  function clearAll(){ if(confirm('Clear the canvas? This cannot be undone.')){ components=[]; wires=[]; selection={kind:null,id:null}; redraw(); } }
 
   // ====== Inspector ======
   function renderInspector(){
