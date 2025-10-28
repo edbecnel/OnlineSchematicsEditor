@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Online Schematics Editor — MVP</title>
+  <style>
+    :root{
+      --bg:#0f1115; --panel:#161a22; --ink:#e6e6e6; --muted:#a5adbb; --accent:#61dafb; --danger:#ff6b6b; --ok:#4ade80;
+      --grid:#2a2f3a; --grid-bold:#3a4150; --wire:#c7f284; --select:#f59e0b; --pin:#93c5fd; --component:#e2e8f0; --ghost:#64748b;
+    }
+    html, body {height:100%;}
+    body{margin:0; font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color:var(--ink); background:var(--bg);}
+    .app{display:grid; grid-template-columns: 320px 1fr 320px; grid-template-rows:auto 1fr; height:100%;}
+    header{grid-column: 1/4; display:flex; align-items:center; gap:.5rem; padding:.5rem .75rem; background:var(--panel); border-bottom:1px solid #22262f; position:sticky; top:0; z-index:3}
+    header .group{display:flex; gap:.25rem; align-items:center; background:#0e1219; padding:.25rem; border-radius:10px; border:1px solid #1e2430}
+    button{appearance:none; background:#0e1219; border:1px solid #273042; color:var(--ink); padding:.45rem .6rem; border-radius:8px; cursor:pointer; font-size:.92rem}
+    button:hover{border-color:#3a4a68}
+    button.active{outline:2px solid var(--accent);}
+    button.danger{border-color:#623; color:#ffb3c7}
+    button.ok{border-color:#1b3; color:#bff7d0}
+    #left, #right{background:var(--panel); border-right:1px solid #22262f;}
+    #right{border-right:none; border-left:1px solid #22262f}
+    #left, #right{padding:.75rem; overflow:auto}
+    h2{margin:.25rem 0 .5rem; font-size:1.05rem; color:#cbd5e1}
+    .row{display:flex; gap:.5rem; align-items:center; margin:.4rem 0}
+    label{color:var(--muted); font-size:.9rem}
+    input[type="text"], select, input[type="number"]{width:100%; background:#0e1219; color:var(--ink); border:1px solid #273042; border-radius:8px; padding:.4rem .5rem}
+    input[type="file"]{width:100%}
+    .hint{color:#9aa3b2; font-size:.85rem;}
+    .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; padding:.05rem .35rem; background:#0b0f16; border:1px solid #273042; border-radius:6px}
+    #editorWrap{position:relative;}
+    #svg{width:100%; height:calc(100vh - 64px); display:block; background:var(--bg);}
+    .overlayTip{position:absolute; left:10px; bottom:10px; background:rgba(14,18,25,.75); border:1px solid #273042; padding:.35rem .5rem; border-radius:8px; font-size:.85rem}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="group" id="modeGroup">
+      <button data-mode="select" class="active" title="Select/Move (V)">Select</button>
+      <button data-mode="wire" title="Wire (W)">Wire</button>
+      <button data-mode="delete" title="Delete (Del)">Delete</button>
+    </div>
+    <div class="group" id="palette">
+      <button data-tool="resistor" title="Place Resistor (R)">Resistor</button>
+      <button data-tool="capacitor" title="Place Capacitor (C)">Capacitor</button>
+      <button data-tool="inductor" title="Place Inductor (L)">Inductor</button>
+      <button data-tool="diode" title="Place Diode (D)">Diode</button>
+      <button data-tool="npn" title="Place NPN">NPN</button>
+      <button data-tool="pnp" title="Place PNP">PNP</button>
+    </div>
+    <div class="group">
+      <button id="rotateBtn" title="Rotate 90° (R)">Rotate</button>
+      <button id="clearBtn" class="danger" title="Clear (Ctrl+K)">Clear</button>
+    </div>
+    <div class="group">
+      <button id="saveBtn" class="ok" title="Save JSON (Ctrl+S)">Save</button>
+      <button id="loadBtn" title="Load JSON">Load</button>
+      <input id="fileInput" type="file" accept="application/json" style="display:none" />
+    </div>
+    <div style="margin-left:auto; color:#9aa3b2">Grid: <span class="kbd">24px</span> · Snap: <span class="kbd">on</span></div>
+  </header>
+  <aside id="left">
+    <h2>Inspector</h2>
+    <div id="inspectorNone" class="hint">Select a component to edit its properties.</div>
+    <div id="inspector"></div>
+    <hr style="border-color:#22262f; margin:1rem 0" />
+    <h2>Tips</h2>
+    <ul class="hint" style="line-height:1.5">
+      <li><span class="kbd">V</span> Select/Move · <span class="kbd">W</span> Wire · <span class="kbd">Del</span> Delete</li>
+      <li>Click grid to place selected part. Drag to move. <span class="kbd">R</span> rotates a part.</li>
+      <li>Wiring: click start → click turns → double‑click or <span class="kbd">Enter</span> to finish. <span class="kbd">Esc</span> to cancel.</li>
+      <li>Delete: click a wire <em>segment</em> or component to remove.</li>
+    </ul>
+  </aside>
+  <main id="center">
+    <div id="editorWrap">
+      <svg id="svg" viewBox="0 0 1600 1000" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+            <path d="M24 0H0V24" fill="none" stroke="var(--grid)" stroke-width="1" />
+          </pattern>
+          <pattern id="gridBold" width="120" height="120" patternUnits="userSpaceOnUse">
+            <rect width="120" height="120" fill="url(#grid)"/>
+            <path d="M120 0H0V120" fill="none" stroke="var(--grid-bold)" stroke-width="1.5" />
+          </pattern>
+          <!-- Marker for wire endpoints when drawing -->
+          <marker id="dot" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5">
+            <circle cx="5" cy="5" r="3" fill="var(--wire)" />
+          </marker>
+        </defs>
+        <rect x="0" y="0" width="100%" height="100%" fill="url(#gridBold)" />
+        <g id="wires"></g>
+        <g id="components"></g>
+        <g id="drawing"></g>
+      </svg>
+      <div class="overlayTip" id="overlayTip">Mode: <b id="modeLabel">Select</b></div>
+    </div>
+  </main>
+  <aside id="right">
+    <h2>Project</h2>
+    <div class="row"><label>Title</label></div>
+    <div class="row"><input id="projTitle" type="text" placeholder="Untitled schematic" /></div>
+    <div class="row hint">Saved into JSON</div>
+    <hr style="border-color:#22262f; margin:1rem 0" />
+    <h2>Counts</h2>
+    <div class="hint" id="counts">—</div>
+  </aside>
+</div>
+
+<script>
+(function(){
+  // ====== Core State ======
+  const GRID = 24; // px
+  const svg = document.getElementById('svg');
+  const gWires = document.getElementById('wires');
+  const gComps = document.getElementById('components');
+  const gDrawing = document.getElementById('drawing');
+  const inspector = document.getElementById('inspector');
+  const inspectorNone = document.getElementById('inspectorNone');
+  const projTitle = document.getElementById('projTitle');
+  const countsEl = document.getElementById('counts');
+  const overlayMode = document.getElementById('modeLabel');
+
+  /** @type {Array<{id:string,type:string,x:number,y:number,rot:number,label:string,value?:string,props?:any}>} */
+  let components = [];
+  /** @type {Array<{id:string,points:{x:number,y:number}[]}>} */
+  let wires = [];
+
+  let mode = 'select'; // 'select' | 'wire' | 'delete' | 'place'
+  let placeType = null; // when mode=='place'
+  let selection = { kind: null, id: null }; // {kind:'component'|'wire', id:string}
+  let drawing = { active:false, points:[] };
+
+  let counters = { resistor:1, capacitor:1, inductor:1, diode:1, npn:1, pnp:1, wire:1 };
+
+  const snap = v => Math.round(v/GRID)*GRID;
+  const uid = (prefix)=> `${prefix}${counters[prefix]++}`;
+
+  function updateCounts(){
+    countsEl.textContent = `Components: ${components.length} · Wires: ${wires.length}`;
+  }
+
+  function setMode(m){
+    mode = m; overlayMode.textContent = m[0].toUpperCase()+m.slice(1);
+    document.querySelectorAll('#modeGroup button').forEach(b=>b.classList.toggle('active', b.dataset.mode===m));
+  }
+
+  // ====== Component Drawing ======
+  function compPinPositions(c){
+    // two-pin components have pins at +/- 48px along the axis; transistors 3 pins arranged T shape
+    const r = c.rot % 360;
+    const axis = (r===0||r===180) ? 'x' : 'y';
+    const sign = (v)=> (v>=0?1:-1);
+    if(c.type==='npn' || c.type==='pnp'){
+      // base at center; collector top; emitter bottom (before rotation)
+      const pins = [ {name:'B', x:c.x, y:c.y}, {name:'C', x:c.x, y:c.y-2*GRID}, {name:'E', x:c.x, y:c.y+2*GRID} ];
+      return pins.map(p=>rotatePoint(p, {x:c.x, y:c.y}, r));
+    } else {
+      const a = {x:c.x - (axis==='x'?2*GRID:0), y:c.y - (axis==='y'?2*GRID:0)};
+      const b = {x:c.x + (axis==='x'?2*GRID:0), y:c.y + (axis==='y'?2*GRID:0)};
+      return [ {...a, name:'A'}, {...b, name:'B'} ];
+    }
+  }
+
+  function rotatePoint(p, center, deg){
+    const rad = deg*Math.PI/180; const s=Math.sin(rad), co=Math.cos(rad);
+    const dx=p.x-center.x, dy=p.y-center.y;
+    return { x: center.x + dx*co - dy*s, y: center.y + dx*s + dy*co, name:p.name };
+  }
+
+  function drawComponent(c){
+    // container group
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('data-id', c.id);
+    g.setAttribute('class','comp');
+    g.style.cursor = 'move';
+
+    // shadow / selection rect
+    const sel = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    sel.setAttribute('x', c.x-60); sel.setAttribute('y', c.y-60); sel.setAttribute('width', 120); sel.setAttribute('height', 120);
+    sel.setAttribute('fill','none'); sel.setAttribute('stroke','transparent'); sel.setAttribute('stroke-width','20');
+    g.appendChild(sel);
+
+    // pins
+    const pins = compPinPositions(c);
+    for(const p of pins){
+      const pin = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      pin.setAttribute('cx', p.x); pin.setAttribute('cy', p.y); pin.setAttribute('r', 4);
+      pin.setAttribute('fill','var(--pin)');
+      pin.setAttribute('data-pin', p.name);
+      g.appendChild(pin);
+    }
+
+    // symbol group (rotated)
+    const gg = document.createElementNS('http://www.w3.org/2000/svg','g');
+    gg.setAttribute('transform', `rotate(${c.rot} ${c.x} ${c.y})`);
+
+    // lead stubs for 2-pin parts
+    function lead(x1,y1,x2,y2){
+      const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+      line.setAttribute('x1',x1); line.setAttribute('y1',y1); line.setAttribute('x2',x2); line.setAttribute('y2',y2);
+      line.setAttribute('stroke','var(--component)'); line.setAttribute('stroke-width','2');
+      gg.appendChild(line);
+    }
+
+    if(['resistor','capacitor','inductor','diode'].includes(c.type)){
+      // common anchors in un-rotated space
+      const ax = c.x - 48, bx = c.x + 48, y = c.y;
+      // outer leads
+      lead(ax, y, ax+12, y); lead(bx-12, y, bx, y);
+    }
+
+    if(c.type==='resistor'){
+      // zig-zag body
+      const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+      const y=c.y, x=c.x-36;
+      const d = [
+        `M ${x} ${y}`,
+        `l 8 -10`, `l 8 20`, `l 8 -20`, `l 8 20`, `l 8 -20`, `l 8 20`,
+        `l 8 -10`
+      ].join(' ');
+      path.setAttribute('d', d);
+      path.setAttribute('fill','none'); path.setAttribute('stroke','var(--component)'); path.setAttribute('stroke-width','2');
+      gg.appendChild(path);
+    }
+
+    if(c.type==='capacitor'){
+      const y=c.y, x1=c.x-8, x2=c.x+8;
+      const p1 = document.createElementNS('http://www.w3.org/2000/svg','line');
+      p1.setAttribute('x1',x1); p1.setAttribute('y1',y-16); p1.setAttribute('x2',x1); p1.setAttribute('y2',y+16);
+      const p2 = document.createElementNS('http://www.w3.org/2000/svg','line');
+      p2.setAttribute('x1',x2); p2.setAttribute('y1',y-16); p2.setAttribute('x2',x2); p2.setAttribute('y2',y+16);
+      for(const el of [p1,p2]){ el.setAttribute('stroke','var(--component)'); el.setAttribute('stroke-width','2'); }
+      gg.appendChild(p1); gg.appendChild(p2);
+    }
+
+    if(c.type==='inductor'){
+      const y=c.y, start=c.x-28;
+      const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+      const r=8; const d=[`M ${start} ${y}`];
+      for(let i=0;i<5;i++){
+        const cx = start + i*12 + 6; // center of hump
+        d.push(`q ${r} -${r} ${r*2} 0`);
+      }
+      path.setAttribute('d', d.join(' '));
+      path.setAttribute('fill','none'); path.setAttribute('stroke','var(--component)'); path.setAttribute('stroke-width','2');
+      gg.appendChild(path);
+    }
+
+    if(c.type==='diode'){
+      // triangle -> line (anode at left, cathode line at right in 0°)
+      const y=c.y, xL=c.x-24, xR=c.x+24;
+      const tri = document.createElementNS('http://www.w3.org/2000/svg','path');
+      tri.setAttribute('d', `M ${xL} ${y-16} L ${xL} ${y+16} L ${c.x} ${y} Z`);
+      tri.setAttribute('fill','none'); tri.setAttribute('stroke','var(--component)'); tri.setAttribute('stroke-width','2');
+      const bar = document.createElementNS('http://www.w3.org/2000/svg','line');
+      bar.setAttribute('x1', c.x+8); bar.setAttribute('y1', y-16); bar.setAttribute('x2', c.x+8); bar.setAttribute('y2', y+16);
+      bar.setAttribute('stroke','var(--component)'); bar.setAttribute('stroke-width','2');
+      gg.appendChild(tri); gg.appendChild(bar);
+    }
+
+    if(c.type==='npn' || c.type==='pnp'){
+      // minimal BJT symbol, base vertical, C up, E down, arrow on E (out for NPN, in for PNP)
+      const x=c.x, y=c.y; const r=20;
+      const base = line(x, y-28, x, y+28);
+      const cLine = line(x, y-10, x+30, y-30); // collector
+      const eLine = line(x, y+10, x+30, y+30); // emitter
+      // arrow on emitter
+      const arrowDir = (c.type==='npn')? 1 : -1; // 1 = outwards, -1 = into base
+      const ax = x+30, ay = y+30;
+      const arr = document.createElementNS('http://www.w3.org/2000/svg','path');
+      const dx = 8 * arrowDir; // direction relative to base
+      arr.setAttribute('d', `M ${ax} ${ay} l ${-dx} -6 l 0 12 Z`);
+      arr.setAttribute('fill','var(--component)');
+      function line(x1,y1,x2,y2){ const ln = document.createElementNS('http://www.w3.org/2000/svg','line'); ln.setAttribute('x1',x1); ln.setAttribute('y1',y1); ln.setAttribute('x2',x2); ln.setAttribute('y2',y2); ln.setAttribute('stroke','var(--component)'); ln.setAttribute('stroke-width','2'); return ln; }
+      gg.appendChild(base); gg.appendChild(cLine); gg.appendChild(eLine); gg.appendChild(arr);
+    }
+
+    // label
+    const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+    label.setAttribute('x', c.x); label.setAttribute('y', c.y+46); label.setAttribute('text-anchor','middle');
+    label.setAttribute('font-size','12'); label.setAttribute('fill','var(--ink)');
+    label.textContent = `${c.label}${c.value? ` (${c.value})`: ''}`;
+    gg.appendChild(label);
+
+    g.appendChild(gg);
+
+    // selection outline (visible only when selected)
+    const outline = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    outline.setAttribute('cx', c.x); outline.setAttribute('cy', c.y); outline.setAttribute('r', 56);
+    outline.setAttribute('fill','none'); outline.setAttribute('stroke','transparent'); outline.setAttribute('stroke-width','2');
+    outline.setAttribute('data-outline','1');
+    g.appendChild(outline);
+
+    // drag logic
+    let dragging=false, dragOff={x:0,y:0};
+    g.addEventListener('pointerdown', (e)=>{
+      if(mode==='delete'){ removeComponent(c.id); return; }
+      if(mode==='select'){
+        selecting('component', c.id);
+        dragging=true; dragOff.x = c.x - svgPoint(e).x; dragOff.y = c.y - svgPoint(e).y;
+        g.setPointerCapture(e.pointerId);
+      }
+      e.stopPropagation();
+    });
+    g.addEventListener('pointermove', (e)=>{
+      if(!dragging) return;
+      const p = svgPoint(e); c.x = snap(p.x + dragOff.x); c.y = snap(p.y + dragOff.y); redraw();
+    });
+    g.addEventListener('pointerup', ()=> dragging=false);
+
+    return g;
+  }
+
+  function redraw(){
+    // components
+    gComps.replaceChildren();
+    for(const c of components){ gComps.appendChild(drawComponent(c)); }
+    // wires
+    gWires.replaceChildren();
+    for(const w of wires){
+      // Wide transparent hit-target to make clicking easier
+      const hit = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+      hit.setAttribute('fill','none');
+      hit.setAttribute('stroke','transparent');
+      hit.setAttribute('stroke-width','16');
+      hit.setAttribute('pointer-events','stroke');
+      hit.setAttribute('points', w.points.map(p=>`${p.x},${p.y}`).join(' '));
+      hit.setAttribute('data-id', w.id);
+      hit.addEventListener('pointerdown', (e)=>{
+        if(mode==='delete'){ removeWireAtPoint(w, svgPoint(e)); }
+        else if(mode==='select'){ selecting('wire', w.id); }
+        e.stopPropagation();
+      });
+      gWires.appendChild(hit);
+
+      // Visible wire stroke
+      const pl = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+      pl.setAttribute('fill','none');
+      pl.setAttribute('stroke','var(--wire)');
+      pl.setAttribute('stroke-width','3');
+      pl.setAttribute('stroke-linecap','round');
+      pl.setAttribute('stroke-linejoin','round');
+      pl.setAttribute('pointer-events','none'); // hit-handling is done by the transparent overlay
+      pl.setAttribute('points', w.points.map(p=>`${p.x},${p.y}`).join(' '));
+      pl.setAttribute('data-id', w.id);
+      gWires.appendChild(pl);
+    }
+
+    // selection highlight
+    document.querySelectorAll('[data-outline]')
+      .forEach(el=>{
+        const parent = el.parentElement?.parentElement; // group -> comp group
+        const id = parent?.getAttribute('data-id');
+        const on = selection.kind==='component' && selection.id===id;
+        el.setAttribute('stroke', on? 'var(--select)':'transparent');
+      });
+
+    updateCounts();
+    renderInspector();
+  }
+
+  function selecting(kind, id){ selection = {kind, id}; redraw(); }
+
+  function removeComponent(id){ components = components.filter(c=>c.id!==id); if(selection.id===id) selection={kind:null,id:null}; redraw(); }
+
+  function removeWireAtPoint(w, p){
+    // Delete the *segment* you click on. Split the polyline into two new wires
+    // (left and right of the removed segment). If either side has <2 points, it
+    // is discarded.
+    const threshold = 12; // easier to hit
+    const idx = nearestSegmentIndex(w.points, p);
+    if(idx < 0 || idx >= w.points.length - 1) return;
+    const d = pointToSegmentDistance(p, w.points[idx], w.points[idx+1]);
+    if(d > threshold) return;
+
+    const left = w.points.slice(0, idx + 1);
+    const right = w.points.slice(idx + 1);
+
+    // Remove original wire
+    wires = wires.filter(x => x.id !== w.id);
+
+    // Add split pieces back as new wires (if they contain at least one segment)
+    if(left.length >= 2){ wires.push({ id: uid('wire'), points: left }); }
+    if(right.length >= 2){ wires.push({ id: uid('wire'), points: right }); }
+
+    // Clear selection and redraw
+    if(selection.id === w.id){ selection = {kind:null, id:null}; }
+    redraw();
+  }; redraw(); }
+  }
+
+  function nearestSegmentIndex(pts, p){
+    let best=-1, bestD=1e9;
+    for(let i=0;i<pts.length-1;i++){
+      const d = pointToSegmentDistance(p, pts[i], pts[i+1]);
+      if(d<bestD){ bestD=d; best=i; }
+    }
+    return best;
+  }
+
+  function pointToSegmentDistance(p, a, b){
+    const A = {x:a.x, y:a.y}, B={x:b.x, y:b.y}, P={x:p.x, y:p.y};
+    const ABx=B.x-A.x, ABy=B.y-A.y; const APx=P.x-A.x, APy=P.y-A.y;
+    const ab2 = ABx*ABx + ABy*ABy; if(ab2===0) return Math.hypot(APx,APy);
+    let t = (APx*ABx + APy*ABy)/ab2; t=Math.max(0, Math.min(1,t));
+    const Qx=A.x + t*ABx, Qy=A.y + t*ABy; return Math.hypot(P.x-Qx, P.y-Qy);
+  }
+
+  // ====== SVG helpers ======
+  function svgPoint(evt){
+    const pt = svg.createSVGPoint();
+    pt.x = (evt.clientX ?? evt.touches?.[0]?.clientX ?? 0);
+    pt.y = (evt.clientY ?? evt.touches?.[0]?.clientY ?? 0);
+    const ctm = svg.getScreenCTM();
+    return pt.matrixTransform(ctm.inverse());
+  }
+
+  // ====== Interaction ======
+  svg.addEventListener('pointerdown', (e)=>{
+    const p = svgPoint(e);
+    const x = snap(p.x), y=snap(p.y);
+    if(mode==='place' && placeType){
+      const id = uid(placeType);
+      const labelPrefix = {resistor:'R', capacitor:'C', inductor:'L', diode:'D', npn:'Q', pnp:'Q'}[placeType] || 'X';
+      components.push({ id, type:placeType, x, y, rot:0, label:`${labelPrefix}${counters[placeType]-1}`, value:'' });
+      setMode('select'); placeType=null; selection={kind:'component', id}; redraw();
+      return;
+    }
+    if(mode==='wire'){
+      // start drawing if not active, else add point
+      if(!drawing.active){ drawing.active=true; drawing.points=[{x,y}]; }
+      else {
+        drawing.points.push({x,y});
+      }
+      renderDrawing();
+    }
+    if(mode==='select'){
+      // clicking empty space clears selection
+      selection={kind:null,id:null}; redraw();
+    }
+  });
+
+  svg.addEventListener('dblclick', (e)=>{
+    if(mode==='wire' && drawing.active){ finishWire(); }
+  });
+
+  window.addEventListener('keydown', (e)=>{
+    if(e.key==='Escape'){
+      if(drawing.active){ drawing.active=false; drawing.points=[]; gDrawing.replaceChildren(); }
+    }
+    if(e.key==='Enter' && drawing.active){ finishWire(); }
+    if(e.key.toLowerCase()==='w'){ setMode('wire'); }
+    if(e.key.toLowerCase()==='v'){ setMode('select'); }
+    if(e.key.toLowerCase()==='r'){
+      rotateSelected();
+    }
+    if(e.key==='Delete'){
+      if(selection.kind==='component'){ removeComponent(selection.id); }
+      if(selection.kind==='wire'){ wires = wires.filter(w=>w.id!==selection.id); selection={kind:null,id:null}; redraw(); }
+    }
+    if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); saveJSON(); }
+    if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); clearAll(); }
+  });
+
+  function finishWire(){
+    if(drawing.points.length>=2){
+      const id = uid('wire');
+      wires.push({ id, points:[...drawing.points] });
+    }
+    drawing.active=false; drawing.points=[]; gDrawing.replaceChildren(); redraw();
+  }
+
+  function renderDrawing(){
+    gDrawing.replaceChildren();
+    if(!drawing.active) return;
+    const pl = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+    pl.setAttribute('fill','none'); pl.setAttribute('stroke','var(--wire)'); pl.setAttribute('stroke-width','3'); pl.setAttribute('stroke-linecap','round'); pl.setAttribute('stroke-linejoin','round');
+    pl.setAttribute('marker-start','url(#dot)');
+    pl.setAttribute('points', drawing.points.map(p=>`${p.x},${p.y}`).join(' '));
+    gDrawing.appendChild(pl);
+  }
+
+  function rotateSelected(){
+    if(selection.kind!=='component') return;
+    const c = components.find(x=>x.id===selection.id); if(!c) return;
+    c.rot = (c.rot + 90)%360; redraw();
+  }
+
+  // ====== Toolbar ======
+  document.getElementById('modeGroup').addEventListener('click', (e)=>{
+    const btn = e.target.closest('button'); if(!btn) return;
+    const m = btn.dataset.mode; if(!m) return;
+    setMode(m);
+  });
+
+  document.getElementById('palette').addEventListener('click', (e)=>{
+    const btn = e.target.closest('button'); if(!btn) return;
+    placeType = btn.dataset.tool; setMode('place');
+  });
+
+  document.getElementById('rotateBtn').addEventListener('click', rotateSelected);
+
+  document.getElementById('clearBtn').addEventListener('click', clearAll);
+
+  function clearAll(){
+    if(!confirm('Clear the canvas? This cannot be undone.')) return;
+    // Reset arrays in-place and state
+    components = [];
+    wires = [];
+    selection = {kind:null, id:null};
+    // Cancel any in-progress wire drawing and clear overlay
+    drawing.active = false;
+    drawing.points = [];
+    gDrawing.replaceChildren();
+    // Reset ID counters
+    counters = { resistor:1, capacitor:1, inductor:1, diode:1, npn:1, pnp:1, wire:1 };
+    redraw();
+  }; redraw(); } }
+
+  // ====== Inspector ======
+  function renderInspector(){
+    inspector.replaceChildren();
+    const sel = selection.kind==='component' && components.find(c=>c.id===selection.id);
+    inspectorNone.style.display = sel? 'none' : 'block';
+    if(!sel) return;
+    const c = sel;
+    const wrap = document.createElement('div');
+
+    wrap.appendChild(rowPair('ID', text(c.id, true)));
+    wrap.appendChild(rowPair('Type', text(c.type, true)));
+
+    wrap.appendChild(rowPair('Label', input(c.label, v=>{ c.label=v; redraw(); } )));
+
+    // value field for generic components
+    const showValue = ['resistor','capacitor','inductor','diode'].includes(c.type);
+    if(showValue){ wrap.appendChild(rowPair('Value', input(c.value||'', v=>{ c.value=v; redraw(); } ))); }
+
+    // position + rotation
+    wrap.appendChild(rowPair('X', number(c.x, v=>{ c.x = snap(v); redraw(); } )));
+    wrap.appendChild(rowPair('Y', number(c.y, v=>{ c.y = snap(v); redraw(); } )));
+    wrap.appendChild(rowPair('Rotation', number(c.rot, v=>{ c.rot = (Math.round(v/90)*90)%360; redraw(); } )));
+
+    inspector.appendChild(wrap);
+  }
+
+  function rowPair(lbl, control){
+    const d1=document.createElement('div'); d1.className='row';
+    const l=document.createElement('label'); l.textContent=lbl; l.style.width='90px'; d1.appendChild(l);
+    d1.appendChild(control); return d1;
+  }
+  function input(val, on){ const i=document.createElement('input'); i.type='text'; i.value=val; i.oninput=()=>on(i.value); return i; }
+  function number(val, on){ const i=document.createElement('input'); i.type='number'; i.value=val; i.oninput=()=>on(parseFloat(i.value)||0); return i; }
+  function text(val, readonly=false){ const i=document.createElement('input'); i.type='text'; i.value=val; i.readOnly=readonly; return i; }
+
+  // ====== Save / Load ======
+  document.getElementById('saveBtn').addEventListener('click', saveJSON);
+  document.getElementById('loadBtn').addEventListener('click', ()=> document.getElementById('fileInput').click());
+  document.getElementById('fileInput').addEventListener('change', (e)=>{
+    const f = e.target.files?.[0]; if(!f) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{ try{ loadFromJSON(reader.result); } catch(err){ alert('Failed to load JSON: '+err); } };
+    reader.readAsText(f);
+  });
+
+  function saveJSON(){
+    const data = {
+      version: 1,
+      title: projTitle.value || 'Untitled',
+      grid: GRID,
+      components,
+      wires
+    };
+    const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (projTitle.value?.trim()||'schematic') + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  function loadFromJSON(text){
+    const data = JSON.parse(text);
+    components = data.components||[]; wires = data.wires||[]; projTitle.value = data.title||'';
+    // re-seed counters so new IDs continue incrementing nicely
+    const used = { resistor:0, capacitor:0, inductor:0, diode:0, npn:0, pnp:0, wire:0 };
+    for(const c of components){ const k=c.type; const num=parseInt((c.label||'').replace(/^[A-Z]+/,'').trim())||0; used[k]=Math.max(used[k], num); }
+    for(const w of wires){ const n=parseInt((w.id||'').replace(/^wire/,''))||0; used.wire=Math.max(used.wire,n); }
+    Object.keys(counters).forEach(k=> counters[k] = used[k]+1 );
+    selection={kind:null, id:null}; redraw();
+  }
+
+  // ====== Boot ======
+  redraw();
+})();
+</script>
+</body>
+</html>
