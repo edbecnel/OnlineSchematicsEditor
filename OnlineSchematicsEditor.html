@@ -269,26 +269,22 @@
 
   // ====== Component Drawing ======
   function compPinPositions(c){
-    // two-pin components have pins at +/- 48px along the axis; transistors 3 pins arranged T shape
-    const r = c.rot % 360;
-    const axis = (r===0||r===180) ? 'x' : 'y';
-    const sign = (v)=> (v>=0?1:-1);
-    if(c.type==='npn' || c.type==='pnp'){
-      // base at center; collector top; emitter bottom (before rotation)
+    // two-pin components: pins at +/- 2*GRID along the component rotation axis
+    const r = ((c.rot % 360) + 360) % 360;
+    if(c.type==='npn' || c.type==='pnp'){      // base at center; collector top; emitter bottom (before rotation)
       const pins = [ {name:'B', x:c.x, y:c.y}, {name:'C', x:c.x, y:c.y-2*GRID}, {name:'E', x:c.x, y:c.y+2*GRID} ];
       return pins.map(p=>rotatePoint(p, {x:c.x, y:c.y}, r));
     } else if (c.type==='ground') {
       // single pin at top of ground symbol
       return [ {name:'G', x:c.x, y:c.y - 2} ];
-    } else if (c.type==='battery'){
-      // two-pin part like capacitor along main axis
-      const a = {x:c.x - (axis==='x'?2*GRID:0), y:c.y - (axis==='y'?2*GRID:0)};
-      const b = {x:c.x + (axis==='x'?2*GRID:0), y:c.y + (axis==='y'?2*GRID:0)};
-      return [ {...a, name:'A'}, {...b, name:'B'} ];
-    } else {
-      const a = {x:c.x - (axis==='x'?2*GRID:0), y:c.y - (axis==='y'?2*GRID:0)};
-      const b = {x:c.x + (axis==='x'?2*GRID:0), y:c.y + (axis==='y'?2*GRID:0)};
-      return [ {...a, name:'A'}, {...b, name:'B'} ];
+    } else {      
+      // Generic 2-pin (resistor, capacitor, inductor, diode, battery, ac)
+      const L = 2*GRID;
+      const rad = r * Math.PI/180;
+      const ux = Math.cos(rad), uy = Math.sin(rad);
+      const a = { x: c.x - L*ux, y: c.y - L*uy, name:'A' };
+      const b = { x: c.x + L*ux, y: c.y + L*uy, name:'B' };
+      return [a,b];      
     }
   }
 
@@ -674,6 +670,25 @@
     return { q:{ x:A.x + t*ABx, y:A.y + t*ABy }, t };
   }
 
+  // Angles / nearest segment helpers
+  const deg = (rad)=> rad*180/Math.PI;
+  const normDeg = (d)=> ((d%360)+360)%360;
+  const isTwoPinType = (t)=> ['resistor','capacitor','inductor','diode','battery','ac'].includes(t);
+  function segmentAngle(a,b){ return deg(Math.atan2(b.y-a.y, b.x-a.x)); }
+  function nearestSegmentAtPoint(p, maxDist=18){
+    let best=null, bestD=Infinity;
+    for(const w of wires){
+      for(let i=0;i<w.points.length-1;i++){
+        const a=w.points[i], b=w.points[i+1];
+        const {q,t} = projectPointToSegment(p,a,b);
+        if(t<=0 || t>=1) continue; // interior only
+        const d = Math.hypot(p.x-q.x, p.y-q.y);
+        if(d<bestD){ bestD=d; best={w, idx:i, q, angle: segmentAngle(a,b)}; }
+      }
+    }
+    return (best && bestD<=maxDist) ? best : null;
+  }  
+
   // ----- Marquee helpers -----
   const rectFromPoints = (a,b)=>{
     const x = Math.min(a.x,b.x), y = Math.min(a.y,b.y);
@@ -804,8 +819,8 @@
         const withinHorz = isHorizontal && Math.abs(pin.y - a.y) <= GRID/2 && pin.x >= Math.min(a.x,b.x) && pin.x <= Math.max(a.x,b.x);
         const nearInterior = (t>0.001 && t<0.999 && dist <= 20);        
         if( withinVert || withinHorz || nearInterior ){
-          // split exactly at the pin location (snapped), not projection
-          const bp = {x:snap(pin.x), y:snap(pin.y)};
+          // For angled (nearInterior), split at the exact projection q; else use snapped pin
+          const bp = nearInterior ? {x:q.x, y:q.y} : {x:snap(pin.x), y:snap(pin.y)};
           const left = w.points.slice(0,i+1).concat([bp]);
           const right = [bp].concat(w.points.slice(i+1));
           wires = wires.filter(x=>x.id!==w.id);
@@ -823,9 +838,10 @@
     if(!twoPin.includes(c.type)) return;
     const pins = compPinPositions(c);
     if(pins.length !== 2) return;
-    const a = {x:snap(pins[0].x), y:snap(pins[0].y)};
-    const b = {x:snap(pins[1].x), y:snap(pins[1].y)};
-    const eq = (p,q)=> p.x===q.x && p.y===q.y;
+    const a = {x:pins[0].x, y:pins[0].y};
+    const b = {x:pins[1].x, y:pins[1].y};
+    const EPS = 1e-3;
+    const eq = (p,q)=> Math.abs(p.x-q.x)<EPS && Math.abs(p.y-q.y)<EPS;
     wires = wires.filter(w=>{
       if(w.points.length!==2) return true;
       const p0=w.points[0], p1=w.points[1];
@@ -986,7 +1002,13 @@
     if(mode==='place' && placeType){
       const id = uid(placeType);
       const labelPrefix = {resistor:'R', capacitor:'C', inductor:'L', diode:'D', npn:'Q', pnp:'Q', ground:'GND', battery:'BT', ac:'AC'}[placeType] || 'X';
-      const comp = { id, type:placeType, x, y, rot:0, label:`${labelPrefix}${counters[placeType]-1}`, value:'', props:{} };
+      // If a 2-pin part is dropped near a segment, project to it and align rotation
+      let at = {x, y}, rot=0;
+      if(isTwoPinType(placeType)){
+        const hit = nearestSegmentAtPoint(p, 18);
+        if(hit){ at = hit.q; rot = normDeg(hit.angle); }
+      }
+      const comp = { id, type:placeType, x:at.x, y:at.y, rot, label:`${labelPrefix}${counters[placeType]-1}`, value:'', props:{} };
       components.push(comp);
       // Break wires at pins and remove inner bridge segment for 2-pin parts
       breakWiresForComponent(comp);
@@ -1188,7 +1210,12 @@
   function clearGhost(){ if(ghostEl){ ghostEl.remove(); ghostEl=null; } }
   function renderGhostAt(pos, type){
     clearGhost();
-    const ghost = { id:'__ghost__', type, x:pos.x, y:pos.y, rot:0, label:'', value:'' };
+    let at = {x:pos.x, y:pos.y}, rot = 0;
+    if(isTwoPinType(type)){
+      const hit = nearestSegmentAtPoint(pos, 18);
+      if(hit){ at = hit.q; rot = normDeg(hit.angle); }
+    }
+    const ghost = { id:'__ghost__', type, x:at.x, y:at.y, rot, label:'', value:'' };
     ghostEl = drawComponent(ghost);
     ghostEl.style.opacity = '0.5';
     ghostEl.style.pointerEvents = 'none';
