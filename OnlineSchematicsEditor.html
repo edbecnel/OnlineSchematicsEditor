@@ -98,6 +98,11 @@
       max-width:50%;                 /* hard cap: never exceed half the row */
       white-space:nowrap;
       width:auto;                    /* prevent global select{width:100%} */
+    }
+    /* Small color swatches (toolbar + inspector) */
+    .swatch{
+      display:inline-block; width:14px; height:14px;
+      border:1px solid #273042; border-radius:4px; vertical-align:middle;
     }    
   </style>
 </head>
@@ -140,11 +145,24 @@
       <button id="rotateBtn" title="Rotate 90° (R)">Rotate</button>
       <button id="clearBtn" class="danger" title="Clear (Ctrl+K)">Clear</button>
     </div>
+    <div class="group" id="wireColorGroup" title="Wire color (new wires only)">
+      <span style="color:#9aa3b2">Wire:</span>
+      <select id="wireColor">
+        <option value="auto" selected>Auto (Black/White)</option>
+        <option value="red">Red</option>
+        <option value="green">Green</option>
+        <option value="blue">Blue</option>
+        <option value="yellow">Yellow</option>
+        <option value="magenta">Magenta</option>
+        <option value="cyan">Cyan</option>
+      </select>
+      <span id="wireColorSwatch" class="swatch" style="margin-left:.25rem"></span>
+    </div>    
     <div class="group">
       <button id="zoomOutBtn" title="Zoom Out (−)">−</button>
       <button id="zoomInBtn" title="Zoom In (+)">+</button>
       <button id="zoomResetBtn" title="Reset Zoom (1:1)">100%</button>
-      <input id="zoomPct" type="text" value="100%" title="Zoom % (editable)" style="width:64px;text-align:right" />      
+      <input id="zoomPct" type="text" value="100%" title="Zoom % (editable)" style="width:6ch;text-align:right" />      
     </div>    
     <div class="group">
       <button id="saveBtn" class="ok" title="Save JSON (Ctrl+S)">Save</button>
@@ -155,7 +173,7 @@
   </header>
   <aside id="left">
     <h2>Inspector</h2>
-    <div id="inspectorNone" class="hint">Select a component to edit its properties.</div>
+    <div id="inspectorNone" class="hint">Select a component or wire to edit its properties.</div>
     <div id="inspector"></div>
     <hr style="border-color:#22262f; margin:1rem 0" />
     <h2>Tips</h2>
@@ -268,6 +286,47 @@
   let counters = { resistor:1, capacitor:1, inductor:1, diode:1, npn:1, pnp:1, ground:1, battery:1, ac:1, wire:1 };
   // Palette state: diode subtype selection
   let diodeSubtype = 'generic';
+
+  // Wire color state: default from CSS var, and current palette choice (affects new wires only)
+  const defaultWireColor = (getComputedStyle(document.documentElement).getPropertyValue('--wire').trim() || '#c7f284');
+  let currentWireColorMode = 'auto'; // 'auto', 'red','green','blue','yellow','magenta','cyan'
+  function resolveWireColor(mode){
+    const map = { red:'red', green:'lime', blue:'deepskyblue', yellow:'gold', magenta:'magenta', cyan:'cyan' };
+    if(mode==='auto'){
+      const bg = getComputedStyle(document.body).backgroundColor;
+      const rgb = bg.match(/\d+/g)?.map(Number) || [0,0,0];
+      const [r,g,b] = rgb;
+      const srgb = [r/255, g/255, b/255].map(v=> (v<=0.03928)? v/12.92 : Math.pow((v+0.055)/1.055, 2.4));
+      const L = 0.2126*srgb[0] + 0.7152*srgb[1] + 0.0722*srgb[2];
+      return (L < 0.5) ? '#ffffff' : '#000000';
+    }
+    return map[mode] || defaultWireColor;
+  }
+
+  // Options used in both toolbar and Inspector (names -> resolved stroke colors)
+  const WIRE_COLOR_OPTIONS = [
+    ['auto','Auto (Black/White)'],
+    ['red','Red'], ['green','Green'], ['blue','Blue'],
+    ['yellow','Yellow'], ['magenta','Magenta'], ['cyan','Cyan']
+  ];
+  function wireColorNameFromValue(v){
+    const val = (v||'').toLowerCase();
+    // map actual stroke values back to option keys when possible
+    if(val==='red') return 'red';
+    if(val==='lime') return 'green';
+    if(val==='deepskyblue') return 'blue';
+    if(val==='gold') return 'yellow';
+    if(val==='magenta') return 'magenta';
+    if(val==='cyan') return 'cyan';
+    // theme-contrast outcomes of 'auto'
+    if(val==='#fff' || val==='#ffffff' || val==='white') return 'auto';
+    if(val==='#000' || val==='#000000' || val==='black') return 'auto';
+    // legacy default wire color → closest bucket
+    if(val==='#c7f284') return 'yellow';
+    // fallback
+    return 'auto';
+  }
+  const setSwatch = (el, color)=>{ if(el) el.style.background = color; };  
 
   // ====== Unit options for Value fields ======
   const UNIT_OPTIONS = {
@@ -600,7 +659,7 @@
       const vis = document.createElementNS('http://www.w3.org/2000/svg','polyline');
       vis.setAttribute('class','wire-stroke');
       vis.setAttribute('fill','none');
-      vis.setAttribute('stroke','var(--wire)');
+      vis.setAttribute('stroke', w.color || defaultWireColor);
       vis.setAttribute('stroke-width','3');
       vis.setAttribute('stroke-linecap','round');
       vis.setAttribute('stroke-linejoin','round');
@@ -667,7 +726,7 @@
       const on = selection.kind==='component' && selection.id===id;
       g.classList.toggle('selected', !!on);
     });    
-  }  
+  }
 
   function selecting(kind, id, segIndex=null){ selection = {kind, id, segIndex}; redraw(); }
 
@@ -694,7 +753,8 @@
           // Replace the two wires with a single merged polyline
           wires = wires.filter(w => w!==wA && w!==wB);
           if (merged.length >= 2) {
-            wires.push({ id: uid('wire'), points: merged });
+            // prefer left-side color; if mismatch, we still keep wA's color
+            wires.push({ id: uid('wire'), points: merged, color: wA.color || wB.color || defaultWireColor });
           }
         }        
       }
@@ -721,8 +781,8 @@
      // Add split pieces back if they contain at least one segment
      const L = normalizedPolylineOrNull(left);
      const R = normalizedPolylineOrNull(right);
-     if (L) wires.push({ id: uid('wire'), points: L });
-     if (R) wires.push({ id: uid('wire'), points: R }); 
+     if (L) wires.push({ id: uid('wire'), points: L, color: w.color });
+     if (R) wires.push({ id: uid('wire'), points: R, color: w.color });
      if (selection.id === w.id) selection = { kind:null, id:null, segIndex:null };
      redraw();
    }  
@@ -928,8 +988,8 @@
           wires = wires.filter(x=>x.id!==w.id);
           const L = normalizedPolylineOrNull(left);
           const R = normalizedPolylineOrNull(right);
-          if (L) wires.push({ id: uid('wire'), points: L });
-          if (R) wires.push({ id: uid('wire'), points: R });
+          if (L) wires.push({ id: uid('wire'), points: L, color: w.color });
+          if (R) wires.push({ id: uid('wire'), points: R, color: w.color });
           return true;
         }
       }
@@ -1082,9 +1142,12 @@
     if(!w) return;
     const group = gWires.querySelector(`g[data-id="${w.id}"]`);
     if(!group) return;
-    const polys = group.querySelectorAll('polyline');
     const pts = wirePointsString(w);
-    polys.forEach(pl=> pl.setAttribute('points', pts));
+    // update geometry
+    group.querySelectorAll('polyline').forEach(pl=> pl.setAttribute('points', pts));
+    // ensure visible stroke uses the wire's own color
+    const vis = group.querySelector('polyline[data-wire-stroke]');
+    if (vis) vis.setAttribute('stroke', w.color || defaultWireColor);    
   }  
 
   // ====== Interaction ======
@@ -1258,7 +1321,7 @@
       }
       if(pts.length >= 2){
         const id = uid('wire');
-        wires.push({ id, points: pts });
+        wires.push({ id, points: pts, color: resolveWireColor(currentWireColorMode) });
         // Post-process: if user placed components while wire was in limbo,
         // split this newly added wire wherever pins land, and remove any inner bridge.
         // (Safe for all components; non-intersecting pins are ignored by the splitter.)
@@ -1283,10 +1346,14 @@
     if(!drawing.active) return;
     const pts = drawing.cursor ? [...drawing.points, drawing.cursor] : drawing.points;
     const pl = document.createElementNS('http://www.w3.org/2000/svg','polyline');    
-    pl.setAttribute('fill','none'); pl.setAttribute('stroke','var(--wire)'); pl.setAttribute('stroke-width','3'); pl.setAttribute('stroke-linecap','round'); pl.setAttribute('stroke-linejoin','round');
+    const drawColor = resolveWireColor(currentWireColorMode);
+    pl.setAttribute('fill','none'); pl.setAttribute('stroke', drawColor); pl.setAttribute('stroke-width','3'); pl.setAttribute('stroke-linecap','round'); pl.setAttribute('stroke-linejoin','round');
     pl.setAttribute('marker-start','url(#dot)');
     pl.setAttribute('points', pts.map(p=>`${p.x},${p.y}`).join(' '));
     gDrawing.appendChild(pl);
+    // keep endpoint marker in sync with in-progress color
+    const dot = document.querySelector('#dot circle');
+    if (dot) dot.setAttribute('fill', drawColor);    
   }
 
   // ----- Crosshair overlay -----
@@ -1435,6 +1502,26 @@
 
   document.getElementById('clearBtn').addEventListener('click', clearAll);
 
+  // Wire color (palette for NEW wires only)
+  const wireColorSel = document.getElementById('wireColor');
+  const wireColorSwatch = document.getElementById('wireColorSwatch');
+  if (wireColorSel){
+    // init current mode to the select's value
+    currentWireColorMode = wireColorSel.value || 'auto';
+    // keep marker color roughly in sync when user changes palette
+    const syncMarker = ()=> {
+      const dot = document.querySelector('#dot circle');
+      if (dot) dot.setAttribute('fill', resolveWireColor(currentWireColorMode));
+    };
+    // header swatch mirrors the palette color for "next wires"
+    const syncHeaderSwatch = ()=> setSwatch(wireColorSwatch, resolveWireColor(currentWireColorMode));
+    syncMarker(); syncHeaderSwatch();    
+    wireColorSel.addEventListener('change', ()=>{
+      currentWireColorMode = wireColorSel.value || 'auto';
+      syncMarker(); syncHeaderSwatch();
+    });
+  }
+
   // Zoom controls
   document.getElementById('zoomInBtn').addEventListener('click', ()=>{ zoom = Math.min(8, zoom*1.25); applyZoom(); });
   document.getElementById('zoomOutBtn').addEventListener('click', ()=>{ zoom = Math.max(0.25, zoom/1.25); applyZoom(); });
@@ -1493,74 +1580,109 @@
   // ====== Inspector ======
   function renderInspector(){
     inspector.replaceChildren();
-    const sel = selection.kind==='component' && components.find(c=>c.id===selection.id);
-    inspectorNone.style.display = sel? 'none' : 'block';
-    if(!sel) return;
-    const c = sel;
-    const wrap = document.createElement('div');
+    if(selection.kind==='component'){
+      const c = components.find(x=>x.id===selection.id);
+      inspectorNone.style.display = c? 'none' : 'block';
+      if(!c) return;
+      const wrap = document.createElement('div');
 
-    wrap.appendChild(rowPair('ID', text(c.id, true)));
-    wrap.appendChild(rowPair('Type', text(c.type, true)));
+      wrap.appendChild(rowPair('ID', text(c.id, true)));
+      wrap.appendChild(rowPair('Type', text(c.type, true)));
 
-    wrap.appendChild(rowPair('Label', input(c.label, v=>{ c.label=v; redrawCanvasOnly(); } )));
+      wrap.appendChild(rowPair('Label', input(c.label, v=>{ c.label=v; redrawCanvasOnly(); } )));
 
-    // value field for generic components
-    const showValue = ['resistor','capacitor','inductor','diode'].includes(c.type);
-    // Value + Unit (inline) for R, C, L. (Diode keeps a simple Value field if desired.)
-    if(c.type==='resistor' || c.type==='capacitor' || c.type==='inductor'){
-      if(!c.props) c.props = {};
-      const typeKey = c.type;
-      const container = document.createElement('div');
-      container.className = 'hstack';      
-      // numeric / text value
-      const valInput = document.createElement('input');
-      valInput.type = 'text';
-      valInput.value = c.value || '';
-      valInput.oninput = ()=>{ c.value = valInput.value; redrawCanvasOnly(); };
-      // unit select (uses symbols, e.g., kΩ, µF, mH)
-      const sel = unitSelect(typeKey, (c.props.unit) || defaultUnit(typeKey), (u)=>{
-        c.props.unit = u; redrawCanvasOnly();
-      });
-      container.appendChild(valInput);
-      container.appendChild(sel);
-      wrap.appendChild(rowPair('Value', container));
-    } else if (c.type==='diode'){
-      // Value (optional text) for diode
-      wrap.appendChild(rowPair('Value', input(c.value||'', v=>{ c.value=v; redrawCanvasOnly(); } )));
-      // Subtype (editable)
-      const subSel = document.createElement('select');
-      ['generic','schottky','zener','led','photo','tunnel','varactor','laser'].forEach(v=>{
-        const o=document.createElement('option'); o.value=v;
-        o.textContent = ({
-          generic:'Generic', schottky:'Schottky', zener:'Zener',
-          led:'Light-emitting (LED)', photo:'Photo', tunnel:'Tunnel',
-          varactor:'Varactor / Varicap', laser:'Laser'
-        })[v]; subSel.appendChild(o);
-      });
-      subSel.value = (c.props && c.props.subtype) ? c.props.subtype : 'generic';
-      subSel.onchange = ()=>{
+      // value field for generic components
+      const showValue = ['resistor','capacitor','inductor','diode'].includes(c.type);
+      // Value + Unit (inline) for R, C, L. (Diode keeps a simple Value field if desired.)
+      if(c.type==='resistor' || c.type==='capacitor' || c.type==='inductor'){
         if(!c.props) c.props = {};
-        c.props.subtype = subSel.value;
-        // also remember for palette placements
-        diodeSubtype = subSel.value;
-        redrawCanvasOnly();
-      };
-      wrap.appendChild(rowPair('Subtype', subSel));      
-    }
+        const typeKey = c.type;
+        const container = document.createElement('div');
+        container.className = 'hstack';      
+        // numeric / text value
+        const valInput = document.createElement('input');
+        valInput.type = 'text';
+        valInput.value = c.value || '';
+        valInput.oninput = ()=>{ c.value = valInput.value; redrawCanvasOnly(); };
+        // unit select (uses symbols, e.g., kΩ, µF, mH)
+        const sel = unitSelect(typeKey, (c.props.unit) || defaultUnit(typeKey), (u)=>{
+          c.props.unit = u; redrawCanvasOnly();
+        });
+        container.appendChild(valInput);
+        container.appendChild(sel);
+        wrap.appendChild(rowPair('Value', container));
+      } else if (c.type==='diode'){
+        // Value (optional text) for diode
+        wrap.appendChild(rowPair('Value', input(c.value||'', v=>{ c.value=v; redrawCanvasOnly(); } )));
+        // Subtype (editable)
+        const subSel = document.createElement('select');
+        ['generic','schottky','zener','led','photo','tunnel','varactor','laser'].forEach(v=>{
+          const o=document.createElement('option'); o.value=v;
+          o.textContent = ({
+            generic:'Generic', schottky:'Schottky', zener:'Zener',
+            led:'Light-emitting (LED)', photo:'Photo', tunnel:'Tunnel',
+            varactor:'Varactor / Varicap', laser:'Laser'
+          })[v]; subSel.appendChild(o);
+        });
+        subSel.value = (c.props && c.props.subtype) ? c.props.subtype : 'generic';
+        subSel.onchange = ()=>{
+          if(!c.props) c.props = {};
+          c.props.subtype = subSel.value;
+          // also remember for palette placements
+          diodeSubtype = subSel.value;
+          redrawCanvasOnly();
+        };
+        wrap.appendChild(rowPair('Subtype', subSel));      
+      }
 
-    // voltage for DC battery & AC source
-    if(c.type==='battery' || c.type==='ac'){
-      if(!c.props) c.props = {};
-      wrap.appendChild(rowPair('Voltage (V)', number(c.props.voltage ?? 0, v=>{ c.props.voltage=v; redrawCanvasOnly(); } )));
+      // voltage for DC battery & AC source
+      if(c.type==='battery' || c.type==='ac'){
+        if(!c.props) c.props = {};
+        wrap.appendChild(rowPair('Voltage (V)', number(c.props.voltage ?? 0, v=>{ c.props.voltage=v; redrawCanvasOnly(); } )));
+      }
+      // position + rotation
+      wrap.appendChild(rowPair('X', number(c.x, v=>{ c.x = snap(v); redrawCanvasOnly(); } )));
+      wrap.appendChild(rowPair('Y', number(c.y, v=>{ c.y = snap(v); redrawCanvasOnly(); } )));
+      wrap.appendChild(rowPair('Rotation', number(c.rot, v=>{ c.rot = (Math.round(v/90)*90)%360; redrawCanvasOnly(); } )));
+      inspector.appendChild(wrap);
+      // After the DOM is in place, size any Value/Units selects to their content (capped at 50%)
+      fitInspectorUnitSelects();
+      return;
     }
-    // position + rotation
-    wrap.appendChild(rowPair('X', number(c.x, v=>{ c.x = snap(v); redrawCanvasOnly(); } )));
-    wrap.appendChild(rowPair('Y', number(c.y, v=>{ c.y = snap(v); redrawCanvasOnly(); } )));
-    wrap.appendChild(rowPair('Rotation', number(c.rot, v=>{ c.rot = (Math.round(v/90)*90)%360; redrawCanvasOnly(); } )));
-
-    inspector.appendChild(wrap);
-    // After the DOM is in place, size any Value/Units selects to their content (capped at 50%)
-    fitInspectorUnitSelects();    
+    // WIRE INSPECTOR
+    if(selection.kind==='wire'){
+      const w = wires.find(x=>x.id===selection.id);
+      inspectorNone.style.display = w? 'none' : 'block';
+      if(!w) return;
+      const wrap = document.createElement('div');
+      // ID (read-only)
+      wrap.appendChild(rowPair('ID', text(w.id, true)));
+      // Segments (read-only)
+      const segs = Math.max(0, (w.points?.length||0) - 1);
+      wrap.appendChild(rowPair('Segments', text(String(segs), true)));
+      // Color (editable) + swatch
+      const holder = document.createElement('div');
+      holder.className = 'hstack';
+      const sel = document.createElement('select');
+      WIRE_COLOR_OPTIONS.forEach(([val,label])=>{
+        const o=document.createElement('option'); o.value=val; o.textContent=label; sel.appendChild(o);
+      });
+      sel.value = wireColorNameFromValue(w.color);
+      const sw = document.createElement('span'); sw.className='swatch';
+      setSwatch(sw, w.color || defaultWireColor);
+      sel.addEventListener('change', ()=>{
+        // apply to this wire only
+        w.color = resolveWireColor(sel.value);
+        updateWireDOM(w);
+        setSwatch(sw, w.color);
+      });
+      holder.appendChild(sel); holder.appendChild(sw);
+      wrap.appendChild(rowPair('Color', holder));
+      inspector.appendChild(wrap);
+      return;
+    }
+    // nothing selected
+    inspectorNone.style.display = 'block';
   }
 
   function rowPair(lbl, control){
@@ -1716,7 +1838,7 @@
   function normalizeAllWires(){
     wires = wires.reduce((acc,w)=>{
       const c = normalizedPolylineOrNull(w.points);
-      if (c) acc.push({ id: w.id, points: c });
+      if (c) acc.push({ id: w.id, points: c, color: w.color || defaultWireColor });
       return acc;
     }, []);
   }  
@@ -1750,7 +1872,9 @@
 
   function loadFromJSON(text){
     const data = JSON.parse(text);
-    components = data.components||[]; wires = data.wires||[]; projTitle.value = data.title||'';
+    components = data.components||[]; wires = (data.wires||[]); projTitle.value = data.title||'';
+    // Backfill color for legacy wires
+    wires.forEach(w=>{ if(!w.color) w.color = defaultWireColor; });
     normalizeAllWires();
     // re-seed counters so new IDs continue incrementing nicely
     const used = { resistor:0, capacitor:0, inductor:0, diode:0, npn:0, pnp:0, ground:0, battery:0, ac:0, wire:0 };
