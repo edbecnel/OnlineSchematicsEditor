@@ -165,13 +165,20 @@
   let zoom = 1;
   let viewX = 0, viewY = 0; // pan in SVG units
   function applyZoom() {
-    const w = BASE_W / zoom, h = BASE_H / zoom;
-    svg.setAttribute('viewBox', `${viewX} ${viewY} ${w} ${h}`);
+    // Match the SVG element's current aspect ratio so the grid fills the canvas (no letterboxing)
+    const vw = Math.max(1, svg.clientWidth);
+    const vh = Math.max(1, svg.clientHeight);
+    const aspect = vw / vh;
+    viewW = BASE_W / zoom;
+    viewH = viewW / aspect;              // compute height from live aspect
+    svg.setAttribute('viewBox', `${viewX} ${viewY} ${viewW} ${viewH}`);
     redrawGrid();
     updateZoomUI();
   }
+  // keep grid filling canvas on window resizes
+  window.addEventListener('resize', applyZoom);
   function redrawGrid(){
-    const w = BASE_W / zoom, h = BASE_H / zoom;
+    const w = viewW, h = viewH;
     const r = document.getElementById('gridRect');
     if(!r) return;
     r.setAttribute('x', viewX);
@@ -207,7 +214,22 @@
     // reflect mode on body for cursor styles
     document.body.classList.remove('mode-select','mode-wire','mode-delete','mode-place','mode-pan','mode-move');
     document.body.classList.add(`mode-${m}`);
-    redraw(); // refresh wire/comp hit gating for the new mode
+    // If user switches to Delete with an active selection, apply delete immediately
+    if (m==='delete' && selection.kind){
+      if(selection.kind==='component'){ removeComponent(selection.id); return; }
+      if(selection.kind==='wire'){
+        const w = wires.find(x=>x.id===selection.id);
+        if(w && Number.isInteger(selection.segIndex)){
+          removeWireSegment(w, selection.segIndex);
+        } else if (w){
+          wires = wires.filter(x=>x.id!==w.id);
+          selection={kind:null,id:null,segIndex:null};
+          redraw();
+        }
+        return;
+      }
+    }
+    redraw(); // refresh wire/comp hit gating for the new mode    
   }
 
   // ====== Component Drawing ======
@@ -242,233 +264,206 @@
   }
 
   function drawComponent(c){
-    if(!c.props) c.props = {}; // ensure props bag exists
-    // container group
+    if(!c.props) c.props = {};
     const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.classList.add('comp');
     g.setAttribute('data-id', c.id);
-    g.setAttribute('class','comp');
-    g.style.cursor = 'move';
 
-    // shadow / selection rect
-    const sel = document.createElementNS('http://www.w3.org/2000/svg','rect');
-    sel.setAttribute('x', c.x-60); sel.setAttribute('y', c.y-60); sel.setAttribute('width', 120); sel.setAttribute('height', 120);
-    sel.setAttribute('fill','none'); sel.setAttribute('stroke','transparent'); sel.setAttribute('stroke-width','20');
-    g.appendChild(sel);
-
-    // pins
-    const pins = compPinPositions(c);
-    for(const p of pins){
-      const pin = document.createElementNS('http://www.w3.org/2000/svg','circle');
-      pin.setAttribute('cx', p.x); pin.setAttribute('cy', p.y); pin.setAttribute('r', 4);
-      pin.setAttribute('fill','var(--pin)');
-      pin.setAttribute('data-pin', p.name);
-      g.appendChild(pin);
-    }
-
-    // symbol group (rotated)
-    const gg = document.createElementNS('http://www.w3.org/2000/svg','g');
-    gg.setAttribute('transform', `rotate(${c.rot} ${c.x} ${c.y})`);
-
-    // lead stubs for 2-pin parts
-    function lead(x1,y1,x2,y2){
-      const line = document.createElementNS('http://www.w3.org/2000/svg','line');
-      line.setAttribute('x1',x1); line.setAttribute('y1',y1); line.setAttribute('x2',x2); line.setAttribute('y2',y2);
-      line.setAttribute('stroke','var(--component)'); line.setAttribute('stroke-width','2');
-      gg.appendChild(line);
-    }
-
-    if(['resistor','capacitor','inductor','diode','battery','ac'].includes(c.type)){
-      // common anchors in un-rotated space
-      const ax = c.x - 48, bx = c.x + 48, y = c.y;
-      // outer leads
-      lead(ax, y, ax+12, y); lead(bx-12, y, bx, y);
-    }
-
-    if(c.type==='resistor'){
-      // zig-zag body
-      const path = document.createElementNS('http://www.w3.org/2000/svg','path');
-      const y=c.y, x=c.x-36;
-      const d = [
-        `M ${x} ${y}`,
-        `l 8 -10`, `l 8 20`, `l 8 -20`, `l 8 20`, `l 8 -20`, `l 8 20`,
-        `l 8 -10`
-      ].join(' ');
-      path.setAttribute('d', d);
-      path.setAttribute('fill','none'); path.setAttribute('stroke','var(--component)'); path.setAttribute('stroke-width','2');
-      gg.appendChild(path);
-    }
-
-    if(c.type==='capacitor'){
-      const y=c.y, x1=c.x-8, x2=c.x+8;
-      const p1 = document.createElementNS('http://www.w3.org/2000/svg','line');
-      p1.setAttribute('x1',x1); p1.setAttribute('y1',y-16); p1.setAttribute('x2',x1); p1.setAttribute('y2',y+16);
-      const p2 = document.createElementNS('http://www.w3.org/2000/svg','line');
-      p2.setAttribute('x1',x2); p2.setAttribute('y1',y-16); p2.setAttribute('x2',x2); p2.setAttribute('y2',y+16);
-      for(const el of [p1,p2]){ el.setAttribute('stroke','var(--component)'); el.setAttribute('stroke-width','2'); }
-      gg.appendChild(p1); gg.appendChild(p2);
-    }
-
-    if(c.type==='battery'){
-      // long plate = positive, short plate = negative
-      const y=c.y, xLong=c.x-10, xShort=c.x+6;
-      const longP = document.createElementNS('http://www.w3.org/2000/svg','line');
-      longP.setAttribute('x1',xLong); longP.setAttribute('y1',y-18); longP.setAttribute('x2',xLong); longP.setAttribute('y2',y+18);
-      const shortP = document.createElementNS('http://www.w3.org/2000/svg','line');
-      shortP.setAttribute('x1',xShort); shortP.setAttribute('y1',y-12); shortP.setAttribute('x2',xShort); shortP.setAttribute('y2',y+12);
-      for(const el of [longP,shortP]){ el.setAttribute('stroke','var(--component)'); el.setAttribute('stroke-width','2'); }
-      gg.appendChild(longP); gg.appendChild(shortP);
-    }
-
-    if(c.type==='ac'){
-      // circle with sine wave inside (two-pin device along main axis)
-      const circ = document.createElementNS('http://www.w3.org/2000/svg','circle');
-      circ.setAttribute('cx', c.x); circ.setAttribute('cy', c.y); circ.setAttribute('r', 14);
-      circ.setAttribute('fill','none'); circ.setAttribute('stroke','var(--component)'); circ.setAttribute('stroke-width','2');
-      const s = document.createElementNS('http://www.w3.org/2000/svg','path');
-      // small sine-ish squiggle inside the circle
-      s.setAttribute('d', `M ${c.x-10} ${c.y} q 5 -8 10 0 q 5 8 10 0`);
-      s.setAttribute('fill','none'); s.setAttribute('stroke','var(--component)'); s.setAttribute('stroke-width','2');
-      gg.appendChild(circ); gg.appendChild(s);
-    }    
-
-    if(c.type==='inductor'){
-      const y=c.y, start=c.x-28;
-      const path = document.createElementNS('http://www.w3.org/2000/svg','path');
-      const r=8; const d=[`M ${start} ${y}`];
-      for(let i=0;i<5;i++){
-        const cx = start + i*12 + 6; // center of hump
-        d.push(`q ${r} -${r} ${r*2} 0`);
-      }
-      path.setAttribute('d', d.join(' '));
-      path.setAttribute('fill','none'); path.setAttribute('stroke','var(--component)'); path.setAttribute('stroke-width','2');
-      gg.appendChild(path);
-    }
-
-    if(c.type==='diode'){
-      // triangle -> line (anode at left, cathode line at right in 0°)
-      const y=c.y, xL=c.x-24, xR=c.x+24;
-      const tri = document.createElementNS('http://www.w3.org/2000/svg','path');
-      tri.setAttribute('d', `M ${xL} ${y-16} L ${xL} ${y+16} L ${c.x} ${y} Z`);
-      tri.setAttribute('fill','none'); tri.setAttribute('stroke','var(--component)'); tri.setAttribute('stroke-width','2');
-      const bar = document.createElementNS('http://www.w3.org/2000/svg','line');
-      bar.setAttribute('x1', c.x+8); bar.setAttribute('y1', y-16); bar.setAttribute('x2', c.x+8); bar.setAttribute('y2', y+16);
-      bar.setAttribute('stroke','var(--component)'); bar.setAttribute('stroke-width','2');
-      gg.appendChild(tri); gg.appendChild(bar);
-    }
-
-    if(c.type==='npn' || c.type==='pnp'){
-      // minimal BJT symbol, base vertical, C up, E down, arrow on E (out for NPN, in for PNP)
-      const x=c.x, y=c.y; const r=20;
-      const base = line(x, y-28, x, y+28);
-      const cLine = line(x, y-10, x+30, y-30); // collector
-      const eLine = line(x, y+10, x+30, y+30); // emitter
-      // arrow on emitter
-      const arrowDir = (c.type==='npn')? 1 : -1; // 1 = outwards, -1 = into base
-      const ax = x+30, ay = y+30;
-      const arr = document.createElementNS('http://www.w3.org/2000/svg','path');
-      const dx = 8 * arrowDir; // direction relative to base
-      arr.setAttribute('d', `M ${ax} ${ay} l ${-dx} -6 l 0 12 Z`);
-      arr.setAttribute('fill','var(--component)');
-      function line(x1,y1,x2,y2){ const ln = document.createElementNS('http://www.w3.org/2000/svg','line'); ln.setAttribute('x1',x1); ln.setAttribute('y1',y1); ln.setAttribute('x2',x2); ln.setAttribute('y2',y2); ln.setAttribute('stroke','var(--component)'); ln.setAttribute('stroke-width','2'); return ln; }
-      gg.appendChild(base); gg.appendChild(cLine); gg.appendChild(eLine); gg.appendChild(arr);
-    }
-
-    if(c.type==='ground'){
-      // three descending bars centered at (c.x, c.y)
-      const y=c.y, x=c.x;
-      const l1 = document.createElementNS('http://www.w3.org/2000/svg','line');
-      l1.setAttribute('x1',x-16); l1.setAttribute('y1',y); l1.setAttribute('x2',x+16); l1.setAttribute('y2',y);
-      const l2 = document.createElementNS('http://www.w3.org/2000/svg','line');
-      l2.setAttribute('x1',x-10); l2.setAttribute('y1',y+6); l2.setAttribute('x2',x+10); l2.setAttribute('y2',y+6);
-      const l3 = document.createElementNS('http://www.w3.org/2000/svg','line');
-      l3.setAttribute('x1',x-4); l3.setAttribute('y1',y+12); l3.setAttribute('x2',x+4); l3.setAttribute('y2',y+12);
-      for(const el of [l1,l2,l3]){ el.setAttribute('stroke','var(--component)'); el.setAttribute('stroke-width','2'); }
-      gg.appendChild(l1); gg.appendChild(l2); gg.appendChild(l3);
-    }    
-
-    // label
-    const label = document.createElementNS('http://www.w3.org/2000/svg','text');
-    label.setAttribute('x', c.x); label.setAttribute('y', c.y+46); label.setAttribute('text-anchor','middle');
-    label.setAttribute('font-size','12'); label.setAttribute('fill','var(--ink)');
-    const valText = formatValue(c);
-    label.textContent = valText ? `${c.label} (${valText})` : c.label;    
-    gg.appendChild(label);
-    // voltage readout for battery / ac
-    if(c.type==='battery' || c.type==='ac'){
-      const vtxt = document.createElementNS('http://www.w3.org/2000/svg','text');
-      vtxt.setAttribute('x', c.x); vtxt.setAttribute('y', c.y+62);
-      vtxt.setAttribute('text-anchor','middle'); vtxt.setAttribute('font-size','12'); vtxt.setAttribute('fill','var(--ink)');
-      const v = (c.props && (c.props.voltage ?? '') !== '') ? `${c.props.voltage} V` : '';
-      vtxt.textContent = v;
-      gg.appendChild(vtxt);
-    }    
-
-    g.appendChild(gg);
-
-    // selection outline (visible only when selected; also highlighted on hover)
+    // selection outline
     const outline = document.createElementNS('http://www.w3.org/2000/svg','circle');
-    outline.setAttribute('cx', c.x); outline.setAttribute('cy', c.y); outline.setAttribute('r', 56);
-    outline.setAttribute('fill','none'); outline.setAttribute('stroke','transparent'); outline.setAttribute('stroke-width','2');
+    outline.setAttribute('r','56');
+    outline.setAttribute('cx', c.x);
+    outline.setAttribute('cy', c.y);
+    outline.setAttribute('fill','none');
+    outline.setAttribute('stroke','transparent');
+    outline.setAttribute('stroke-width','2');
     outline.setAttribute('data-outline','1');
     g.appendChild(outline);
+
+    // big invisible hit for easy click/drag
+    const hit = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    hit.setAttribute('x', c.x-60); hit.setAttribute('y', c.y-60);
+    hit.setAttribute('width', 120); hit.setAttribute('height', 120);
+    hit.setAttribute('fill','transparent');
+    g.appendChild(hit);
+
+    // pins
+    compPinPositions(c).forEach((p,idx)=>{
+      const pin = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      pin.setAttribute('cx', p.x); pin.setAttribute('cy', p.y);
+      pin.setAttribute('r', 3); pin.setAttribute('fill', 'var(--node)');
+      pin.setAttribute('data-pin', String(idx));
+      g.appendChild(pin);
+    });
+
     // hover cue
     g.addEventListener('pointerenter', ()=>{ g.classList.add('comp-hover'); });
     g.addEventListener('pointerleave', ()=>{ g.classList.remove('comp-hover'); });
-    // GATE POINTER EVENTS: components should NOT block clicks in Wire or Place modes
+
+    // Components should not block clicks when wiring or placing
     g.style.pointerEvents = (mode==='wire' || mode==='place') ? 'none' : 'auto';
 
-    // drag logic  (supports sliding along simple 2-point wires a component is inserted into)
-    let dragging=false, dragOff={x:0,y:0}, slideCtx=null;    
+    // ---- Drag + selection (mouse) ----
+    let dragging=false, dragOff={x:0,y:0}, slideCtx=null, dragStart=null;
     g.addEventListener('pointerdown', (e)=>{
       if(mode==='delete'){ removeComponent(c.id); return; }
-      if(mode==='select' || mode==='move'){
-        if(e.button!==0) return; // left button only
-        selecting('component', c.id);
-        dragging=true; 
-        const pt = svgPoint(e);
-        dragOff.x = c.x - pt.x; dragOff.y = c.y - pt.y;
-        slideCtx = buildSlideContext(c);        
-        // Safely capture the pointer (avoid InvalidStateError)
-        e.preventDefault();
-        if (typeof g.setPointerCapture === 'function' && e.isPrimary) {
-          try { g.setPointerCapture(e.pointerId); } catch(_) {}
-        }        
+      if(!(mode==='select' || mode==='move')) return;
+      if(e.button!==0) return;
+      // persist selection until user clicks elsewhere
+      selection = {kind:'component', id:c.id, segIndex:null};
+      renderInspector(); updateSelectionOutline();
+      dragging=true;
+      const pt = svgPoint(e);
+      dragOff.x = c.x - pt.x; dragOff.y = c.y - pt.y;
+      slideCtx = buildSlideContext(c);
+      const pins0 = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
+      const wsA = wiresEndingAt(pins0[0]);
+      const wsB = wiresEndingAt(pins0[1]||pins0[0]);
+      dragStart = {
+        x:c.x, y:c.y, pins:pins0,
+        embedded:(wsA.length===1 && wsB.length===1),
+        wA: wsA[0]||null, wB: wsB[0]||null
+      };
+      e.preventDefault();
+      if (typeof g.setPointerCapture === 'function' && e.isPrimary) {
+        try { g.setPointerCapture(e.pointerId); } catch(_) {}
       }
       e.stopPropagation();
     });
     g.addEventListener('pointermove', (e)=>{
       if(!dragging) return;
-      const p = svgPoint(e); 
+      const p = svgPoint(e);
       if(slideCtx){
-        // project movement along the slide axis and clamp between anchors
         if(slideCtx.axis==='x'){
           let nx = snap(p.x + dragOff.x);
           nx = Math.max(Math.min(slideCtx.max, nx), slideCtx.min);
-          c.x = nx; c.y = slideCtx.fixed; // lock to the wire line
-        } else if(slideCtx.axis==='y'){
+          c.x = nx; c.y = slideCtx.fixed;
+        }else{
           let ny = snap(p.y + dragOff.y);
           ny = Math.max(Math.min(slideCtx.max, ny), slideCtx.min);
           c.y = ny; c.x = slideCtx.fixed;
         }
-        // update wire endpoints to follow pins
-        const pins = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
-        adjustWireEnd(slideCtx.wA, slideCtx.pinAStart, pins[0]);
-        adjustWireEnd(slideCtx.wB, slideCtx.pinBStart, pins[1]);
-        slideCtx.pinAStart = pins[0]; slideCtx.pinBStart = pins[1];
-        redraw();
-      } else {
-        c.x = snap(p.x + dragOff.x); c.y = snap(p.y + dragOff.y); redrawCanvasOnly();
+        const pinsNow = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
+        adjustWireEnd(slideCtx.wA, slideCtx.pinAStart, pinsNow[0]);
+        adjustWireEnd(slideCtx.wB, slideCtx.pinBStart, pinsNow[1]);
+        slideCtx.pinAStart = pinsNow[0]; slideCtx.pinBStart = pinsNow[1];
+        updateComponentDOM(c); updateWireDOM(slideCtx.wA); updateWireDOM(slideCtx.wB);
+      }else{
+        c.x = snap(p.x + dragOff.x);
+        c.y = snap(p.y + dragOff.y);
+        updateComponentDOM(c);
       }
     });
     g.addEventListener('pointerup', (e)=>{
-      dragging=false;
       if (typeof g.releasePointerCapture === 'function' && e.isPrimary) {
         try { g.releasePointerCapture(e.pointerId); } catch(_) {}
+      }
+      if(!dragging) return;
+      dragging=false;
+      if(dragStart){
+        if(overlapsAnyOther(c)){
+          c.x = dragStart.x; c.y = dragStart.y;
+          if(slideCtx && dragStart.pins?.length===2){
+            adjustWireEnd(slideCtx.wA, slideCtx.pinAStart, dragStart.pins[0]);
+            adjustWireEnd(slideCtx.wB, slideCtx.pinBStart, dragStart.pins[1]);
+          }
+          updateComponentDOM(c);
+          if(slideCtx){ updateWireDOM(slideCtx.wA); updateWireDOM(slideCtx.wB); }
+        }else{
+          if(!dragStart.embedded){
+            const didBreak = breakWiresForComponent(c);
+            if(didBreak){ deleteBridgeBetweenPins(c); redraw(); }
+            else { updateComponentDOM(c); }
+          }else{
+            updateComponentDOM(c);
+            if(slideCtx){ updateWireDOM(slideCtx.wA); updateWireDOM(slideCtx.wB); }
+          }
+        }
+        dragStart=null;
       }
     });
     g.addEventListener('pointercancel', ()=>{ dragging=false; });
 
+    // draw symbol via helper
+    g.appendChild(buildSymbolGroup(c));
     return g;
+  }
+
+  // Build a fresh SVG group for a component’s symbol and label text.
+  function buildSymbolGroup(c){
+    const gg = document.createElementNS('http://www.w3.org/2000/svg','g');
+    gg.setAttribute('transform', `rotate(${c.rot} ${c.x} ${c.y})`);
+    const add = (el)=>{ gg.appendChild(el); return el; };
+    const line = (x1,y1,x2,y2)=>{ const ln = document.createElementNS('http://www.w3.org/2000/svg','line'); ln.setAttribute('x1',x1); ln.setAttribute('y1',y1); ln.setAttribute('x2',x2); ln.setAttribute('y2',y2); ln.setAttribute('stroke','var(--component)'); ln.setAttribute('stroke-width','2'); return add(ln); };
+    const path = (d)=>{ const p=document.createElementNS('http://www.w3.org/2000/svg','path'); p.setAttribute('d',d); p.setAttribute('fill','none'); p.setAttribute('stroke','var(--component)'); p.setAttribute('stroke-width','2'); return add(p); };
+
+    // two-pin lead stubs
+    if(['resistor','capacitor','inductor','diode','battery','ac'].includes(c.type)){
+      const ax = c.x - 48, bx = c.x + 48, y = c.y;
+      line(ax, y, ax+12, y); line(bx-12, y, bx, y);
+    }
+    if(c.type==='resistor'){
+      const y=c.y, x=c.x-36;
+      path(`M ${x} ${y} l 8 -10 l 8 20 l 8 -20 l 8 20 l 8 -20 l 8 20 l 8 -10`);
+    }
+    if(c.type==='capacitor'){
+      const y=c.y, x1=c.x-8, x2=c.x+8;
+      line(x1, y-16, x1, y+16);
+      line(x2, y-16, x2, y+16);
+    }
+    if(c.type==='inductor'){
+      const y=c.y, start=c.x-28, r=8; let d=`M ${start} ${y}`;
+      for(let i=0;i<5;i++) d += ` q ${r} -${r} ${r*2} 0`;
+      path(d);
+    }
+    if(c.type==='diode'){
+      const y=c.y, xL=c.x-24;
+      path(`M ${xL} ${y-16} L ${xL} ${y+16} L ${c.x} ${y} Z`);
+      line(c.x+8, y-16, c.x+8, y+16);
+    }
+    if(c.type==='battery'){
+      const y=c.y, xLong=c.x-10, xShort=c.x+6;
+      line(xLong, y-18, xLong, y+18);
+      line(xShort, y-12, xShort, y+12);
+    }
+    if(c.type==='ac'){
+      const circ = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      circ.setAttribute('cx', c.x); circ.setAttribute('cy', c.y); circ.setAttribute('r', 14);
+      circ.setAttribute('fill','none'); circ.setAttribute('stroke','var(--component)'); circ.setAttribute('stroke-width','2');
+      gg.appendChild(circ);
+      path(`M ${c.x-10} ${c.y} q 5 -8 10 0 q 5 8 10 0`);
+    }
+    if(c.type==='npn' || c.type==='pnp'){
+      const x=c.x, y=c.y, arrowOut = c.type==='npn';
+      line(x, y-28, x, y+28);         // base
+      line(x, y-10, x+30, y-30);      // collector
+      line(x, y+10, x+30, y+30);      // emitter
+      const arr = document.createElementNS('http://www.w3.org/2000/svg','path');
+      const dx = arrowOut ? 8 : -8;
+      arr.setAttribute('d', `M ${x+30} ${y+30} l ${-dx} -6 l 0 12 Z`);
+      arr.setAttribute('fill','var(--component)'); gg.appendChild(arr);
+    }
+    if(c.type==='ground'){
+      const y=c.y, x=c.x;
+      line(x-16, y,   x+16, y);
+      line(x-10, y+6, x+10, y+6);
+      line(x-4,  y+12, x+4, y+12);
+    }
+    // label (and optional voltage line)
+    const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+    label.setAttribute('x', c.x); label.setAttribute('y', c.y+46);
+    label.setAttribute('text-anchor','middle'); label.setAttribute('font-size','12'); label.setAttribute('fill','var(--ink)');
+    const valText = formatValue(c);
+    label.textContent = valText ? `${c.label} (${valText})` : c.label;
+    gg.appendChild(label);
+    if(c.type==='battery' || c.type==='ac'){
+      const vtxt = document.createElementNS('http://www.w3.org/2000/svg','text');
+      vtxt.setAttribute('x', c.x); vtxt.setAttribute('y', c.y+62);
+      vtxt.setAttribute('text-anchor','middle'); vtxt.setAttribute('font-size','12'); vtxt.setAttribute('fill','var(--ink)');
+      const v = (c.props && (c.props.voltage ?? '') !== '') ? `${c.props.voltage} V` : '';
+      vtxt.textContent = v; gg.appendChild(vtxt);
+    }
+    return gg;
   }
 
   function redrawCanvasOnly(){
@@ -519,15 +514,24 @@
 
       g.appendChild(hit);
       g.appendChild(vis);
+      // persistent selection highlight for a specific wire segment
+      if (selection.kind==='wire' && selection.id===w.id && Number.isInteger(selection.segIndex)) {
+        const i = selection.segIndex;
+        if (i>=0 && i < w.points.length-1){
+          const a = w.points[i], b = w.points[i+1];
+          const selSeg = document.createElementNS('http://www.w3.org/2000/svg','line');
+          selSeg.setAttribute('x1', a.x); selSeg.setAttribute('y1', a.y);
+          selSeg.setAttribute('x2', b.x); selSeg.setAttribute('y2', b.y);
+          selSeg.setAttribute('stroke','var(--select)');
+          selSeg.setAttribute('stroke-width','6');
+          selSeg.setAttribute('stroke-linecap','round');
+          selSeg.setAttribute('pointer-events','none');
+          g.appendChild(selSeg);
+        }
+      }      
       gWires.appendChild(g);
     }
-    // selection highlight
-    document.querySelectorAll('[data-outline]').forEach(el=>{
-      const parent = el.parentElement?.parentElement; // group -> comp group
-      const id = parent?.getAttribute('data-id');
-      const on = selection.kind==='component' && selection.id===id;
-      el.setAttribute('stroke', on? 'var(--select)':'transparent');
-    });
+    updateSelectionOutline();    
     updateCounts();
   }
 
@@ -536,26 +540,48 @@
     renderInspector();
   }
 
+  // Update only the selection outline without rebuilding the DOM
+  function updateSelectionOutline(){
+    document.querySelectorAll('[data-outline]').forEach(el=>{
+      // The outline circle lives directly under g.comp; use closest to get the right group.
+      const compG = el.closest('g.comp');
+      const id = compG?.getAttribute('data-id');
+      const on = selection.kind==='component' && selection.id===id;
+      el.setAttribute('stroke', on ? 'var(--select)' : 'transparent');
+    });    
+  }  
+
   function selecting(kind, id, segIndex=null){ selection = {kind, id, segIndex}; redraw(); }
 
-  function removeComponent(id){ 
+  function removeComponent(id){
     const comp = components.find(c=>c.id===id);
-    // If this is a 2-pin part inserted in a simple axis-aligned wire, mend the wire
-    if(comp && ['resistor','capacitor','inductor','diode','battery','ac'].includes(comp.type)){
-      const pins = compPinPositions(comp).map(p=>({x:snap(p.x), y:snap(p.y)}));
-      if(pins.length===2){
-        const wA = wiresEndingAt(pins[0]); const wB = wiresEndingAt(pins[1]);
-        if(wA.length===1 && wB.length===1 && wA[0].points.length===2 && wB[0].points.length===2){
-          const endA = otherEnd(wA[0], pins[0]), endB = otherEnd(wB[0], pins[1]);
-          // Replace with a single segment between the far ends
-          wires = wires.filter(w=> w!==wA[0] && w!==wB[0]);
-          wires.push({ id: uid('wire'), points:[ {x:endA.x,y:endA.y}, {x:endB.x,y:endB.y} ]});
+    // Mend only for simple 2-pin parts
+    if (comp && ['resistor','capacitor','inductor','diode','battery','ac'].includes(comp.type)) {
+      const pins = compPinPositions(comp).map(p=>({ x:snap(p.x), y:snap(p.y) }));
+      if (pins.length === 2) {
+        const axis = axisFromPins(pins);
+        const wA = wireAlongAxisAt(pins[0], axis);
+        const wB = wireAlongAxisAt(pins[1], axis);
+        if (wA && wB){
+          // Reconstruct a single wire by concatenating the two polylines at the gap.
+          // We do NOT jump to far endpoints; we join using each side’s vertices next to the pin.
+          const aPoints = orderPointsEndingAt(wA.points, pins[0]); // ... , pin
+          const bPoints = orderPointsStartingAt(wB.points, pins[1]); // pin , ...
+          // Drop the pins, then join: [...A_without_pin, ...B_without_pin]
+          const left  = aPoints.slice(0, aPoints.length - 1); // up to (but not including) pin
+          const right = bPoints.slice(1);                     // from first after pin
+          const joined = left.concat(right);
+          // If the join introduces duplicate vertex, collapse it
+          const merged = collapseDuplicateVertices(joined);
+          // Replace the two wires with a single merged polyline
+          wires = wires.filter(w => w!==wA && w!==wB);
+          wires.push({ id: uid('wire'), points: merged });
         }
       }
     }
-    components = components.filter(c=>c.id!==id); 
-    if(selection.id===id) selection={kind:null,id:null}; 
-    redraw(); 
+    components = components.filter(c => c.id !== id);
+    if (selection.id === id) selection = { kind:null, id:null, segIndex:null };
+    redraw();
   }
 
   function removeWireAtPoint(w, p){
@@ -626,10 +652,12 @@
 
   function breakWiresForComponent(c){
     // Break wires at EACH connection pin (not at component center)
+    let broke=false;
     const pins = compPinPositions(c);
     for (const pin of pins){
-      breakNearestWireAtPin(pin);
+      if(breakNearestWireAtPin(pin)) broke=true;
     }
+    return broke;
   }
   function breakNearestWireAtPin(pin){
     // search all wires/segments for nearest to this pin; split if close
@@ -643,7 +671,7 @@
         const isHorizontal = (a.y===b.y);
         const withinVert = isVertical && Math.abs(pin.x - a.x) <= GRID/2 && pin.y >= Math.min(a.y,b.y) && pin.y <= Math.max(a.y,b.y);
         const withinHorz = isHorizontal && Math.abs(pin.y - a.y) <= GRID/2 && pin.x >= Math.min(a.x,b.x) && pin.x <= Math.max(a.x,b.x);
-        const nearInterior = (t>0.001 && t<0.999 && dist <= 18);
+        const nearInterior = (t>0.001 && t<0.999 && dist <= 20);        
         if( withinVert || withinHorz || nearInterior ){
           // split exactly at the pin location (snapped), not projection
           const bp = {x:snap(pin.x), y:snap(pin.y)};
@@ -660,7 +688,7 @@
   }
   // Remove the small bridge wire between the two pins of a 2-pin part
   function deleteBridgeBetweenPins(c){
-    const twoPin = ['resistor','capacitor','inductor','diode','battery'];
+    const twoPin = ['resistor','capacitor','inductor','diode','battery','ac'];
     if(!twoPin.includes(c.type)) return;
     const pins = compPinPositions(c);
     if(pins.length !== 2) return;
@@ -696,39 +724,117 @@
     const a=w.points[0], b=w.points[w.points.length-1];
     return eqPt(a,endPt)? b : a;
   }
+  function otherEndpointOf(w, endPt){
+    const a=w.points[0], b=w.points[w.points.length-1];
+    return eqPt(a,endPt)? b : a;
+  }  
+  function adjacentOther(w, endPt){
+    // return the vertex adjacent to the endpoint that equals endPt
+    const n = w.points.length;
+    if(n<2) return null;
+    if(eqPt(w.points[0], endPt)) return w.points[1];
+    if(eqPt(w.points[n-1], endPt)) return w.points[n-2];
+    return null;
+  }  
+
   function buildSlideContext(c){
     // only for simple 2-pin parts
     if(!['resistor','capacitor','inductor','diode','battery','ac'].includes(c.type)) return null;
     const pins = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
     if(pins.length!==2) return null;
-    const wAarr = wiresEndingAt(pins[0]);
-    const wBarr = wiresEndingAt(pins[1]);
-    if(wAarr.length!==1 || wBarr.length!==1) return null;
-    const wA = wAarr[0], wB = wBarr[0];
-    if(wA.points.length!==2 || wB.points.length!==2) return null;
-    // axis aligned only
-    const axisX = pins[0].y===pins[1].y && wA.points[0].y===wA.points[1].y && wB.points[0].y===wB.points[1].y;
-    const axisY = pins[0].x===pins[1].x && wA.points[0].x===wA.points[1].x && wB.points[0].x===wB.points[1].x;
-    if(!(axisX||axisY)) return null;
-    const aOther = otherEnd(wA, pins[0]);
-    const bOther = otherEnd(wB, pins[1]);
-    if(axisX){
+    const axis = axisFromPins(pins);
+    if(!axis) return null;
+    const wA = wireAlongAxisAt(pins[0], axis);
+    const wB = wireAlongAxisAt(pins[1], axis);
+    if(!wA || !wB) return null;
+    const aAdj = adjacentOther(wA, pins[0]);
+    const bAdj = adjacentOther(wB, pins[1]);
+    if(!aAdj || !bAdj) return null;
+    if(axis==='x'){
       const fixed = pins[0].y;
-      const min = Math.min(aOther.x, bOther.x);
-      const max = Math.max(aOther.x, bOther.x);
+      const min = Math.min(aAdj.x, bAdj.x);
+      const max = Math.max(aAdj.x, bAdj.x);
       return {axis:'x', fixed, min, max, wA, wB, pinAStart:pins[0], pinBStart:pins[1]};
     } else {
       const fixed = pins[0].x;
-      const min = Math.min(aOther.y, bOther.y);
-      const max = Math.max(aOther.y, bOther.y);
+      const min = Math.min(aAdj.y, bAdj.y);
+      const max = Math.max(aAdj.y, bAdj.y);
       return {axis:'y', fixed, min, max, wA, wB, pinAStart:pins[0], pinBStart:pins[1]};
     }
   }
+
   function adjustWireEnd(w, oldEnd, newEnd){
     // replace whichever endpoint equals oldEnd with newEnd
     if(eqPt(w.points[0], oldEnd)) w.points[0] = {...newEnd};
     else if(eqPt(w.points[w.points.length-1], oldEnd)) w.points[w.points.length-1] = {...newEnd};
   }
+  function replaceEndpoint(w, oldEnd, newEnd){
+    // Replace a matching endpoint in w with newEnd, preserving all other vertices.
+    if(eqPt(w.points[0], oldEnd)) {
+      w.points[0] = {...newEnd};
+      // collapse duplicate vertex if needed
+      if(w.points.length>1 && eqPt(w.points[0], w.points[1])) w.points.shift();
+    } else if(eqPt(w.points[w.points.length-1], oldEnd)) {
+      w.points[w.points.length-1] = {...newEnd};
+      if(w.points.length>1 && eqPt(w.points[w.points.length-1], w.points[w.points.length-2])) w.points.pop();
+    }
+  }
+
+  // Determine axis from a 2-pin part’s pin positions ('x' = horizontal, 'y' = vertical)
+  function axisFromPins(pins){
+    if(!pins || pins.length<2) return null;
+    if(pins[0].y === pins[1].y) return 'x';
+    if(pins[0].x === pins[1].x) return 'y';
+    return null;
+  }
+  // Pick the wire at 'pt' that runs along the given axis (ignores branches at junctions)
+  function wireAlongAxisAt(pt, axis){
+    const ws = wiresEndingAt(pt);
+    for(const w of ws){
+      const adj = adjacentOther(w, pt);
+      if(!adj) continue;
+      if(axis==='x' && adj.y === pt.y) return w;   // horizontal wire
+      if(axis==='y' && adj.x === pt.x) return w;   // vertical wire
+    }
+    return null;
+  }  
+
+  // ------- Lightweight DOM updaters (avoid full redraw during drag) -------
+  function updateComponentDOM(c){
+    const g = gComps.querySelector(`g.comp[data-id="${c.id}"]`); if(!g) return;
+    // selection outline & hit rect
+    const outline = g.querySelector('[data-outline]');
+    if(outline){ outline.setAttribute('cx', c.x); outline.setAttribute('cy', c.y); }
+    const hit = g.querySelector('rect');
+    if(hit){ hit.setAttribute('x', c.x-60); hit.setAttribute('y', c.y-60); }
+    // pins
+    const pins = compPinPositions(c);
+    const pinEls = g.querySelectorAll('circle[data-pin]');
+    for(let i=0;i<Math.min(pinEls.length, pins.length);i++){
+      pinEls[i].setAttribute('cx', pins[i].x);
+      pinEls[i].setAttribute('cy', pins[i].y);
+    }
+    // Rebuild the inner symbol group so absolute geometry (lines/paths) follows new x/y.
+    rebuildSymbolGroup(c, g);
+  }
+
+  // Replace the first-level symbol <g> inside a component with a fresh one.
+  function rebuildSymbolGroup(c, g){
+    const old = g.querySelector(':scope > g'); // the inner symbol group we appended in drawComponent
+    const fresh = buildSymbolGroup(c);
+    if(old) g.replaceChild(fresh, old); else g.appendChild(fresh);
+  }
+
+  function wirePointsString(w){ return w.points.map(p=>`${p.x},${p.y}`).join(' '); }
+
+  function updateWireDOM(w){
+    if(!w) return;
+    const group = gWires.querySelector(`g[data-id="${w.id}"]`);
+    if(!group) return;
+    const polys = group.querySelectorAll('polyline');
+    const pts = wirePointsString(w);
+    polys.forEach(pl=> pl.setAttribute('points', pts));
+  }  
 
   // ====== Interaction ======
   svg.addEventListener('pointerdown', (e)=>{
@@ -760,9 +866,14 @@
       renderDrawing();
     }
     if(mode==='select'){
-      // clicking empty space clears selection
-      selection={kind:null,id:null}; redraw();
-    }
+      // Clear selection only if the click is NOT on a component or a wire
+      const onComp = e.target.closest && e.target.closest('g.comp');
+      const onWire = e.target.closest && e.target.closest('#wires g');
+      if(!onComp && !onWire){
+        selection = {kind:null,id:null,segIndex:null};
+        redraw();
+      }
+    }    
     if(mode==='pan' && e.button===0){
       beginPan(e);
       return;
@@ -798,7 +909,7 @@
   svg.addEventListener('mousedown', (e)=>{ if(e.button===1){ e.preventDefault(); beginPan(e); } });
   svg.addEventListener('auxclick', (e)=>{ if(e.button===1){ e.preventDefault(); } });
 
-  // Zoom on wheel, centered on mouse location
+  // Zoom on wheel, centered on mouse location (keeps mouse position stable in view)
   svg.addEventListener('wheel', (e)=>{
     e.preventDefault();
     const scale = (e.deltaY < 0) ? 1.1 : (1/1.1);
@@ -807,8 +918,12 @@
     if (newZoom === oldZoom) return;
     // focal point in svg coords
     const fp = svgPoint(e);
-    const oldW = BASE_W / oldZoom, oldH = BASE_H / oldZoom;
-    const newW = BASE_W / newZoom, newH = BASE_H / newZoom;
+    // Use current/effective view sizes to avoid jumps on non-16:10 canvases
+    const oldW = viewW, oldH = viewH;
+    const vw = Math.max(1, svg.clientWidth), vh = Math.max(1, svg.clientHeight);
+    const aspect = vw / vh;
+    const newW = (BASE_W / newZoom);
+    const newH = newW / aspect;    
     viewX = fp.x - (fp.x - viewX) * (newW / oldW);
     viewY = fp.y - (fp.y - viewY) * (newH / oldH);
     zoom = newZoom; 
@@ -875,7 +990,7 @@
   // ----- Crosshair overlay -----
   function clearCrosshair(){ gOverlay.replaceChildren(); }
   function renderCrosshair(x,y){
-    const w = BASE_W / zoom, h = BASE_H / zoom;
+    const w = viewW, h = viewH;
     gOverlay.replaceChildren();
     const hline = document.createElementNS('http://www.w3.org/2000/svg','line');
     hline.setAttribute('x1', 0); hline.setAttribute('y1', y);
@@ -903,8 +1018,9 @@
     const c = components.find(x=>x.id===selection.id); if(!c) return;
     c.rot = (c.rot + 90)%360;
     // After rotation, if pins now cross a wire, split and remove bridge
-    breakWiresForComponent(c);
-    deleteBridgeBetweenPins(c);
+    if(breakWiresForComponent(c)){
+      deleteBridgeBetweenPins(c);
+    }    
     redraw();
   }
 
@@ -1066,6 +1182,21 @@
     if(kind==='inductor') return 'H';
     return '';
   }
+  // ====== Embed / overlap helpers ======
+  function isEmbedded(c){
+    const pins = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
+    if(pins.length<2) return false;
+    return wiresEndingAt(pins[0]).length===1 && wiresEndingAt(pins[1]).length===1;
+  }
+  function overlapsAnyOther(c){
+    const R = 56; // same as selection outline radius
+    for(const o of components){
+      if(o.id===c.id) continue;
+      const dx = o.x - c.x, dy = o.y - c.y;
+      if((dx*dx + dy*dy) < (R*R)) return true;
+    }
+    return false;
+  }  
 
   // ====== Move helpers (mouse drag already handled; this handles arrow keys & clamping) ======
   function moveSelectedBy(dx, dy){
@@ -1091,6 +1222,37 @@
       c.x = snap(c.x + dx); c.y = snap(c.y + dy);
       redrawCanvasOnly();
     }
+  }
+
+  // --- Mend helpers ---
+  function indexOfPoint(pts, p){
+    for(let i=0;i<pts.length;i++){ if(pts[i].x===p.x && pts[i].y===p.y) return i; }
+    return -1;
+  }
+  // Return a copy whose LAST point is 'pin'. If 'pin' is interior, keep only the side up to the pin.
+  function orderPointsEndingAt(pts, pin){
+    const n = pts.length;
+    if(n===0) return pts.slice();
+    if(pts[n-1].x===pin.x && pts[n-1].y===pin.y) return pts.slice();
+    if(pts[0].x===pin.x && pts[0].y===pin.y) return pts.slice().reverse();
+    const k = indexOfPoint(pts, pin);
+    return (k>=0) ? pts.slice(0, k+1) : pts.slice();
+  }
+  // Return a copy whose FIRST point is 'pin'. If 'pin' is interior, keep only the side from the pin.
+  function orderPointsStartingAt(pts, pin){
+    const n = pts.length;
+    if(n===0) return pts.slice();
+    if(pts[0].x===pin.x && pts[0].y===pin.y) return pts.slice();
+    if(pts[n-1].x===pin.x && pts[n-1].y===pin.y) return pts.slice().reverse();
+    const k = indexOfPoint(pts, pin);
+    return (k>=0) ? pts.slice(k) : pts.slice();
+  }
+  function collapseDuplicateVertices(pts){
+    const out=[]; for(const p of pts){
+      const last = out[out.length-1];
+      if(!last || last.x!==p.x || last.y!==p.y) out.push({x:p.x, y:p.y});
+    }
+    return out;
   }  
 
   // ====== Save / Load ======
