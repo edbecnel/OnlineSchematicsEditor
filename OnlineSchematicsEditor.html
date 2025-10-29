@@ -13,6 +13,19 @@
     body{margin:0; font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color:var(--ink); background:var(--bg);}
     .app{display:grid; grid-template-columns: 320px 1fr 320px; grid-template-rows:auto 1fr; height:100%;}
     header{grid-column: 1/4; display:flex; align-items:center; gap:.5rem; padding:.5rem .75rem; background:var(--panel); border-bottom:1px solid #22262f; position:sticky; top:0; z-index:3}
+    /* Keep everything on one row (no wrap); we'll popup sub-types absolutely */
+    header{ flex-wrap: nowrap; align-items: center; }
+    /* Thin vertical separator between mode buttons and components */
+    .vsep{ width:1px; height:32px; background:#22262f; margin:0 .5rem; border-radius:1px; }
+    /* Sub-type popup: small, only as wide as content, positioned under the Diode button */
+    #paletteRow2{
+      position:absolute;
+      display:none;
+      width:max-content;            /* only as wide as its contents */
+      pointer-events:auto;
+      z-index:5;                    /* above header background */
+    }
+    #paletteRow2 select{ width:auto; white-space:nowrap; }
     header .group{display:flex; gap:.25rem; align-items:center; background:#0e1219; padding:.25rem; border-radius:10px; border:1px solid #1e2430}
     button{appearance:none; background:#0e1219; border:1px solid #273042; color:var(--ink); padding:.45rem .6rem; border-radius:8px; cursor:pointer; font-size:.92rem}
     button:hover{border-color:#3a4a68}
@@ -74,6 +87,17 @@
       stroke-width: 2;
       stroke-dasharray: 6 4;
       pointer-events: none;
+    }
+    /* Inspector value + units on a single line, no wrapping */
+    #inspector .hstack{ display:flex; gap:8px; align-items:center; }
+    #inspector .hstack input[type="text"]{ flex:1 1 0; min-width:0; }     /* wide value box */
+    /* Units dropdown: measure to content via JS, but cap visually via CSS too */
+    #inspector .hstack select{
+      flex:0 0 auto;
+      min-width:72px;
+      max-width:50%;                 /* hard cap: never exceed half the row */
+      white-space:nowrap;
+      width:auto;                    /* prevent global select{width:100%} */
     }    
   </style>
 </head>
@@ -87,7 +111,8 @@
       <button data-mode="pan" title="Pan (P or MMB drag)">Pan</button>
       <button data-mode="move" title="Move selected (M / Arrow keys)">Move</button>      
     </div>
-    <div class="group" id="palette">
+    <div class="vsep"></div> 
+    <div class="group" id="paletteRow1">
       <button data-tool="resistor" title="Place Resistor (R)">Resistor</button>
       <button data-tool="capacitor" title="Place Capacitor (C)">Capacitor</button>
       <button data-tool="inductor" title="Place Inductor (L)">Inductor</button>
@@ -98,6 +123,19 @@
       <button data-tool="battery" title="Place Battery">Battery</button>
       <button data-tool="ac" title="Place AC Source">AC Source</button>
     </div>
+    <!-- Sub-type row (appears when a type with subtypes is active; for now: Diode) -->
+    <div class="group" id="paletteRow2" style="display:none">
+      <select id="diodeSelect" title="Diode subtype">
+        <option value="generic" selected>Generic</option>
+        <option value="schottky">Schottky</option>
+        <option value="zener">Zener</option>
+        <option value="led">Light-emitting (LED)</option>
+        <option value="photo">Photo</option>
+        <option value="tunnel">Tunnel</option>
+        <option value="varactor">Varactor / Varicap</option>
+        <option value="laser">Laser</option>
+      </select>
+    </div>    
     <div class="group">
       <button id="rotateBtn" title="Rotate 90° (R)">Rotate</button>
       <button id="clearBtn" class="danger" title="Clear (Ctrl+K)">Clear</button>
@@ -228,6 +266,9 @@
   }
 
   let counters = { resistor:1, capacitor:1, inductor:1, diode:1, npn:1, pnp:1, ground:1, battery:1, ac:1, wire:1 };
+  // Palette state: diode subtype selection
+  let diodeSubtype = 'generic';
+
   // ====== Unit options for Value fields ======
   const UNIT_OPTIONS = {
     resistor: ['T\u03A9','G\u03A9','M\u03A9','k\u03A9','\u03A9','m\u03A9'],                // TΩ … mΩ
@@ -439,9 +480,8 @@
       path(d);
     }
     if(c.type==='diode'){
-      const y=c.y, xL=c.x-24;
-      path(`M ${xL} ${y-16} L ${xL} ${y+16} L ${c.x} ${y} Z`);
-      line(c.x+8, y-16, c.x+8, y+16);
+      // subtype-aware diode rendering
+      drawDiodeInto(gg, c, (c.props && c.props.subtype) ? c.props.subtype : 'generic');      
     }
     if(c.type==='battery'){
       const y=c.y, xLong=c.x-10, xShort=c.x+6;
@@ -487,6 +527,62 @@
     }
     return gg;
   }
+
+  // Draw diode into existing symbol group 'gg' honoring rotation already set on gg.
+  function drawDiodeInto(gg, c, subtype){
+    const stroke='var(--component)'; const sw=2;
+    const add = (el)=>{ gg.appendChild(el); return el; };
+    const mk = (tag)=> document.createElementNS('http://www.w3.org/2000/svg', tag);
+    const lineEl = (x1,y1,x2,y2,w=sw)=>{ const ln=mk('line'); ln.setAttribute('x1',x1); ln.setAttribute('y1',y1); ln.setAttribute('x2',x2); ln.setAttribute('y2',y2); ln.setAttribute('stroke',stroke); ln.setAttribute('stroke-width',w); ln.setAttribute('fill','none'); return add(ln); };
+    const pathEl = (d,w=sw)=>{ const p=mk('path'); p.setAttribute('d',d); p.setAttribute('stroke',stroke); p.setAttribute('stroke-width',w); p.setAttribute('fill','none'); return add(p); };
+    // Base geometry around center
+    const y=c.y, xTri=c.x-24;
+    // Triangle (anode) and bar (cathode)
+    pathEl(`M ${xTri} ${y-16} L ${xTri} ${y+16} L ${c.x} ${y} Z`);
+    lineEl(c.x+8, y-16, c.x+8, y+16); // cathode bar
+    // Subtype adorners near cathode side
+    const cx=c.x+8, cy=y;
+    const addArrow = (outward=true)=>{
+      const dir = outward ? 1 : -1, ax = cx + (outward?10:-10);
+      pathEl(`M ${ax} ${cy-10} l ${6*dir} -6 m -6 6 l ${6*dir} 6`);
+      pathEl(`M ${ax} ${cy+10} l ${6*dir} -6 m -6 6 l ${6*dir} 6`);
+    };
+    switch(String(subtype||'generic').toLowerCase()){
+      case 'zener':
+        // Bent cathode: two short slanted ticks into bar
+        lineEl(cx-14, cy-6, cx, cy);
+        lineEl(cx-14, cy+6, cx, cy);
+        break;
+      case 'schottky':
+        // Schottky: small second bar close to cathode
+        lineEl(cx-6, cy-12, cx-6, cy+12);
+        break;
+      case 'led':
+        addArrow(true);
+        break;
+      case 'photo':
+        addArrow(false);
+        break;
+      case 'tunnel':
+        // Tunnel/Esaki: extra vertical bar near cathode
+        lineEl(cx-10, cy-12, cx-10, cy+12);
+        break;
+      case 'varactor':
+      case 'varicap':
+        // Varactor: parallel plate near cathode (capacitor-like)
+        lineEl(cx+8, cy-12, cx+8, cy+12);
+        break;
+      case 'laser':
+        // Laser diode: LED arrows + cavity line
+        addArrow(true);
+        lineEl(cx+14, cy-14, cx+14, cy+14);
+        break;
+      case 'generic':
+      default:
+        // no extra marks
+        break;
+    }
+  }  
 
   function redrawCanvasOnly(){
     // components
@@ -619,9 +715,10 @@
      // Remove original wire
      wires = wires.filter(x => x.id !== w.id);
      // Add split pieces back if they contain at least one segment
-     if (left.length  >= 2) wires.push({ id: uid('wire'), points: left });
-     if (right.length >= 2) wires.push({ id: uid('wire'), points: right });
- 
+     const L = normalizedPolylineOrNull(left);
+     const R = normalizedPolylineOrNull(right);
+     if (L) wires.push({ id: uid('wire'), points: L });
+     if (R) wires.push({ id: uid('wire'), points: R }); 
      if (selection.id === w.id) selection = { kind:null, id:null, segIndex:null };
      redraw();
    }  
@@ -821,11 +918,14 @@
         if( withinVert || withinHorz || nearInterior ){
           // For angled (nearInterior), split at the exact projection q; else use snapped pin
           const bp = nearInterior ? {x:q.x, y:q.y} : {x:snap(pin.x), y:snap(pin.y)};
-          const left = w.points.slice(0,i+1).concat([bp]);
+          const left  = w.points.slice(0,i+1).concat([bp]);
           const right = [bp].concat(w.points.slice(i+1));
+          // replace original with normalized children (drop degenerate)
           wires = wires.filter(x=>x.id!==w.id);
-          if(left.length>=2) wires.push({id:uid('wire'), points:left});
-          if(right.length>=2) wires.push({id:uid('wire'), points:right});
+          const L = normalizedPolylineOrNull(left);
+          const R = normalizedPolylineOrNull(right);
+          if (L) wires.push({ id: uid('wire'), points: L });
+          if (R) wires.push({ id: uid('wire'), points: R });
           return true;
         }
       }
@@ -1009,6 +1109,7 @@
         if(hit){ at = hit.q; rot = normDeg(hit.angle); }
       }
       const comp = { id, type:placeType, x:at.x, y:at.y, rot, label:`${labelPrefix}${counters[placeType]-1}`, value:'', props:{} };
+      if(placeType==='diode'){ comp.props.subtype = diodeSubtype; }
       components.push(comp);
       // Break wires at pins and remove inner bridge segment for 2-pin parts
       breakWiresForComponent(comp);
@@ -1215,7 +1316,8 @@
       const hit = nearestSegmentAtPoint(pos, 18);
       if(hit){ at = hit.q; rot = normDeg(hit.angle); }
     }
-    const ghost = { id:'__ghost__', type, x:at.x, y:at.y, rot, label:'', value:'' };
+    const ghost = { id:'__ghost__', type, x:at.x, y:at.y, rot, label:'', value:'', props:{} };
+    if(type==='diode'){ ghost.props.subtype = diodeSubtype; }    
     ghostEl = drawComponent(ghost);
     ghostEl.style.opacity = '0.5';
     ghostEl.style.pointerEvents = 'none';
@@ -1251,10 +1353,51 @@
     }
   });  
 
-  document.getElementById('palette').addEventListener('click', (e)=>{
+  const paletteRow2 = document.getElementById('paletteRow2');
+  function positionSubtypeDropdown(){
+    if(!paletteRow2) return;
+    const headerEl = document.querySelector('header');
+    const diodeBtn = document.querySelector('#paletteRow1 button[data-tool="diode"]');
+    if(!headerEl || !diodeBtn) return;
+    const hb = headerEl.getBoundingClientRect();
+    const bb = diodeBtn.getBoundingClientRect();
+    // Position just under the Diode button, with a small vertical gap
+    paletteRow2.style.left = (bb.left - hb.left) + 'px';
+    paletteRow2.style.top  = (bb.bottom - hb.top + 6) + 'px';
+  }
+  window.addEventListener('resize', ()=>{ if(paletteRow2.style.display!=='none') positionSubtypeDropdown(); });
+
+  document.getElementById('paletteRow1').addEventListener('click', (e)=>{
     const btn = e.target.closest('button'); if(!btn) return;
     placeType = btn.dataset.tool; setMode('place');
+    // Reveal sub-type row only for types that have subtypes (currently: diode)
+    if (placeType === 'diode') {
+      paletteRow2.style.display = 'block';
+      // keep dropdown reflecting last chosen subtype
+      const ds = document.getElementById('diodeSelect'); if (ds) ds.value = diodeSubtype;
+      positionSubtypeDropdown();
+    } else {
+      paletteRow2.style.display = 'none';
+    }    
   });
+  // Diode subtype select → enter Place mode for diode using chosen subtype
+  const diodeSel = document.getElementById('diodeSelect');
+  if (diodeSel){
+    diodeSel.value = diodeSubtype;
+    diodeSel.addEventListener('change', ()=>{
+      diodeSubtype = diodeSel.value || 'generic';
+      placeType = 'diode'; setMode('place');
+      // ensure the subtype row is visible while placing diodes
+      paletteRow2.style.display = 'block';
+      positionSubtypeDropdown();      
+    });
+    // clicking the dropdown should also arm diode placement without changing the value
+    diodeSel.addEventListener('mousedown', ()=>{
+      placeType='diode'; setMode('place');
+      paletteRow2.style.display = 'block';
+      positionSubtypeDropdown();
+    });
+  }
 
   document.getElementById('rotateBtn').addEventListener('click', rotateSelected);
 
@@ -1336,9 +1479,7 @@
       if(!c.props) c.props = {};
       const typeKey = c.type;
       const container = document.createElement('div');
-      container.style.display = 'grid';
-      container.style.gridTemplateColumns = '1fr 90px';
-      container.style.gap = '6px';
+      container.className = 'hstack';      
       // numeric / text value
       const valInput = document.createElement('input');
       valInput.type = 'text';
@@ -1352,7 +1493,27 @@
       container.appendChild(sel);
       wrap.appendChild(rowPair('Value', container));
     } else if (c.type==='diode'){
+      // Value (optional text) for diode
       wrap.appendChild(rowPair('Value', input(c.value||'', v=>{ c.value=v; redrawCanvasOnly(); } )));
+      // Subtype (editable)
+      const subSel = document.createElement('select');
+      ['generic','schottky','zener','led','photo','tunnel','varactor','laser'].forEach(v=>{
+        const o=document.createElement('option'); o.value=v;
+        o.textContent = ({
+          generic:'Generic', schottky:'Schottky', zener:'Zener',
+          led:'Light-emitting (LED)', photo:'Photo', tunnel:'Tunnel',
+          varactor:'Varactor / Varicap', laser:'Laser'
+        })[v]; subSel.appendChild(o);
+      });
+      subSel.value = (c.props && c.props.subtype) ? c.props.subtype : 'generic';
+      subSel.onchange = ()=>{
+        if(!c.props) c.props = {};
+        c.props.subtype = subSel.value;
+        // also remember for palette placements
+        diodeSubtype = subSel.value;
+        redrawCanvasOnly();
+      };
+      wrap.appendChild(rowPair('Subtype', subSel));      
     }
 
     // voltage for DC battery & AC source
@@ -1366,6 +1527,8 @@
     wrap.appendChild(rowPair('Rotation', number(c.rot, v=>{ c.rot = (Math.round(v/90)*90)%360; redrawCanvasOnly(); } )));
 
     inspector.appendChild(wrap);
+    // After the DOM is in place, size any Value/Units selects to their content (capped at 50%)
+    fitInspectorUnitSelects();    
   }
 
   function rowPair(lbl, control){
@@ -1385,6 +1548,39 @@
     sel.onchange = ()=> onChange(sel.value);
     return sel;
   }
+  // === Size the units <select> to longest option text (but ≤ 50% of container width) ===
+  function fitInspectorUnitSelects(){
+    const sels = inspector.querySelectorAll('.hstack select');
+    sels.forEach(sizeUnitSelectToContent);
+  }
+  function sizeUnitSelectToContent(sel){
+    // Only size units inside a value row (class 'hstack'); skip other selects (e.g., diode subtype)
+    const row = sel.closest('.hstack'); if(!row) return;
+    // Measure longest option text using canvas with the select's computed font
+    const cs = getComputedStyle(sel);
+    const font = cs.font || `${cs.fontStyle} ${cs.fontVariant} ${cs.fontWeight} ${cs.fontSize}/${cs.lineHeight} ${cs.fontFamily}`;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.font = font;
+    let maxText = 0;
+    Array.from(sel.options).forEach(o=>{
+      const w = ctx.measureText(o.textContent || '').width;
+      if (w > maxText) maxText = w;
+    });
+    // Account for select paddings + arrow affordance (~36px is a good cross-browser fudge)
+    const pad = 36;
+    const desired = Math.ceil(maxText + pad);
+    // Cap at 50% of the row's width
+    const rowW = row.getBoundingClientRect().width || 0;
+    const cap = Math.max(0, Math.floor(rowW * 0.5));
+    const finalW = Math.min(desired, cap);
+    sel.style.width = finalW > 0 ? `${finalW}px` : 'auto';
+  }
+  // Re-fit on window resize (pane widths can change)
+  window.addEventListener('resize', ()=>{
+    // Only run if the inspector is showing something
+    if (inspector && inspector.childElementCount) fitInspectorUnitSelects();
+  });
   function defaultUnit(kind){
     if(kind==='resistor') return '\u03A9'; // Ω
     if(kind==='capacitor') return 'F';
@@ -1462,6 +1658,21 @@
       if(!last || last.x!==p.x || last.y!==p.y) out.push({x:p.x, y:p.y});
     }
     return out;
+  }
+  // Helpers to validate/normalize wire polylines
+  function samePt(a,b){ return !!a && !!b && a.x===b.x && a.y===b.y; }
+  function normalizedPolylineOrNull(pts){
+    const c = collapseDuplicateVertices(pts||[]);
+    if (c.length < 2) return null;
+    if (c.length === 2 && samePt(c[0], c[1])) return null; // zero-length line
+    return c;
+  }
+  function normalizeAllWires(){
+    wires = wires.reduce((acc,w)=>{
+      const c = normalizedPolylineOrNull(w.points);
+      if (c) acc.push({ id: w.id, points: c });
+      return acc;
+    }, []);
   }  
 
   // ====== Save / Load ======
@@ -1475,6 +1686,8 @@
   });
 
   function saveJSON(){
+    // Clean up any accidental duplicates/zero-length segments before saving
+    normalizeAllWires();    
     const data = {
       version: 1,
       title: projTitle.value || 'Untitled',
@@ -1492,6 +1705,7 @@
   function loadFromJSON(text){
     const data = JSON.parse(text);
     components = data.components||[]; wires = data.wires||[]; projTitle.value = data.title||'';
+    normalizeAllWires();
     // re-seed counters so new IDs continue incrementing nicely
     const used = { resistor:0, capacitor:0, inductor:0, diode:0, npn:0, pnp:0, ground:0, battery:0, ac:0, wire:0 };
     for(const c of components){ const k=c.type; const num=parseInt((c.label||'').replace(/^[A-Z]+/,'').trim())||0; used[k]=Math.max(used[k], num); }
