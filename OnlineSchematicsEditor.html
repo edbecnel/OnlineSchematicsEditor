@@ -305,6 +305,8 @@
         return;
       }
     }
+    // Update diode subtype popup visibility with any mode change
+    updateSubtypeVisibility();
     redraw(); // refresh wire/comp hit gating for the new mode    
   }
 
@@ -673,26 +675,28 @@
     const comp = components.find(c=>c.id===id);
     // Mend only for simple 2-pin parts
     if (comp && ['resistor','capacitor','inductor','diode','battery','ac'].includes(comp.type)) {
-      const pins = compPinPositions(comp).map(p=>({ x:snap(p.x), y:snap(p.y) }));
+      // Use raw pin positions (no snap) so angled wires mend correctly
+      const pins = compPinPositions(comp);
       if (pins.length === 2) {
-        const axis = axisFromPins(pins);
-        const wA = wireAlongAxisAt(pins[0], axis);
-        const wB = wireAlongAxisAt(pins[1], axis);
-        if (wA && wB){
-          // Reconstruct a single wire by concatenating the two polylines at the gap.
-          // We do NOT jump to far endpoints; we join using each side’s vertices next to the pin.
-          const aPoints = orderPointsEndingAt(wA.points, pins[0]); // ... , pin
-          const bPoints = orderPointsStartingAt(wB.points, pins[1]); // pin , ...
-          // Drop the pins, then join: [...A_without_pin, ...B_without_pin]
-          const left  = aPoints.slice(0, aPoints.length - 1); // up to (but not including) pin
-          const right = bPoints.slice(1);                     // from first after pin
+        // Find the two wire endpoints that touch the pins (works for angled too)
+        const hitA = findWireEndpointNear(pins[0], 0.9);
+        const hitB = findWireEndpointNear(pins[1], 0.9);
+        if (hitA && hitB){
+          const wA = hitA.w, wB = hitB.w;
+          // Orient so that aPoints ends at pinA and bPoints starts at pinB
+          const aPoints = (hitA.endIndex === wA.points.length-1) ? wA.points.slice() : wA.points.slice().reverse();
+          const bPoints = (hitB.endIndex === 0)                   ? wB.points.slice() : wB.points.slice().reverse();
+          // Remove the pin vertices themselves, then concatenate
+          const left  = aPoints.slice(0, Math.max(0, aPoints.length - 1));
+          const right = bPoints.slice(1);
           const joined = left.concat(right);
-          // If the join introduces duplicate vertex, collapse it
           const merged = collapseDuplicateVertices(joined);
           // Replace the two wires with a single merged polyline
           wires = wires.filter(w => w!==wA && w!==wB);
-          wires.push({ id: uid('wire'), points: merged });
-        }
+          if (merged.length >= 2) {
+            wires.push({ id: uid('wire'), points: merged });
+          }
+        }        
       }
     }
     components = components.filter(c => c.id !== id);
@@ -1367,6 +1371,32 @@
   }
   window.addEventListener('resize', ()=>{ if(paletteRow2.style.display!=='none') positionSubtypeDropdown(); });
 
+  // Show only while placing diode; hide otherwise.
+  function updateSubtypeVisibility(){
+    if(!paletteRow2) return;
+    const show = (mode === 'place' && placeType === 'diode');
+    if (show){
+      paletteRow2.style.display = 'block';
+      const ds = document.getElementById('diodeSelect'); if (ds) ds.value = diodeSubtype;
+      positionSubtypeDropdown();
+    } else {
+      paletteRow2.style.display = 'none';
+    }
+  }
+
+  // Any button in the header (except the Diode button) hides the popup
+  (function(){
+    const headerEl = document.querySelector('header');
+    headerEl.addEventListener('click', (e)=>{
+      const btn = e.target.closest('button');
+      if(!btn) return;
+      const isDiodeBtn = btn.matches('#paletteRow1 button[data-tool="diode"]');
+      if(!isDiodeBtn){
+        paletteRow2.style.display = 'none';
+      }
+    }, true);
+  })();  
+
   document.getElementById('paletteRow1').addEventListener('click', (e)=>{
     const btn = e.target.closest('button'); if(!btn) return;
     placeType = btn.dataset.tool; setMode('place');
@@ -1378,7 +1408,9 @@
       positionSubtypeDropdown();
     } else {
       paletteRow2.style.display = 'none';
-    }    
+    }
+    // Show only for diode; hide for all others
+    updateSubtypeVisibility();        
   });
   // Diode subtype select → enter Place mode for diode using chosen subtype
   const diodeSel = document.getElementById('diodeSelect');
@@ -1388,14 +1420,14 @@
       diodeSubtype = diodeSel.value || 'generic';
       placeType = 'diode'; setMode('place');
       // ensure the subtype row is visible while placing diodes
-      paletteRow2.style.display = 'block';
-      positionSubtypeDropdown();      
+      updateSubtypeVisibility();     
     });
     // clicking the dropdown should also arm diode placement without changing the value
     diodeSel.addEventListener('mousedown', ()=>{
       placeType='diode'; setMode('place');
       paletteRow2.style.display = 'block';
       positionSubtypeDropdown();
+      updateSubtypeVisibility();
     });
   }
 
@@ -1630,26 +1662,29 @@
   }
 
   // --- Mend helpers ---
-  function indexOfPoint(pts, p){
-    for(let i=0;i<pts.length;i++){ if(pts[i].x===p.x && pts[i].y===p.y) return i; }
+  // --- Epsilon geometry helpers ---
+  function eqPtEps(a,b,eps=0.75){ return Math.abs(a.x-b.x)<=eps && Math.abs(a.y-b.y)<=eps; }
+  function dist2(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return dx*dx + dy*dy; }
+  function indexOfPointEps(pts, p, eps=0.75){
+    for(let i=0;i<pts.length;i++){ if(eqPtEps(pts[i], p, eps)) return i; }
     return -1;
-  }
+  }  
   // Return a copy whose LAST point is 'pin'. If 'pin' is interior, keep only the side up to the pin.
   function orderPointsEndingAt(pts, pin){
     const n = pts.length;
     if(n===0) return pts.slice();
-    if(pts[n-1].x===pin.x && pts[n-1].y===pin.y) return pts.slice();
-    if(pts[0].x===pin.x && pts[0].y===pin.y) return pts.slice().reverse();
-    const k = indexOfPoint(pts, pin);
+    if(eqPtEps(pts[n-1], pin)) return pts.slice();
+    if(eqPtEps(pts[0], pin)) return pts.slice().reverse();
+    const k = indexOfPointEps(pts, pin);    
     return (k>=0) ? pts.slice(0, k+1) : pts.slice();
   }
   // Return a copy whose FIRST point is 'pin'. If 'pin' is interior, keep only the side from the pin.
   function orderPointsStartingAt(pts, pin){
     const n = pts.length;
     if(n===0) return pts.slice();
-    if(pts[0].x===pin.x && pts[0].y===pin.y) return pts.slice();
-    if(pts[n-1].x===pin.x && pts[n-1].y===pin.y) return pts.slice().reverse();
-    const k = indexOfPoint(pts, pin);
+    if(eqPtEps(pts[0], pin)) return pts.slice();
+    if(eqPtEps(pts[n-1], pin)) return pts.slice().reverse();
+    const k = indexOfPointEps(pts, pin);
     return (k>=0) ? pts.slice(k) : pts.slice();
   }
   function collapseDuplicateVertices(pts){
@@ -1659,6 +1694,17 @@
     }
     return out;
   }
+  // Find a wire whose **endpoint** is near the given point; returns {w, endIndex:0|n-1}
+  function findWireEndpointNear(pt, tol=0.9){
+    for(const w of wires){
+      const n = w.points.length;
+      if(n<2) continue;
+      if(dist2(w.points[0], pt) <= tol*tol) return { w, endIndex:0 };
+      if(dist2(w.points[n-1], pt) <= tol*tol) return { w, endIndex:n-1 };
+    }
+    return null;
+  }  
+
   // Helpers to validate/normalize wire polylines
   function samePt(a,b){ return !!a && !!b && a.x===b.x && a.y===b.y; }
   function normalizedPolylineOrNull(pts){
