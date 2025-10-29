@@ -67,6 +67,14 @@
       pointer-events: none;
       filter: drop-shadow(0 0 2px rgba(121, 98, 58, 0.65));
     }
+    /* Marquee selection box (drawn in #overlay) */
+    #overlay rect.marquee {
+      fill: rgba(245, 158, 11, 0.12);   /* subtle fill */
+      stroke: var(--select);
+      stroke-width: 2;
+      stroke-dasharray: 6 4;
+      pointer-events: none;
+    }    
   </style>
 </head>
 <body>
@@ -117,6 +125,7 @@
       <li><span class="kbd">V</span> Select/Move · <span class="kbd">W</span> Wire · <span class="kbd">Del</span> Delete</li>
       <li>Click grid to place selected part. Drag to move. <span class="kbd">R</span> rotates a part.</li>
       <li>Wiring: click start → click turns → double‑click or <span class="kbd">Enter</span> to finish. <span class="kbd">Esc</span> to cancel.</li>
+      <li>Select: click-drag on empty space to draw a marquee window. Release to select (by default, the nearest <em>wire segment</em> in the box). Hold <span class="kbd">Shift</span> while dragging to prefer <em>components</em> instead. Click empty space to clear.</li>
       <li>Delete: click a wire <em>segment</em> or component to remove.</li>
     </ul>
   </aside>
@@ -181,10 +190,15 @@
   // selection optionally includes segIndex for wire-segment selection
   let selection = { kind: null, id: null, segIndex: null }; // {kind:'component'|'wire', id, segIndex?}
   let drawing = { active:false, points:[], cursor:null }; // cursor = live rubber-band point
+  // Marquee selection (click+drag rectangle) state
+  let marquee = { active:false, start:null, end:null, rectEl:null, startedOnEmpty:false, shiftPreferComponents:false };
+  // Suppress the next contextmenu after right-click finishing a wire
+  let suppressNextContextMenu = false;
   // ViewBox zoom state
   const BASE_W = 1600, BASE_H = 1000;
   let zoom = 1;
   let viewX = 0, viewY = 0; // pan in SVG units
+  let viewW = BASE_W, viewH = BASE_H; // effective viewBox size (updated by applyZoom)
   function applyZoom() {
     // Match the SVG element's current aspect ratio so the grid fills the canvas (no letterboxing)
     const vw = Math.max(1, svg.clientWidth);
@@ -660,6 +674,113 @@
     return { q:{ x:A.x + t*ABx, y:A.y + t*ABy }, t };
   }
 
+  // ----- Marquee helpers -----
+  const rectFromPoints = (a,b)=>{
+    const x = Math.min(a.x,b.x), y = Math.min(a.y,b.y);
+    return { x, y, w: Math.abs(a.x-b.x), h: Math.abs(a.y-b.y) };
+  };
+  const inRect = (p, r)=> p.x>=r.x && p.x<=r.x+r.w && p.y>=r.y && p.y<=r.y+r.h;
+  function segsIntersect(p1,p2,q1,q2){
+    const o = (a,b,c)=>Math.sign((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x));
+    const on = (a,b,c)=> Math.min(a.x,b.x)<=c.x && c.x<=Math.max(a.x,b.x) && Math.min(a.y,b.y)<=c.y && c.y<=Math.max(a.y,b.y);
+    const o1=o(p1,p2,q1), o2=o(p1,p2,q2), o3=o(q1,q2,p1), o4=o(q1,q2,p2);
+    if(o1!==o2 && o3!==o4) return true;
+    if(o1===0 && on(p1,p2,q1)) return true;
+    if(o2===0 && on(p1,p2,q2)) return true;
+    if(o3===0 && on(q1,q2,p1)) return true;
+    if(o4===0 && on(q1,q2,p2)) return true;
+    return false;
+  }
+  function segmentIntersectsRect(a,b,r){
+    if(inRect(a,r) || inRect(b,r)) return true;
+    const R = [{x:r.x,y:r.y},{x:r.x+r.w,y:r.y},{x:r.x+r.w,y:r.y+r.h},{x:r.x,y:r.y+r.h}];
+    return segsIntersect(a,b,R[0],R[1]) || segsIntersect(a,b,R[1],R[2]) ||
+           segsIntersect(a,b,R[2],R[3]) || segsIntersect(a,b,R[3],R[0]);
+  }
+  function beginMarqueeAt(p, startedOnEmpty, preferComponents){
+    marquee.active = true; marquee.start = p; marquee.end = p; marquee.startedOnEmpty = !!startedOnEmpty;
+    marquee.shiftPreferComponents = !!preferComponents;  
+    if(marquee.rectEl) marquee.rectEl.remove();
+    marquee.rectEl = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    marquee.rectEl.setAttribute('class','marquee');
+    gOverlay.appendChild(marquee.rectEl);
+    updateMarqueeTo(p);
+  }
+  function updateMarqueeTo(p){
+    if(!marquee.active) return;
+    marquee.end = p;
+    const r = rectFromPoints(marquee.start, marquee.end);
+    marquee.rectEl.setAttribute('x', r.x); marquee.rectEl.setAttribute('y', r.y);
+    marquee.rectEl.setAttribute('width', r.w); marquee.rectEl.setAttribute('height', r.h);
+  }
+  function finishMarquee(){
+    if(!marquee.active) return false;
+    const r = rectFromPoints(marquee.start, marquee.end);
+    const movedEnough = (Math.abs(r.w) > 2 || Math.abs(r.h) > 2);
+    // remove rect
+    marquee.rectEl?.remove(); marquee.rectEl=null;
+    marquee.active=false;
+    // If it wasn't really a drag, treat it as a normal empty click
+    if(!movedEnough){
+      if(marquee.startedOnEmpty){
+        selection = {kind:null,id:null,segIndex:null};
+        redraw();
+      }
+      return false;
+    }
+    // Build candidates once
+    const cx = r.x + r.w/2, cy = r.y + r.h/2;
+    const segs = [];
+    for(const w of wires){
+      for(let i=0;i<w.points.length-1;i++){
+        const a=w.points[i], b=w.points[i+1];
+        if(segmentIntersectsRect(a,b,r)){
+          const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+          const d2=(mx-cx)*(mx-cx)+(my-cy)*(my-cy);
+          segs.push({w, idx:i, d2});
+        }
+      }
+    }
+    const comps = [];
+    for(const c of components){
+      if(inRect({x:c.x,y:c.y}, r)){
+        const d2=(c.x-cx)*(c.x-cx)+(c.y-cy)*(c.y-cy);
+        comps.push({c,d2});
+      }
+    }
+    // Decide priority based on Shift during drag
+    const preferComponents = !!marquee.shiftPreferComponents;
+    if(preferComponents){
+      if(comps.length){
+        comps.sort((u,v)=>u.d2-v.d2);
+        selection = {kind:'component', id:comps[0].c.id, segIndex:null};
+        redraw(); return true;
+      }
+      if(segs.length){
+        segs.sort((u,v)=>u.d2-v.d2);
+        const pick = segs[0];
+        selection = {kind:'wire', id:pick.w.id, segIndex:pick.idx};
+        redraw(); return true;
+      }
+    }else{
+      if(segs.length){
+        segs.sort((u,v)=>u.d2-v.d2);
+        const pick = segs[0];
+        selection = {kind:'wire', id:pick.w.id, segIndex:pick.idx};
+        redraw(); return true;
+      }
+      if(comps.length){
+        comps.sort((u,v)=>u.d2-v.d2);
+        selection = {kind:'component', id:comps[0].c.id, segIndex:null};
+        redraw(); return true;
+      }
+    }    
+    // Nothing hit: clear selection
+    selection = {kind:null,id:null,segIndex:null};
+    redraw();
+    return false;
+  }
+
   function breakWiresForComponent(c){
     // Break wires at EACH connection pin (not at component center)
     let broke=false;
@@ -854,7 +975,14 @@
     if (e.button === 1){
       e.preventDefault(); beginPan(e);
       return;
-    }    
+    }
+    // Right-click ends wire placement (when wiring)
+    if (e.button === 2 && mode==='wire' && drawing.active){
+      e.preventDefault();
+      suppressNextContextMenu = true; // ensure the imminent contextmenu is blocked
+      finishWire();
+      return;
+    }       
     if(mode==='place' && placeType){
       const id = uid(placeType);
       const labelPrefix = {resistor:'R', capacitor:'C', inductor:'L', diode:'D', npn:'Q', pnp:'Q', ground:'GND', battery:'BT', ac:'AC'}[placeType] || 'X';
@@ -875,13 +1003,12 @@
       }
       renderDrawing();
     }
-    if(mode==='select'){
-      // Clear selection only if the click is NOT on a component or a wire
+    if(mode==='select' && e.button===0){
+      // Start marquee only if pointerdown is on empty canvas; defer clearing until mouseup if it's just a click
       const onComp = e.target.closest && e.target.closest('g.comp');
       const onWire = e.target.closest && e.target.closest('#wires g');
       if(!onComp && !onWire){
-        selection = {kind:null,id:null,segIndex:null};
-        redraw();
+        beginMarqueeAt(svgPoint(e), /*startedOnEmpty=*/true, /*preferComponents=*/e.shiftKey);
       }
     }    
     if(mode==='pan' && e.button===0){
@@ -897,7 +1024,12 @@
   svg.addEventListener('pointermove', (e)=>{
     const p = svgPoint(e);
     const x = snap(p.x), y = snap(p.y);
-    if (isPanning){ doPan(e); return; }    
+    if (isPanning){ doPan(e); return; }
+    // Marquee update (Select mode). Track Shift to flip priority while dragging.
+    if(marquee.active){
+      marquee.shiftPreferComponents = !!e.shiftKey;
+      updateMarqueeTo(svgPoint(e));
+    }  
     if(mode==='wire' && drawing.active){
       drawing.cursor = {x, y};
       renderDrawing();
@@ -913,12 +1045,23 @@
     if(mode==='wire'){ renderCrosshair(x,y); } else { clearCrosshair(); }    
   });
 
-  svg.addEventListener('pointerup', (e)=>{ endPan(); });
+  svg.addEventListener('pointerup', (e)=>{
+    // Finish marquee selection if active; otherwise just end any pan
+    if(marquee.active){ finishMarquee(); }
+    endPan();
+  });
   svg.addEventListener('pointerleave', (e)=>{ endPan(); });
   // Ensure middle-click doesn't trigger browser autoscroll and supports pan in all browsers
   svg.addEventListener('mousedown', (e)=>{ if(e.button===1){ e.preventDefault(); beginPan(e); } });
   svg.addEventListener('auxclick', (e)=>{ if(e.button===1){ e.preventDefault(); } });
-
+  // Suppress native context menu while finishing wire with right-click
+  // Suppress native context menu right after a right-click wire finish
+  svg.addEventListener('contextmenu', (e)=>{
+    if (mode==='wire' && (drawing.active || suppressNextContextMenu)) {
+      e.preventDefault();
+      suppressNextContextMenu = false; // one-shot
+    }
+  });
   // Zoom on wheel, centered on mouse location (keeps mouse position stable in view)
   svg.addEventListener('wheel', (e)=>{
     e.preventDefault();
@@ -979,11 +1122,33 @@
   });
 
   function finishWire(){
-    if(drawing.points.length>=2){
-      const id = uid('wire');
-      wires.push({ id, points:[...drawing.points] });
+    // Commit only if we have at least one segment
+    if(drawing.points.length >= 2){
+      // De-dup consecutive identical points to avoid zero-length segments
+      const pts = [];
+      for(const p of drawing.points){
+        if(!pts.length || pts[pts.length-1].x!==p.x || pts[pts.length-1].y!==p.y) pts.push({x:p.x,y:p.y});
+      }
+      if(pts.length >= 2){
+        const id = uid('wire');
+        wires.push({ id, points: pts });
+        // Post-process: if user placed components while wire was in limbo,
+        // split this newly added wire wherever pins land, and remove any inner bridge.
+        // (Safe for all components; non-intersecting pins are ignored by the splitter.)
+        const comps = components.slice();
+        for(const c of comps){
+          const didBreak = breakWiresForComponent(c);
+          if(didBreak) deleteBridgeBetweenPins(c);
+        }
+      }
     }
-    drawing.active=false; drawing.points=[]; drawing.cursor=null; gDrawing.replaceChildren(); clearCrosshair(); redraw();
+    // Reset drawing state and visuals
+    drawing.active = false;
+    drawing.points = [];
+    drawing.cursor = null;
+    gDrawing.replaceChildren();
+    clearCrosshair();
+    redraw();
   }
 
   function renderDrawing(){
@@ -998,16 +1163,23 @@
   }
 
   // ----- Crosshair overlay -----
-  function clearCrosshair(){ gOverlay.replaceChildren(); }
+  function clearCrosshair(){
+    // Only remove the crosshair lines, not the marquee rect
+    [...gOverlay.querySelectorAll('[data-crosshair]')].forEach(el=>el.remove());
+  }
   function renderCrosshair(x,y){
-    const w = viewW, h = viewH;
-    gOverlay.replaceChildren();
+    clearCrosshair(); // remove previous crosshair lines, keep marquee intact
+    // span the *visible* viewBox, accounting for pan offsets
+    const xL = viewX, xR = viewX + viewW;
+    const yT = viewY, yB = viewY + viewH;    
     const hline = document.createElementNS('http://www.w3.org/2000/svg','line');
-    hline.setAttribute('x1', 0); hline.setAttribute('y1', y);
-    hline.setAttribute('x2', w); hline.setAttribute('y2', y);
+    hline.setAttribute('data-crosshair','1');
+    hline.setAttribute('x1', xL); hline.setAttribute('y1', y);
+    hline.setAttribute('x2', xR); hline.setAttribute('y2', y);    
     const vline = document.createElementNS('http://www.w3.org/2000/svg','line');
-    vline.setAttribute('x1', x); vline.setAttribute('y1', 0);
-    vline.setAttribute('x2', x); vline.setAttribute('y2', h);
+    vline.setAttribute('data-crosshair','1');
+    vline.setAttribute('x1', x); vline.setAttribute('y1', yT);
+    vline.setAttribute('x2', x); vline.setAttribute('y2', yB);    
     gOverlay.appendChild(hline); gOverlay.appendChild(vline);
   }  
 
