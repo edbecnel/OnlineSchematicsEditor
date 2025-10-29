@@ -99,11 +99,22 @@
       white-space:nowrap;
       width:auto;                    /* prevent global select{width:100%} */
     }
-    /* Small color swatches (toolbar + inspector) */
-    .swatch{
-      display:inline-block; width:14px; height:14px;
-      border:1px solid #273042; border-radius:4px; vertical-align:middle;
-    }    
+    /* Swatch-only dropdowns */
+    #wireColorGroup{ position:relative; }
+    .palette{
+      position:absolute; top:100%; left:0; margin-top:6px;
+      background:#0e1219; border:1px solid #273042; padding:6px;
+      border-radius:8px; display:grid; grid-template-columns: repeat(7, 20px);
+      gap:6px; z-index:7;
+    }
+    .palette .swatch-btn{
+      width:20px; height:20px; border:1px solid #273042; border-radius:4px; cursor:pointer;
+    }
+    .palette .swatch-btn.selected{ outline:2px solid var(--accent); }
+    #wireColorBtn .swatch{ width:16px; height:16px; }
+    /* Inspector wire-color holder must be relative for its palette */
+    .inspector-color{ position:relative; }
+    .inspector-color .palette{ top:calc(100% + 6px); left:0; }    
   </style>
 </head>
 <body>
@@ -146,17 +157,11 @@
       <button id="clearBtn" class="danger" title="Clear (Ctrl+K)">Clear</button>
     </div>
     <div class="group" id="wireColorGroup" title="Wire color (new wires only)">
-      <span style="color:#9aa3b2">Wire:</span>
-      <select id="wireColor">
-        <option value="auto" selected>Auto (Black/White)</option>
-        <option value="red">Red</option>
-        <option value="green">Green</option>
-        <option value="blue">Blue</option>
-        <option value="yellow">Yellow</option>
-        <option value="magenta">Magenta</option>
-        <option value="cyan">Cyan</option>
-      </select>
-      <span id="wireColorSwatch" class="swatch" style="margin-left:.25rem"></span>
+      <button id="wireColorBtn" title="Wire color">
+        <span style="color:#9aa3b2;margin-right:.25rem">Wire</span>
+        <span id="wireColorSwatch" class="swatch"></span>
+      </button>
+      <div id="wireColorMenu" class="palette" style="display:none"></div>
     </div>    
     <div class="group">
       <button id="zoomOutBtn" title="Zoom Out (−)">−</button>
@@ -309,6 +314,17 @@
     ['red','Red'], ['green','Green'], ['blue','Blue'],
     ['yellow','Yellow'], ['magenta','Magenta'], ['cyan','Cyan']
   ];
+  // Convert CSS color ("rgb(...)" or color name) to #RRGGBB
+  function colorToHex(cstr){
+    const tmp = document.createElement('span');
+    tmp.style.color = cstr; document.body.appendChild(tmp);
+    const rgb = getComputedStyle(tmp).color; document.body.removeChild(tmp);
+    const m = rgb.match(/\d+/g); if(!m) return '#000000';
+    const [r,g,b] = m.map(n=> Math.max(0,Math.min(255,parseInt(n,10))));
+    const hx = v=> v.toString(16).padStart(2,'0').toUpperCase();
+    return `#${hx(r)}${hx(g)}${hx(b)}`;
+  }
+
   function wireColorNameFromValue(v){
     const val = (v||'').toLowerCase();
     // map actual stroke values back to option keys when possible
@@ -326,7 +342,11 @@
     // fallback
     return 'auto';
   }
-  const setSwatch = (el, color)=>{ if(el) el.style.background = color; };  
+  const setSwatch = (el, color)=>{ 
+    if(!el) return; 
+    el.style.background = color; 
+    el.style.backgroundColor = color; 
+  }; 
 
   // ====== Unit options for Value fields ======
   const UNIT_OPTIONS = {
@@ -1502,24 +1522,54 @@
 
   document.getElementById('clearBtn').addEventListener('click', clearAll);
 
-  // Wire color (palette for NEW wires only)
-  const wireColorSel = document.getElementById('wireColor');
+  // Wire color (palette for NEW wires only) — swatch-only dropdown
+  const wireColorBtn = document.getElementById('wireColorBtn');
+  const wireColorMenu = document.getElementById('wireColorMenu');
   const wireColorSwatch = document.getElementById('wireColorSwatch');
-  if (wireColorSel){
-    // init current mode to the select's value
-    currentWireColorMode = wireColorSel.value || 'auto';
-    // keep marker color roughly in sync when user changes palette
-    const syncMarker = ()=> {
-      const dot = document.querySelector('#dot circle');
-      if (dot) dot.setAttribute('fill', resolveWireColor(currentWireColorMode));
-    };
-    // header swatch mirrors the palette color for "next wires"
-    const syncHeaderSwatch = ()=> setSwatch(wireColorSwatch, resolveWireColor(currentWireColorMode));
-    syncMarker(); syncHeaderSwatch();    
-    wireColorSel.addEventListener('change', ()=>{
-      currentWireColorMode = wireColorSel.value || 'auto';
-      syncMarker(); syncHeaderSwatch();
+  function syncWireToolbar(){
+    const col = resolveWireColor(currentWireColorMode);
+    setSwatch(wireColorSwatch, col);
+    const hex = colorToHex(col);
+    const name = (WIRE_COLOR_OPTIONS.find(([v])=>v===currentWireColorMode)?.[1]) || 'Auto';
+    wireColorBtn.title = `Wire color: ${name} — ${hex}`;
+    // Make the button border reflect the chosen color
+    wireColorBtn.style.borderColor = col;    
+    const dot = document.querySelector('#dot circle'); if(dot) dot.setAttribute('fill', col);
+  }
+  function buildWirePalette(menuEl, currentMode, onPick){
+    menuEl.replaceChildren();
+    WIRE_COLOR_OPTIONS.forEach(([mode,label])=>{
+      const col = resolveWireColor(mode);
+      const hex = colorToHex(col);
+      const b = document.createElement('button');
+      b.className = 'swatch-btn'; b.style.background = col;
+      b.title = `${label} — ${hex}`;
+      if(mode===currentMode) b.classList.add('selected');
+      b.addEventListener('click', ()=> onPick(mode));
+      menuEl.appendChild(b);
     });
+  }
+  function openWireMenu(){
+    buildWirePalette(wireColorMenu, currentWireColorMode, (mode)=>{
+      currentWireColorMode = mode;
+      syncWireToolbar();
+      wireColorMenu.style.display = 'none';
+    });
+    wireColorMenu.style.display = 'grid';
+  }
+  function closeWireMenu(){ wireColorMenu.style.display = 'none'; }
+  if(wireColorBtn){
+    currentWireColorMode = 'auto';
+    syncWireToolbar();
+    wireColorBtn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const isOpen = wireColorMenu.style.display !== 'none';
+      if(isOpen) closeWireMenu(); else openWireMenu();
+    });
+    document.addEventListener('pointerdown', (e)=>{
+      if(!wireColorMenu.contains(e.target) && e.target!==wireColorBtn) closeWireMenu();
+    });
+    window.addEventListener('resize', closeWireMenu);
   }
 
   // Zoom controls
@@ -1660,24 +1710,60 @@
       // Segments (read-only)
       const segs = Math.max(0, (w.points?.length||0) - 1);
       wrap.appendChild(rowPair('Segments', text(String(segs), true)));
-      // Color (editable) + swatch
+
+      // Color (editable) — swatch-only dropdown with tooltip
       const holder = document.createElement('div');
-      holder.className = 'hstack';
-      const sel = document.createElement('select');
-      WIRE_COLOR_OPTIONS.forEach(([val,label])=>{
-        const o=document.createElement('option'); o.value=val; o.textContent=label; sel.appendChild(o);
+      holder.className = 'hstack inspector-color';
+      const btn = document.createElement('button');
+      btn.className = ''; // inherit header button style is not necessary here
+      const chip = document.createElement('span'); chip.className='swatch';
+      const currentMode = wireColorNameFromValue(w.color);
+
+      const applyBtnUI = ()=>{
+        const col = w.color || defaultWireColor;
+        // Force inline style so nothing overrides it (visible fill + border)
+        chip.setAttribute(
+          'style',
+          'display:inline-block;width:14px;height:14px;'
+          + `background:${col};background-color:${col};`
+          + `border:1px solid ${col};border-radius:4px;vertical-align:middle;`
+        );
+        const hex = colorToHex(col);
+        const name = (WIRE_COLOR_OPTIONS.find(([v])=>v===wireColorNameFromValue(w.color))?.[1]) || 'Auto (Black/White)';
+        btn.title = `${name} — ${hex}`;
+      };
+
+      btn.appendChild(chip);  // append first so styles paint reliably
+      applyBtnUI();           // then apply color      
+      const menu = document.createElement('div'); menu.className='palette'; menu.style.display='none';
+      holder.appendChild(btn); holder.appendChild(menu);
+      btn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        // open/refresh palette
+        menu.replaceChildren();
+        const selMode = wireColorNameFromValue(w.color);
+        WIRE_COLOR_OPTIONS.forEach(([mode,label])=>{
+          const col = resolveWireColor(mode);
+          const hex = colorToHex(col);
+          const b = document.createElement('button');
+          b.className = 'swatch-btn'; b.style.background = col;
+          b.title = `${label} — ${hex}`;
+          if(mode===selMode) b.classList.add('selected');
+          b.addEventListener('click', ()=>{
+            w.color = resolveWireColor(mode);
+            updateWireDOM(w);
+            applyBtnUI();
+            menu.style.display='none';
+          });
+          menu.appendChild(b);
+        });
+        menu.style.display = 'grid';
       });
-      sel.value = wireColorNameFromValue(w.color);
-      const sw = document.createElement('span'); sw.className='swatch';
-      setSwatch(sw, w.color || defaultWireColor);
-      sel.addEventListener('change', ()=>{
-        // apply to this wire only
-        w.color = resolveWireColor(sel.value);
-        updateWireDOM(w);
-        setSwatch(sw, w.color);
+      document.addEventListener('pointerdown', (e)=>{
+        if(!menu.contains(e.target) && e.target!==btn) menu.style.display='none';
       });
-      holder.appendChild(sel); holder.appendChild(sw);
       wrap.appendChild(rowPair('Color', holder));
+
       inspector.appendChild(wrap);
       return;
     }
