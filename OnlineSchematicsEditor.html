@@ -870,6 +870,8 @@
     }
     components = components.filter(c => c.id !== id);
     if (selection.id === id) selection = { kind:null, id:null, segIndex:null };
+    normalizeAllWires();
+    unifyInlineWires();
     redraw();
   }
 
@@ -893,8 +895,10 @@
      if (L) wires.push({ id: uid('wire'), points: L, color: w.color });
      if (R) wires.push({ id: uid('wire'), points: R, color: w.color });
      if (selection.id === w.id) selection = { kind:null, id:null, segIndex:null };
+     normalizeAllWires();
+     unifyInlineWires();
      redraw();
-   }  
+    }  
 
   // Format value+unit shown on the schematic label line
   function formatValue(c){
@@ -1420,6 +1424,115 @@
     if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); clearAll(); }
   });
 
+  // Decide color for a just-drawn wire if it will merge into an existing straight wire path (Wire/SWP).
+  function pickSwpAdoptColorForNewWire(pts){
+    if(!pts || pts.length < 2) return null;
+
+    // Build SWPs from the current canvas BEFORE adding the new wire
+    rebuildTopology();
+
+    const axisOf = (a,b)=> (a && b && a.y===b.y) ? 'x' : (a && b && a.x===b.x) ? 'y' : null;
+    const newAxis = axisOf(pts[0], pts[1]) || axisOf(pts[pts.length-2], pts[pts.length-1]) || null;
+
+    function colorAtEndpoint(p){
+      // Look for an existing wire endpoint we are snapping to
+      const hit = findWireEndpointNear(p, 0.9);
+      if(!hit) return null;
+
+      // Which segment touches that endpoint? (start -> seg 0, end -> seg n-2)
+      const segIdx = (hit.endIndex === 0) ? 0 : (hit.w.points.length - 2);
+
+      // If that segment belongs to a Wire (SWP), use its color; else fallback to that wire's color
+      const swp = swpForWireSegment(hit.w.id, segIdx);
+      if(swp) return { color: swp.color, axis: axisAtEndpoint(hit.w, hit.endIndex) };
+
+      return { color: hit.w.color || defaultWireColor, axis: axisAtEndpoint(hit.w, hit.endIndex) };
+    }
+
+    const startInfo = colorAtEndpoint(pts[0]);
+    const endInfo   = colorAtEndpoint(pts[pts.length-1]);
+
+    // Prefer endpoint whose axis matches the new wire's axis (i.e., will merge inline)
+    if(newAxis){
+      if(startInfo && startInfo.axis === newAxis) return startInfo.color;
+      if(endInfo && endInfo.axis === newAxis)     return endInfo.color;
+    }
+
+    // Otherwise: prefer start, else end
+    if(startInfo) return startInfo.color;
+    if(endInfo)   return endInfo.color;
+
+    return null;
+  }
+
+  // --- Helpers to color only the colinear segment(s) that join an existing Wire (SWP) ---
+
+  // Split a polyline into contiguous runs of same "axis":
+  // 'x' = horizontal, 'y' = vertical, null = angled (non-axis-aligned)
+  function splitPolylineIntoRuns(pts){
+    const runs = [];
+    for(let i=0;i<pts.length-1;i++){
+      const a=pts[i], b=pts[i+1];
+      const axis = (a && b && a.y===b.y) ? 'x' : (a && b && a.x===b.x) ? 'y' : null;
+      if(!runs.length || runs[runs.length-1].axis !== axis){
+        runs.push({ start:i, end:i, axis });
+      }else{
+        runs[runs.length-1].end = i;
+      }
+    }
+    return runs;
+  }
+
+  // If the given endpoint 'pt' is snapping onto an existing Wire (SWP) endpoint
+  // and the segment axis matches that SWP, return that SWP's color; else null.
+  function adoptColorAtEndpointForAxis(pt, axis){
+    if(!axis) return null;                 // only axis-aligned runs can be part of an SWP
+    rebuildTopology();                     // inspect current canvas BEFORE adding new pieces
+    const hit = findWireEndpointNear(pt, 0.9);
+    if(!hit) return null;
+
+    // Require colinearity at the touched endpoint
+    const hitAxis = axisAtEndpoint(hit.w, hit.endIndex);
+    if(hitAxis !== axis) return null;
+
+    // Get the SWP at that existing segment
+    const segIdx = (hit.endIndex === 0) ? 0 : (hit.w.points.length - 2);
+    const swp = swpForWireSegment(hit.w.id, segIdx);
+    if(!swp) return null;                 // only adopt if it truly becomes part of that SWP
+
+    return swp.color || defaultWireColor;
+  }
+
+  // Emit the new polyline as multiple wires:
+  // - each axis-aligned run becomes one wire
+  // - only the run that attaches *colinear* to an existing SWP adopts that SWP's color
+  // - bends (non-axis) are emitted as their own wires with the current toolbar color
+  function emitRunsFromPolyline(pts){
+    const runs = splitPolylineIntoRuns(pts);
+    const curCol = resolveWireColor(currentWireColorMode);
+
+    for(const run of runs){
+      const subPts = pts.slice(run.start, run.end + 2); // include end+1 vertex
+      let color = curCol;
+
+      // If this run starts at the overall polyline start, try adopt at the start
+      if(run.start === 0){
+        const adopt = adoptColorAtEndpointForAxis(subPts[0], run.axis);
+        if(adopt) color = adopt;
+      }
+
+      // If this run ends at the overall polyline end, try adopt at the end
+      // (only override if we didn't already adopt at the start)
+      if(run.end === pts.length - 2 && color === curCol){
+        const adoptEnd = adoptColorAtEndpointForAxis(subPts[subPts.length-1], run.axis);
+        if(adoptEnd) color = adoptEnd;
+      }
+
+      // Push this run as its own wire
+      wires.push({ id: uid('wire'), points: subPts, color });
+    }
+  }
+
   function finishWire(){
     // Commit only if we have at least one segment
     if(drawing.points.length >= 2){
@@ -1429,8 +1542,10 @@
         if(!pts.length || pts[pts.length-1].x!==p.x || pts[pts.length-1].y!==p.y) pts.push({x:p.x,y:p.y});
       }
       if(pts.length >= 2){
-        const id = uid('wire');
-        wires.push({ id, points: pts, color: resolveWireColor(currentWireColorMode) });
+        // Emit per-run so only truly colinear joins adopt an existing Wire's color.
+        // Bends (non-axis runs) stay with the current toolbar color.
+        emitRunsFromPolyline(pts);
+
         // Post-process: if user placed components while wire was in limbo,
         // split this newly added wire wherever pins land, and remove any inner bridge.
         // (Safe for all components; non-intersecting pins are ignored by the splitter.)
@@ -1439,6 +1554,9 @@
           const didBreak = breakWiresForComponent(c);
           if(didBreak) deleteBridgeBetweenPins(c);
         }
+        // Stitch end-to-end collinear runs back into the original wire path
+        normalizeAllWires();
+        unifyInlineWires();        
       }
     }
     // Reset drawing state and visuals
@@ -1794,64 +1912,85 @@
       inspectorNone.style.display = w? 'none' : 'block';
       if(!w) return;
       const wrap = document.createElement('div');
-      // ID (read-only)
-      wrap.appendChild(rowPair('ID', text(w.id, true)));
-      // Segments (read-only)
-      const segs = Math.max(0, (w.points?.length||0) - 1);
-      wrap.appendChild(rowPair('Segments', text(String(segs), true)));
 
-      // Color (editable) — swatch-only dropdown with tooltip
-      const holder = document.createElement('div');
-      holder.className = 'hstack inspector-color';
-      const btn = document.createElement('button');
-      btn.className = ''; // inherit header button style is not necessary here
-      const chip = document.createElement('span'); chip.className='swatch';
-      const currentMode = wireColorNameFromValue(w.color);
+      // Determine the “Wire” (SWP) that the clicked segment belongs to
+      const segIndex = Number.isInteger(selection.segIndex) ? selection.segIndex : null;
+      const swp = (segIndex!=null) ? swpForWireSegment(w.id, segIndex) : null;
 
-      const applyBtnUI = ()=>{
-        const col = w.color || defaultWireColor;
-        // Force inline style so nothing overrides it (visible fill + border)
-        chip.setAttribute(
-          'style',
-          'display:inline-block;width:14px;height:14px;'
-          + `background:${col};background-color:${col};`
-          + `border:1px solid ${col};border-radius:4px;vertical-align:middle;`
-        );
-        const hex = colorToHex(col);
-        const name = (WIRE_COLOR_OPTIONS.find(([v])=>v===wireColorNameFromValue(w.color))?.[1]) || 'Auto (Black/White)';
-        btn.title = `${name} — ${hex}`;
-      };
+      // ---- Wire ID (read-only) ----
+      // Prefer the SWP id (e.g. "swp3"). Fallback to the underlying polyline id if no SWP detected.
+      wrap.appendChild(rowPair('Wire ID', text((swp ? swp.id : w.id), true)));
 
-      btn.appendChild(chip);  // append first so styles paint reliably
-      applyBtnUI();           // then apply color      
-      const menu = document.createElement('div'); menu.className='palette'; menu.style.display='none';
-      holder.appendChild(btn); holder.appendChild(menu);
-      btn.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        // open/refresh palette
-        menu.replaceChildren();
-        const selMode = wireColorNameFromValue(w.color);
-        WIRE_COLOR_OPTIONS.forEach(([mode,label])=>{
-          const col = resolveWireColor(mode);
-          const hex = colorToHex(col);
-          const b = document.createElement('button');
-          b.className = 'swatch-btn'; b.style.background = col;
-          b.title = `${label} — ${hex}`;
-          if(mode===selMode) b.classList.add('selected');
-          b.addEventListener('click', ()=>{
-            w.color = resolveWireColor(mode);
-            updateWireDOM(w);
-            applyBtnUI();
-            menu.style.display='none';
+      // ---- Wire Endpoints (read-only) ----
+      // If we have an SWP, show its canonical endpoints. Else fallback to the polyline endpoints.
+      if (swp){
+        wrap.appendChild(rowPair('Wire Start', text(`${Math.round(swp.start.x)}, ${Math.round(swp.start.y)}`, true)));
+        wrap.appendChild(rowPair('Wire End',   text(`${Math.round(swp.end.x)}, ${Math.round(swp.end.y)}`, true)));
+      } else {
+        const A = w.points[0], B = w.points[w.points.length-1];
+        wrap.appendChild(rowPair('Wire Start', text(`${Math.round(A.x)}, ${Math.round(A.y)}`, true)));
+        wrap.appendChild(rowPair('Wire End',   text(`${Math.round(B.x)}, ${Math.round(B.y)}`, true)));
+      }
+
+      // ---- Wire Color (swatch palette) ----
+      // Edits recolor the whole SWP (preferred). If no SWP was detected, fallback to recoloring this polyline.
+      (function(){
+        const holder = document.createElement('div'); holder.className = 'hstack inspector-color';
+        const btn = document.createElement('button');
+        const chip = document.createElement('span'); chip.className = 'swatch';
+
+        const currentCol = ()=> (swp?.color) || w.color || defaultWireColor;
+
+        const applyBtnUI = ()=>{
+          const col = currentCol();
+          chip.setAttribute(
+            'style',
+            'display:inline-block;width:14px;height:14px;'
+            + `background:${col};background-color:${col};`
+            + `border:1px solid ${col};border-radius:4px;vertical-align:middle;`
+          );
+          btn.title = `Wire color — ${colorToHex(col)}`;
+        };
+        btn.appendChild(chip);
+        applyBtnUI();
+
+        const menu = document.createElement('div'); menu.className='palette'; menu.style.display='none';
+        holder.appendChild(btn); holder.appendChild(menu);
+
+        btn.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          menu.replaceChildren();
+          const selMode = wireColorNameFromValue(currentCol());
+          WIRE_COLOR_OPTIONS.forEach(([mode,label])=>{
+            const col = resolveWireColor(mode);
+            const hex = colorToHex(col);
+            const b = document.createElement('button');
+            b.className='swatch-btn'; b.style.background = col;
+            b.title = `${label} — ${hex}`;
+            if(mode===selMode) b.classList.add('selected');
+            b.addEventListener('click', ()=>{
+              const picked = resolveWireColor(mode);
+              if (swp){
+                // Recolor the entire SWP (affects all its segments, across polylines)
+                recolorSwpSegments(swp, picked);
+              } else {
+                // Fallback: recolor this single polyline and refresh
+                w.color = picked;
+                updateWireDOM(w);
+                rebuildTopology();
+                redraw();
+              }
+              menu.style.display='none';
+            });
+            menu.appendChild(b);
           });
-          menu.appendChild(b);
+          menu.style.display = 'grid';
         });
-        menu.style.display = 'grid';
-      });
-      document.addEventListener('pointerdown', (e)=>{
-        if(!menu.contains(e.target) && e.target!==btn) menu.style.display='none';
-      });
-      wrap.appendChild(rowPair('Color', holder));
+        document.addEventListener('pointerdown', (e)=>{
+          if(!menu.contains(e.target) && e.target!==btn) menu.style.display='none';
+        });
+        wrap.appendChild(rowPair('Wire Color', holder));
+      })();
 
       inspector.appendChild(wrap);
       return;
@@ -2101,6 +2240,170 @@
     return out;
   }
 
+  // Split a polyline keeping ONLY the segments whose indices are in keepIdxSet.
+  // Returns an array of point arrays (each ≥ 2 points).
+  function splitPolylineByKeptSegments(pts, keepIdxSet){
+    if(!pts || pts.length < 2) return [];
+    const out = [];
+    let cur = [];
+    for(let i=0;i<pts.length-1;i++){
+      const a = pts[i], b = pts[i+1];
+      if(keepIdxSet.has(i)){
+        if(cur.length===0) cur.push({x:a.x,y:a.y});
+        cur.push({x:b.x,y:b.y});
+      } else {
+        if(cur.length>=2){
+          const np = normalizedPolylineOrNull(cur);
+          if(np) out.push(np);
+        }
+        cur = [];
+      }
+    }
+    if(cur.length>=2){
+      const np = normalizedPolylineOrNull(cur);
+      if(np) out.push(np);
+    }
+    return out;
+  }
+
+    // === Inline merge: join collinear wires that meet end-to-end (excluding component pins) ===
+  function allPinKeys(){
+    const s = new Set();
+    for(const c of components){
+      const pins = compPinPositions(c).map(p=>({x:Math.round(p.x), y:Math.round(p.y)}));
+      for(const p of pins) s.add(keyPt(p));
+    }
+    return s;
+  }
+  function axisAtEndpoint(w, endIndex){
+    const n=w.points.length; if(n<2) return null;
+    const a = w.points[endIndex];
+    const b = (endIndex===0)? w.points[1] : w.points[n-2];
+    if(a.y===b.y) return 'x';
+    if(a.x===b.x) return 'y';
+    return null;
+  }
+  function endpointPairsByKey(){
+    // key -> array of { w, endIndex, axis, other }
+    const map = new Map();
+    for(const w of wires){
+      const n=w.points.length;
+      if(n<2) continue;
+      const ends = [0, n-1];
+      for(const endIndex of ends){
+        const p = w.points[endIndex];
+        const key = keyPt({x:Math.round(p.x), y:Math.round(p.y)});
+        const ax = axisAtEndpoint(w, endIndex);
+        const other = (endIndex===0)? w.points[1] : w.points[n-2];
+        (map.get(key) || (map.set(key, []), map.get(key))).push({ w, endIndex, axis:ax, other });
+      }
+    }
+    return map;
+  }
+
+  function unifyInlineWires(){
+    const pinKeys = allPinKeys();
+    let changed = false;
+
+    const pairs = endpointPairsByKey();
+    // Try to merge exactly-two-endpoint nodes that are collinear and not at a component pin.
+    for(const [key, list] of pairs){
+      if(pinKeys.has(key)) continue;          // never merge across component pins
+      if(list.length !== 2) continue;         // only consider clean 1:1 joins
+      const a = list[0], b = list[1];
+      if(a.w === b.w) continue;               // ignore self-joins
+      if(!a.axis || !b.axis) continue;        // must both be axis-aligned
+      if(a.axis !== b.axis) continue;         // must be the same axis
+
+      const [kx, ky] = key.split(',').map(n=>parseInt(n,10));
+      let left, right;                         // "left" == left/top piece, per your rule
+      if(a.axis==='x'){
+        // Decide which piece is to the left of the join
+        const aLeft = Math.min(a.other.x, kx) < kx;
+        const bLeft = Math.min(b.other.x, kx) < kx;
+        if(aLeft && !bLeft){ left=a; right=b; }
+        else if(bLeft && !aLeft){ left=b; right=a; }
+        else {
+          const minxA = Math.min(...a.w.points.map(p=>p.x));
+          const minxB = Math.min(...b.w.points.map(p=>p.x));
+          left = (minxA <= minxB) ? a : b; right = (left===a) ? b : a;
+        }
+      } else { // 'y'
+        const aTop = Math.min(a.other.y, ky) < ky;
+        const bTop = Math.min(b.other.y, ky) < ky;
+        if(aTop && !bTop){ left=a; right=b; }
+        else if(bTop && !aTop){ left=b; right=a; }
+        else {
+          const minyA = Math.min(...a.w.points.map(p=>p.y));
+          const minyB = Math.min(...b.w.points.map(p=>p.y));
+          left = (minyA <= minyB) ? a : b; right = (left===a) ? b : a;
+        }
+      }
+
+      // Orient left piece so it ENDS at the join, right piece so it STARTS at the join
+      const lp = left.w.points.slice();
+      const rp = right.w.points.slice();
+      const lPts = (left.endIndex === lp.length-1) ? lp : lp.reverse();
+      const rPts = (right.endIndex === 0) ? rp : rp.reverse();
+
+      const mergedPts = lPts.concat(rPts.slice(1));  // drop duplicate join point
+      const merged = normalizedPolylineOrNull(mergedPts);
+      if(!merged) continue;
+
+      // Adopt left/top wire's color
+      const newColor = left.w.color || defaultWireColor;
+
+      // Replace
+      wires = wires.filter(w => w !== left.w && w !== right.w);
+      wires.push({ id: uid('wire'), points: merged, color: newColor });
+
+      changed = true;
+      break; // wires changed; stop this pass and recurse
+    }
+    if(changed){
+      normalizeAllWires();
+      // Re-run until no merges remain
+      return unifyInlineWires() || true;
+    }
+    return false;
+  }
+
+  // Recolor all segments that belong to the given SWP to `newColor`.
+  // Segments outside the SWP keep their original wire color.
+  function recolorSwpSegments(swp, newColor){
+    if(!swp) return;
+    const byId = new Map(wires.map(w=>[w.id,w]));
+    const result = [];
+
+    for(const w of wires){
+      const keepIdxs = new Set((swp.edgeIndicesByWire && swp.edgeIndicesByWire[w.id]) || []);
+      if(keepIdxs.size === 0){
+        result.push(w); // untouched whole wire
+        continue;
+      }
+      // Pieces that are NOT in the SWP (remove kept idxs)
+      const otherPieces = splitPolylineByRemovedSegments(w.points, keepIdxs);
+      // Pieces that ARE in the SWP (keep kept idxs)
+      const swpPieces   = splitPolylineByKeptSegments(w.points, keepIdxs);
+
+      // Emit others with original color
+      for(const pts of otherPieces){
+        result.push({ id: uid('wire'), points: pts, color: w.color || defaultWireColor });
+      }
+      // Emit SWP pieces with newColor
+      for(const pts of swpPieces){
+        result.push({ id: uid('wire'), points: pts, color: newColor });
+      }
+    }
+    wires = result;
+    // No need to manually push color back into SWP; on next rebuild it will
+    // derive from the (now-uniform) segment colors.
+    selection = {kind:null,id:null,segIndex:null}; // selection may have been split; clear it
+    normalizeAllWires();
+    rebuildTopology();
+    redraw();
+  }
+
   // ====== Save / Load ======
   document.getElementById('saveBtn').addEventListener('click', saveJSON);
   document.getElementById('loadBtn').addEventListener('click', ()=> document.getElementById('fileInput').click());
@@ -2251,7 +2554,14 @@
         leadEdge = chain.reduce((m,e)=> Math.min(e.a.y,e.b.y) < Math.min(m.a.y,m.b.y) ? e : m, chain[0]);
       }
       const leadWire = wires.find(w=>w.id===leadEdge.wireId);
-      const swpColor = leadWire?.color || defaultWireColor;
+      // If all contributing wire segments share the same color, use it; otherwise default to white.
+      const segColors = [...new Set(
+        chain
+          .map(e => e.wireId)
+          .filter(Boolean)
+          .map(id => (wires.find(w=>w.id===id)?.color) || defaultWireColor)
+      )];
+      const swpColor = (segColors.length === 1) ? segColors[0] : '#FFFFFF';
 
       // Track both the wire IDs and the exact segment indices per wire.
       const edgeWireIds = [...new Set(chain.map(e=>e.wireId).filter(Boolean))];
@@ -2308,6 +2618,14 @@
   // ---- SWP Move: collapse current SWP to a single straight wire, constrain move, rebuild on finish ----
   function findSwpById(id){ return topology.swps.find(s=>s.id===id); }
   function swpIdForComponent(c){ return topology.compToSwp.get(c.id) || null; }
+  // Return the SWP that contains wire segment (wireId, segIndex), or null
+  function swpForWireSegment(wireId, segIndex){
+    for(const s of topology.swps){
+      const arr = s.edgeIndicesByWire && s.edgeIndicesByWire[wireId];
+      if(arr && arr.includes(segIndex)) return s;
+    }
+    return null;
+  }
   function compCenterAlongAxis(c, axis){ return axis==='x' ? c.x : c.y; }
   function pinSpanAlongAxis(c, axis){
     const pins = compPinPositions(c);
