@@ -253,6 +253,10 @@
   let drawing = { active:false, points:[], cursor:null }; // cursor = live rubber-band point
   // Marquee selection (click+drag rectangle) state
   let marquee = { active:false, start:null, end:null, rectEl:null, startedOnEmpty:false, shiftPreferComponents:false };
+  // ---- Wire topology (nodes/edges/SWPs) + per-move collapse context ----
+  let topology = { nodes: [], edges: [], swps: [], compToSwp: new Map() };
+  let moveCollapseCtx = null; // set while moving a component within its SWP
+  let lastMoveCompId = null;  // component id whose SWP is currently collapsed
   // Suppress the next contextmenu after right-click finishing a wire
   let suppressNextContextMenu = false;
   // ViewBox zoom state
@@ -386,7 +390,14 @@
     }
     // Update diode subtype popup visibility with any mode change
     updateSubtypeVisibility();
-    redraw(); // refresh wire/comp hit gating for the new mode    
+    // SWP collapse is engaged as soon as Move mode is active with a selected component.
+    if (m === 'move') {
+      ensureCollapseForSelection();
+    } else {
+      // Leaving Move mode finalizes any collapsed SWP back into segments.
+      ensureFinishSwpMove();
+    }
+    redraw(); // refresh wire/comp hit gating for the new mode
   }
 
   // ====== Component Drawing ======
@@ -435,7 +446,11 @@
     compPinPositions(c).forEach((p,idx)=>{
       const pin = document.createElementNS('http://www.w3.org/2000/svg','circle');
       pin.setAttribute('cx', p.x); pin.setAttribute('cy', p.y);
-      pin.setAttribute('r', 3); pin.setAttribute('fill', 'var(--node)');
+      pin.setAttribute('r', 3);
+      pin.setAttribute('fill', 'var(--pin)');
+      // 1px outline for contrast (especially against white wires). Non-scaling via global CSS.
+      pin.setAttribute('stroke', 'var(--bg)');
+      pin.setAttribute('stroke-width', '1');
       pin.setAttribute('data-pin', String(idx));
       g.appendChild(pin);
     });
@@ -456,10 +471,27 @@
       // persist selection until user clicks elsewhere
       selection = {kind:'component', id:c.id, segIndex:null};
       renderInspector(); updateSelectionOutline();
-      dragging=true;
+      // If switching to a different component while in Move mode, finalize the prior SWP first.
+      if (mode === 'move' && moveCollapseCtx && moveCollapseCtx.kind === 'swp' && lastMoveCompId && lastMoveCompId !== c.id) {
+        ensureFinishSwpMove();
+      }
       const pt = svgPoint(e);
+      // Move only when Move mode is active; in Select mode: select only.
+      if(mode!=='move'){ return; }
+      dragging=true;
       dragOff.x = c.x - pt.x; dragOff.y = c.y - pt.y;
-      slideCtx = buildSlideContext(c);
+      // Prepare SWP-aware context (collapse SWP to a single straight run)
+      slideCtx = null; // fallback only if no SWP detected
+      rebuildTopology();
+      const swpCtx = beginSwpMove(c);
+      if(swpCtx){
+        dragging = true;
+        slideCtx = null;       // ensure we use SWP move
+        g.classList.add('moving');
+      }else{
+        // fallback to legacy slide along adjacent wires (if no SWP)
+        slideCtx = buildSlideContext(c);
+      }
       const pins0 = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
       const wsA = wiresEndingAt(pins0[0]);
       const wsB = wiresEndingAt(pins0[1]||pins0[0]);
@@ -475,27 +507,55 @@
       e.stopPropagation();
     });
     g.addEventListener('pointermove', (e)=>{
-      if(!dragging) return;
-      const p = svgPoint(e);
-      if(slideCtx){
+    if(!dragging) return;
+    const p = svgPoint(e);
+    // Prefer SWP move if active
+    if(moveCollapseCtx && moveCollapseCtx.kind==='swp'){
+      const mc = moveCollapseCtx;
+      if(mc.axis==='x'){
+        let nx = snap(p.x + dragOff.x);
+        nx = Math.max(mc.minCenter, Math.min(mc.maxCenter, nx));
+        const candX = nx, candY = mc.fixed;
+        if(!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)){
+          c.x = candX; c.y = candY; mc.lastCenter = candX;
+          updateComponentDOM(c);
+        }
+      } else {
+        let ny = snap(p.y + dragOff.y);
+        ny = Math.max(mc.minCenter, Math.min(mc.maxCenter, ny));
+        const candX = mc.fixed, candY = ny;
+        if(!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)){
+          c.y = candY; c.x = candX; mc.lastCenter = ny;
+          updateComponentDOM(c);
+        }
+      }
+    } else if(slideCtx){
         if(slideCtx.axis==='x'){
-          let nx = snap(p.x + dragOff.x);
-          nx = Math.max(Math.min(slideCtx.max, nx), slideCtx.min);
-          c.x = nx; c.y = slideCtx.fixed;
+            let nx = snap(p.x + dragOff.x);
+            nx = Math.max(Math.min(slideCtx.max, nx), slideCtx.min);
+            const candX = nx, candY = slideCtx.fixed;
+            if(overlapsAnyOtherAt(c, candX, candY) || pinsCoincideAnyAt(c, candX, candY)) return;
+            c.x = candX; c.y = candY;
         }else{
           let ny = snap(p.y + dragOff.y);
           ny = Math.max(Math.min(slideCtx.max, ny), slideCtx.min);
-          c.y = ny; c.x = slideCtx.fixed;
+          const candX = slideCtx.fixed, candY = ny;
+          if(!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)){
+            c.y = candY; c.x = candX;
+          }
+          const pinsNow = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
+          adjustWireEnd(slideCtx.wA, slideCtx.pinAStart, pinsNow[0]);
+          adjustWireEnd(slideCtx.wB, slideCtx.pinBStart, pinsNow[1]);
+          slideCtx.pinAStart = pinsNow[0]; slideCtx.pinBStart = pinsNow[1];
+          updateComponentDOM(c); updateWireDOM(slideCtx.wA); updateWireDOM(slideCtx.wB);
         }
-        const pinsNow = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
-        adjustWireEnd(slideCtx.wA, slideCtx.pinAStart, pinsNow[0]);
-        adjustWireEnd(slideCtx.wB, slideCtx.pinBStart, pinsNow[1]);
-        slideCtx.pinAStart = pinsNow[0]; slideCtx.pinBStart = pinsNow[1];
-        updateComponentDOM(c); updateWireDOM(slideCtx.wA); updateWireDOM(slideCtx.wB);
       }else{
-        c.x = snap(p.x + dragOff.x);
-        c.y = snap(p.y + dragOff.y);
-        updateComponentDOM(c);
+        const candX = snap(p.x + dragOff.x);
+        const candY = snap(p.y + dragOff.y);
+        if(!overlapsAnyOtherAt(c, candX, candY)){
+          c.x = candX; c.y = candY;
+          updateComponentDOM(c);
+        }
       }
     });
     g.addEventListener('pointerup', (e)=>{
@@ -505,6 +565,13 @@
       if(!dragging) return;
       dragging=false;
       if(dragStart){
+        // If we were doing an SWP-constrained move, rebuild segments for that SWP
+        if(moveCollapseCtx && moveCollapseCtx.kind==='swp'){
+          finishSwpMove(c);
+          g.classList.remove('moving');
+          dragStart=null;
+          return;
+        }
         if(overlapsAnyOther(c)){
           c.x = dragStart.x; c.y = dragStart.y;
           if(slideCtx && dragStart.pins?.length===2){
@@ -680,7 +747,7 @@
       vis.setAttribute('class','wire-stroke');
       vis.setAttribute('fill','none');
       vis.setAttribute('stroke', w.color || defaultWireColor);
-      vis.setAttribute('stroke-width','3');
+      vis.setAttribute('stroke-width','1');
       vis.setAttribute('stroke-linecap','round');
       vis.setAttribute('stroke-linejoin','round');
       vis.setAttribute('points', w.points.map(p=>`${p.x},${p.y}`).join(' '));
@@ -722,7 +789,7 @@
           selSeg.setAttribute('x1', a.x); selSeg.setAttribute('y1', a.y);
           selSeg.setAttribute('x2', b.x); selSeg.setAttribute('y2', b.y);
           selSeg.setAttribute('stroke','var(--select)');
-          selSeg.setAttribute('stroke-width','6');
+          selSeg.setAttribute('stroke-width','3');
           selSeg.setAttribute('stroke-linecap','round');
           selSeg.setAttribute('pointer-events','none');
           g.appendChild(selSeg);
@@ -737,6 +804,7 @@
   function redraw(){
     redrawCanvasOnly();
     renderInspector();
+    rebuildTopology();
   }
 
   // Update selection styling (no circle; tint symbol graphics via CSS)
@@ -748,7 +816,42 @@
     });    
   }
 
-  function selecting(kind, id, segIndex=null){ selection = {kind, id, segIndex}; redraw(); }
+  function selecting(kind, id, segIndex=null){
+    // If we're in Move mode and have a collapsed SWP, finalize it when switching away
+    // from the current component (or to a non-component selection).
+    if (mode === 'move' && moveCollapseCtx && selection.kind === 'component') {
+      const prevId = selection.id;
+      if (kind !== 'component' || id !== prevId) {
+        ensureFinishSwpMove();
+      }
+    }
+    selection = {kind, id, segIndex};
+    // If we're in Move mode and a component is now selected, collapse its SWP immediately.
+    if (mode === 'move' && kind === 'component') {
+      ensureCollapseForSelection();
+    }
+    redraw();
+  }
+
+  function mendWireAtPoints(hitA, hitB){
+    if (hitA && hitB){
+      const wA = hitA.w, wB = hitB.w;
+      // Orient so that aPoints ends at pinA and bPoints starts at pinB
+      const aPoints = (hitA.endIndex === wA.points.length-1) ? wA.points.slice() : wA.points.slice().reverse();
+      const bPoints = (hitB.endIndex === 0)                  ? wB.points.slice() : wB.points.slice().reverse();
+      // Remove the pin vertices themselves, then concatenate
+      const left  = aPoints.slice(0, Math.max(0, aPoints.length - 1));
+      const right = bPoints.slice(1);
+      const joined = left.concat(right);
+      const merged = collapseDuplicateVertices(joined);
+      // Replace the two wires with a single merged polyline
+      wires = wires.filter(w => w!==wA && w!==wB);
+      if (merged.length >= 2) {
+        // prefer left-side color; if mismatch, we still keep wA's color
+        wires.push({ id: uid('wire'), points: merged, color: wA.color || wB.color || defaultWireColor });
+      }
+    }        
+  }
 
   function removeComponent(id){
     const comp = components.find(c=>c.id===id);
@@ -761,21 +864,7 @@
         const hitA = findWireEndpointNear(pins[0], 0.9);
         const hitB = findWireEndpointNear(pins[1], 0.9);
         if (hitA && hitB){
-          const wA = hitA.w, wB = hitB.w;
-          // Orient so that aPoints ends at pinA and bPoints starts at pinB
-          const aPoints = (hitA.endIndex === wA.points.length-1) ? wA.points.slice() : wA.points.slice().reverse();
-          const bPoints = (hitB.endIndex === 0)                   ? wB.points.slice() : wB.points.slice().reverse();
-          // Remove the pin vertices themselves, then concatenate
-          const left  = aPoints.slice(0, Math.max(0, aPoints.length - 1));
-          const right = bPoints.slice(1);
-          const joined = left.concat(right);
-          const merged = collapseDuplicateVertices(joined);
-          // Replace the two wires with a single merged polyline
-          wires = wires.filter(w => w!==wA && w!==wB);
-          if (merged.length >= 2) {
-            // prefer left-side color; if mismatch, we still keep wA's color
-            wires.push({ id: uid('wire'), points: merged, color: wA.color || wB.color || defaultWireColor });
-          }
+          mendWireAtPoints(hitA, hitB);
         }        
       }
     }
@@ -1367,7 +1456,7 @@
     const pts = drawing.cursor ? [...drawing.points, drawing.cursor] : drawing.points;
     const pl = document.createElementNS('http://www.w3.org/2000/svg','polyline');    
     const drawColor = resolveWireColor(currentWireColorMode);
-    pl.setAttribute('fill','none'); pl.setAttribute('stroke', drawColor); pl.setAttribute('stroke-width','3'); pl.setAttribute('stroke-linecap','round'); pl.setAttribute('stroke-linejoin','round');
+    pl.setAttribute('fill','none'); pl.setAttribute('stroke', drawColor); pl.setAttribute('stroke-width','1'); pl.setAttribute('stroke-linecap','round'); pl.setAttribute('stroke-linejoin','round');
     pl.setAttribute('marker-start','url(#dot)');
     pl.setAttribute('points', pts.map(p=>`${p.x},${p.y}`).join(' '));
     gDrawing.appendChild(pl);
@@ -1841,22 +1930,72 @@
       if((dx*dx + dy*dy) < (R*R)) return true;
     }
     return false;
+  }
+  // Test overlap if 'c' were at (x,y) without committing the move.
+  function overlapsAnyOtherAt(c, x, y){
+    const R = 56;
+    for(const o of components){
+      if(o.id===c.id) continue;
+      const dx = o.x - x, dy = o.y - y;
+      if((dx*dx + dy*dy) < (R*R)) return true;
+    }
+    return false;
+  }
+  
+  // Prevent a component's pins from landing exactly on another component's pins.
+  function pinsCoincideAnyAt(c, x, y, eps=0.75){
+    // Compute THIS component's pins if its center were at (x,y)
+    const ghost = { ...c, x, y };
+    const myPins = compPinPositions(ghost).map(p=>({x:snap(p.x), y:snap(p.y)}));
+    for(const o of components){
+      if(o.id===c.id) continue;
+      const oPins = compPinPositions(o).map(p=>({x:snap(p.x), y:snap(p.y)}));
+      for(const mp of myPins){
+        for(const op of oPins){
+          if (eqPtEps(mp, op, eps)) return true;
+        }
+      }
+    }
+    return false;
   }  
 
   // ====== Move helpers (mouse drag already handled; this handles arrow keys & clamping) ======
   function moveSelectedBy(dx, dy){
     const c = components.find(x=>x.id===selection.id); if(!c) return;
+    // If an SWP is collapsed for THIS component, move along that SWP with proper clamps.
+    if (moveCollapseCtx && moveCollapseCtx.kind==='swp' && swpIdForComponent(c)===moveCollapseCtx.sid){
+      const mc = moveCollapseCtx;
+      if(mc.axis==='x'){
+        let nx = snap(c.x + dx);
+        nx = Math.max(mc.minCenter, Math.min(mc.maxCenter, nx));
+        if(!overlapsAnyOtherAt(c, nx, mc.fixed) && !pinsCoincideAnyAt(c, nx, mc.fixed)){
+          c.x = nx; c.y = mc.fixed; mc.lastCenter = nx;
+        }
+      } else {
+        let ny = snap(c.y + dy);
+        ny = Math.max(mc.minCenter, Math.min(mc.maxCenter, ny));
+        if(!overlapsAnyOtherAt(c, mc.fixed, ny) && !pinsCoincideAnyAt(c, mc.fixed, ny)){
+          c.y = ny; c.x = mc.fixed; mc.lastCenter = ny;
+        }
+      }
+      redrawCanvasOnly();
+      return;
+    }    
     const ctx = buildSlideContext(c);
     if(ctx){
       // slide along constrained axis
       if(ctx.axis==='x'){
         let nx = snap(c.x + dx);
         nx = Math.max(Math.min(ctx.max, nx), ctx.min);
-        c.x = nx; c.y = ctx.fixed;
+        if(!overlapsAnyOtherAt(c, nx, ctx.fixed) && !pinsCoincideAnyAt(c, nx, ctx.fixed)){
+          c.x = nx; c.y = ctx.fixed;
+        }
       }else{
         let ny = snap(c.y + dy);
         ny = Math.max(Math.min(ctx.max, ny), ctx.min);
-        c.y = ny; c.x = ctx.fixed;
+        if(!overlapsAnyOtherAt(c, ctx.fixed, ny) && !pinsCoincideAnyAt(c, ctx.fixed, ny)){
+          c.y = ny; c.x = ctx.fixed;
+        }
       }
       const pins = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
       adjustWireEnd(ctx.wA, ctx.pinAStart, pins[0]);
@@ -1864,7 +2003,10 @@
       ctx.pinAStart = pins[0]; ctx.pinBStart = pins[1];
       redraw();
     }else{
-      c.x = snap(c.x + dx); c.y = snap(c.y + dy);
+      const nx = snap(c.x + dx), ny = snap(c.y + dy);
+      if(!overlapsAnyOtherAt(c, nx, ny) && !pinsCoincideAnyAt(c, nx, ny)){
+        c.x = nx; c.y = ny;
+      }
       redrawCanvasOnly();
     }
   }
@@ -1876,7 +2018,11 @@
   function indexOfPointEps(pts, p, eps=0.75){
     for(let i=0;i<pts.length;i++){ if(eqPtEps(pts[i], p, eps)) return i; }
     return -1;
-  }  
+  }
+
+  const keyPt = (p)=> `${Math.round(p.x)},${Math.round(p.y)}`;
+  const eqN = (a,b,eps=0.5)=> Math.abs(a-b)<=eps;
+
   // Return a copy whose LAST point is 'pin'. If 'pin' is interior, keep only the side up to the pin.
   function orderPointsEndingAt(pts, pin){
     const n = pts.length;
@@ -1927,7 +2073,33 @@
       if (c) acc.push({ id: w.id, points: c, color: w.color || defaultWireColor });
       return acc;
     }, []);
-  }  
+  }
+  
+  // Split a polyline by removing segments whose 0-based indices are in removeIdxSet.
+  // Returns an array of point arrays (each ≥ 2 points after normalization).
+  function splitPolylineByRemovedSegments(pts, removeIdxSet){
+    if(!pts || pts.length < 2) return [];
+    const out = [];
+    let cur = [ pts[0] ];
+    for(let i=0; i<pts.length-1; i++){
+      if(removeIdxSet.has(i)){
+        // close current piece before the removed segment
+        if(cur.length >= 2){
+          const np = normalizedPolylineOrNull(cur);
+          if(np) out.push(np);
+        }
+        // start a new piece after the removed segment
+        cur = [ pts[i+1] ];
+      } else {
+        cur.push(pts[i+1]);
+      }
+    }
+    if(cur.length >= 2){
+      const np = normalizedPolylineOrNull(cur);
+      if(np) out.push(np);
+    }
+    return out;
+  }
 
   // ====== Save / Load ======
   document.getElementById('saveBtn').addEventListener('click', saveJSON);
@@ -1970,6 +2142,333 @@
     selection={kind:null, id:null, segIndex:null}; redraw();
   }
 
+  // ====== Topology: nodes, edges, SWPs ======
+  function rebuildTopology(){
+    const nodes = new Map();     // key -> {x,y,edges:Set<edgeId>, axDeg:{x:number,y:number}}
+    const edges = [];            // {id, wireId, i, a:{x,y}, b:{x,y}, axis:'x'|'y'|null, akey, bkey}
+    const axisOf = (a,b)=> (a.y===b.y) ? 'x' : (a.x===b.x) ? 'y' : null;
+    function addNode(p){
+      const k = keyPt(p);
+      if(!nodes.has(k)) nodes.set(k, { x:Math.round(p.x), y:Math.round(p.y), edges:new Set(), axDeg:{x:0,y:0} });
+      return k;
+    }
+    // Build edges from polylines (axis-aligned only for SWPs)
+    for(const w of wires){
+      const pts = w.points||[];
+      for(let i=0;i<pts.length-1;i++){
+        const a = {x:Math.round(pts[i].x), y:Math.round(pts[i].y)};
+        const b = {x:Math.round(pts[i+1].x), y:Math.round(pts[i+1].y)};
+        const ax = axisOf(a,b);
+        const akey = addNode(a), bkey = addNode(b);
+        const id = `${w.id}:${i}`;
+        edges.push({ id, wireId:w.id, i, a, b, axis:ax, akey, bkey });
+        const na = nodes.get(akey), nb = nodes.get(bkey);
+        na.edges.add(id); nb.edges.add(id);
+        if(ax) { na.axDeg[ax]++; nb.axDeg[ax]++; }
+      }
+    }
+
+    // --- NEW: Add synthetic "component bridge" edges so SWPs span through embedded 2-pin components ---
+    // This lets a straight wire path continue across the part, enabling collapse at move-start and
+    // proper re-segmentation at move-end.
+    const twoPinForBridge = ['resistor','capacitor','inductor','diode','battery','ac'];
+    for (const c of components){
+      if(!twoPinForBridge.includes(c.type)) continue;
+      const pins = compPinPositions(c).map(p=>({x:Math.round(p.x), y:Math.round(p.y)}));
+      if (pins.length !== 2) continue;
+      let axis = null;
+      if (pins[0].y === pins[1].y) axis = 'x';
+      else if (pins[0].x === pins[1].x) axis = 'y';
+      if (!axis) continue; // only bridge axis-aligned 2-pin parts
+      // Only bridge when the component is actually embedded: both pins touch wire endpoints.
+      const hitA = findWireEndpointNear(pins[0], 0.9);
+      const hitB = findWireEndpointNear(pins[1], 0.9);
+      if(!(hitA && hitB)) continue;
+      const akey = addNode(pins[0]), bkey = addNode(pins[1]);
+      const id = `comp:${c.id}`;
+      edges.push({ id, wireId:null, i:-1, a:pins[0], b:pins[1], axis, akey, bkey });
+      const na = nodes.get(akey), nb = nodes.get(bkey);
+      na.edges.add(id); nb.edges.add(id);
+      na.axDeg[axis]++; nb.axDeg[axis]++;
+    }
+
+    // SWPs: maximal straight runs where interior nodes have axis-degree==2
+    const visited = new Set();
+    const swps = [];
+    const edgeById = new Map(edges.map(e=>[e.id,e]));
+    function otherEdgeWithSameAxis(nodeKey, fromEdge){
+      const n = nodes.get(nodeKey); if(!n) return null;
+      if(!fromEdge.axis) return null;
+      if(n.axDeg[fromEdge.axis]!==2) return null; // branch or dead-end
+      for(const eid of n.edges){
+        if(eid===fromEdge.id) continue;
+        const e = edgeById.get(eid);
+        if(e && e.axis===fromEdge.axis){
+          // ensure this edge actually touches this node
+          if(e.akey===nodeKey || e.bkey===nodeKey) return e;
+        }
+      }
+      return null;
+    }
+
+    for (const e0 of edges){
+      if (!e0.axis) continue;
+      if (visited.has(e0.id)) continue;
+      // Walk both directions along the same axis to capture the entire straight run
+      const chainSet = new Set();
+      function walkDir(cur, enterNodeKey){
+        while (cur && !chainSet.has(cur.id)){
+          chainSet.add(cur.id);
+          const nextNodeKey = (cur.akey===enterNodeKey) ? cur.bkey : cur.akey;
+          const nxt = otherEdgeWithSameAxis(nextNodeKey, cur);
+          if(!nxt) break;
+          enterNodeKey = nextNodeKey;
+          cur = nxt;
+        }
+      }
+      walkDir(e0, e0.akey);
+      walkDir(e0, e0.bkey);
+      const chain = [...chainSet].map(id=>edgeById.get(id));
+      chain.forEach(ed => visited.add(ed.id));
+
+      // Determine endpoints (min/max along axis)
+      const allNodes = new Set();
+      chain.forEach(ed=>{ allNodes.add(ed.akey); allNodes.add(ed.bkey); });
+      const pts = [...allNodes].map(k=>nodes.get(k));
+      let start, end, axis=e0.axis;
+      if(axis==='x'){
+        pts.sort((u,v)=> u.x-v.x);
+        start = pts[0]; end = pts[pts.length-1];
+      }else{
+        pts.sort((u,v)=> u.y-v.y);
+        start = pts[0]; end = pts[pts.length-1];
+      }
+      // Pick color: "left/top" edge's source wire color
+      let leadEdge = chain[0];
+      if(axis==='x'){
+        leadEdge = chain.reduce((m,e)=> Math.min(e.a.x,e.b.x) < Math.min(m.a.x,m.b.x) ? e : m, chain[0]);
+      } else {
+        leadEdge = chain.reduce((m,e)=> Math.min(e.a.y,e.b.y) < Math.min(m.a.y,m.b.y) ? e : m, chain[0]);
+      }
+      const leadWire = wires.find(w=>w.id===leadEdge.wireId);
+      const swpColor = leadWire?.color || defaultWireColor;
+
+      // Track both the wire IDs and the exact segment indices per wire.
+      const edgeWireIds = [...new Set(chain.map(e=>e.wireId).filter(Boolean))];
+      const edgeIndicesByWire = {};
+      for(const e of chain){
+        if(!e.wireId) continue;               // skip synthetic component bridges
+        (edgeIndicesByWire[e.wireId] ||= []).push(e.i);
+      }
+      // normalize & sort indices per wire
+      for(const k in edgeIndicesByWire){
+        edgeIndicesByWire[k] = [...new Set(edgeIndicesByWire[k])].sort((a,b)=>a-b);
+      }
+
+      swps.push({
+        id: `swp${swps.length+1}`,
+        axis,
+        start:{x:start.x,y:start.y},
+        end:{x:end.x,y:end.y},
+        color: swpColor,
+        edgeWireIds,
+        edgeIndicesByWire
+      });
+    }
+    // Map components (2-pin only) onto SWPs
+    const compToSwp = new Map();
+    const twoPin = ['resistor','capacitor','inductor','diode','battery','ac'];
+    for(const c of components){
+      if(!twoPin.includes(c.type)) continue;
+      const pins = compPinPositions(c).map(p=>({x:Math.round(p.x), y:Math.round(p.y)}));
+      if(pins.length!==2) continue;
+      for(const s of swps){
+        if(s.axis==='x'){
+          const y = s.start.y;
+          const minx = Math.min(s.start.x, s.end.x), maxx=Math.max(s.start.x, s.end.x);
+          if(eqN(pins[0].y, y) && eqN(pins[1].y,y) &&
+             Math.min(pins[0].x,pins[1].x) >= minx-0.5 &&
+             Math.max(pins[0].x,pins[1].x) <= maxx+0.5){
+            compToSwp.set(c.id, s.id); break;
+          }
+        } else if (s.axis==='y'){
+          const x = s.start.x;
+          const miny = Math.min(s.start.y, s.end.y), maxy=Math.max(s.start.y, s.end.y);
+          if(eqN(pins[0].x, x) && eqN(pins[1].x,x) &&
+             Math.min(pins[0].y,pins[1].y) >= miny-0.5 &&
+             Math.max(pins[0].y,pins[1].y) <= maxy+0.5){
+            compToSwp.set(c.id, s.id); break;
+          }
+        }
+      }
+    }
+    topology = { nodes:[...nodes.values()], edges, swps, compToSwp };
+  }
+
+  // ---- SWP Move: collapse current SWP to a single straight wire, constrain move, rebuild on finish ----
+  function findSwpById(id){ return topology.swps.find(s=>s.id===id); }
+  function swpIdForComponent(c){ return topology.compToSwp.get(c.id) || null; }
+  function compCenterAlongAxis(c, axis){ return axis==='x' ? c.x : c.y; }
+  function pinSpanAlongAxis(c, axis){
+    const pins = compPinPositions(c);
+    if(axis==='x'){
+      const xs = pins.map(p=>Math.round(p.x)); return { lo: Math.min(...xs), hi: Math.max(...xs) };
+    } else {
+      const ys = pins.map(p=>Math.round(p.y)); return { lo: Math.min(...ys), hi: Math.max(...ys) };
+    }
+  }
+  function halfPinSpan(c, axis){
+    const s = pinSpanAlongAxis(c, axis);
+    return (axis==='x') ? (s.hi - s.lo)/2 : (s.hi - s.lo)/2;
+  }  
+  function beginSwpMove(c){
+    const sid = swpIdForComponent(c);
+    if(!sid) return null;
+    // Already collapsed for this SWP? Keep it; just remember which component we're moving.
+    if (moveCollapseCtx && moveCollapseCtx.kind==='swp' && moveCollapseCtx.sid===sid){
+      lastMoveCompId = c.id;
+      return moveCollapseCtx;
+    }
+    const swp = findSwpById(sid); if(!swp) return null;    
+    // Collapse the SWP: remove all its wires, replace with a single straight polyline
+    // Collapse the SWP: remove only the SWP's segments from their host wires (preserve perpendicular legs),
+    // then add one straight polyline for the collapsed SWP.
+    const originalWires = JSON.parse(JSON.stringify(wires));
+    const rebuilt = [];
+    for(const w of originalWires){
+      const idxs = (swp.edgeIndicesByWire && swp.edgeIndicesByWire[w.id]) || null;
+      if(!idxs || idxs.length===0){
+        rebuilt.push(w); // untouched wire
+      }else{
+        const pieces = splitPolylineByRemovedSegments(w.points, new Set(idxs));
+        for(const pts of pieces){
+          rebuilt.push({ id: uid('wire'), points: pts, color: w.color || defaultWireColor });
+        }
+      }
+    }
+    const p0 = swp.start, p1 = swp.end;
+    const collapsed = { id: uid('wire'), points:[{x:p0.x,y:p0.y},{x:p1.x,y:p1.y}], color: swp.color };
+    wires = rebuilt.concat([collapsed]);
+
+    // Compute allowed span for c (no overlap with other components in this SWP)
+    const axis = swp.axis;
+    const myHalf = halfPinSpan(c, axis);
+    const fixed = (axis==='x') ? p0.y : p0.x;
+    const endLo = (axis==='x') ? Math.min(p0.x, p1.x) : Math.min(p0.y, p1.y);
+    const endHi = (axis==='x') ? Math.max(p0.x, p1.x) : Math.max(p0.y, p1.y);
+    // Other components on this SWP, build neighbor-based exclusion using real half-spans
+    const others = components.filter(o => o.id!==c.id && swpIdForComponent(o)===sid)
+                             .map(o=>({ center: compCenterAlongAxis(o,axis), half: halfPinSpan(o,axis) }))
+                             .sort((a,b)=> a.center - b.center);
+    const t0 = compCenterAlongAxis(c, axis);
+    let leftBound = endLo + myHalf, rightBound = endHi - myHalf;
+    for(const o of others){
+      const gap = myHalf + o.half; // centers must be ≥ this far apart
+      if(o.center <= t0) leftBound  = Math.max(leftBound,  o.center + gap);
+      if(o.center >= t0) rightBound = Math.min(rightBound, o.center - gap);
+    }
+    // Clamp current component to the fixed line (orthogonal coordinate)
+    if(axis==='x'){ c.y = fixed; } else { c.x = fixed; }
+    redrawCanvasOnly(); // reflect the collapsed wire visually
+    moveCollapseCtx = {
+      kind:'swp', sid, axis, fixed,
+      minCenter: leftBound, maxCenter: rightBound,
+      ends:{ lo:endLo, hi:endHi }, color: swp.color,
+      collapsedId: collapsed.id,
+      lastCenter: t0
+    };
+    lastMoveCompId = c.id;
+    return moveCollapseCtx;
+  }
+  function finishSwpMove(c){
+    if(!moveCollapseCtx || moveCollapseCtx.kind!=='swp') return;
+    const mc = moveCollapseCtx;
+    const axis = mc.axis;
+    // Safety clamp: ensure the component's pins sit within [lo, hi]
+    const myHalf = halfPinSpan(c, axis);
+    let ctr = compCenterAlongAxis(c, axis);
+    if(ctr - myHalf < mc.ends.lo) ctr = mc.ends.lo + myHalf;
+    if(ctr + myHalf > mc.ends.hi) ctr = mc.ends.hi - myHalf;
+    if(axis==='x'){ c.x = ctr; c.y = mc.fixed; } else { c.y = ctr; c.x = mc.fixed; }
+    updateComponentDOM(c);    
+    const lo = mc.ends.lo, hi = mc.ends.hi;
+    const EPS = 0.5;
+    // Keep ONLY components whose two pins lie within this SWP’s endpoints.
+    const inSwpComps = components.filter(o=>{
+      const pins = compPinPositions(o);
+      if(axis==='x'){
+        if(!(eqN(pins[0].y, mc.fixed) && eqN(pins[1].y, mc.fixed))) return false;
+        const sp = pinSpanAlongAxis(o, 'x');
+        return sp.lo >= lo-EPS && sp.hi <= hi+EPS;
+      }else{
+        if(!(eqN(pins[0].x, mc.fixed) && eqN(pins[1].x, mc.fixed))) return false;
+        const sp = pinSpanAlongAxis(o, 'y');
+        return sp.lo >= lo-EPS && sp.hi <= hi+EPS;
+      }
+    }).sort((a,b)=> compCenterAlongAxis(a,axis) - compCenterAlongAxis(b,axis));
+
+    // Sweep lo→hi, carving gaps at each component’s pin span.
+    const newSegs = [];
+    let cursor = lo;
+    for(const o of inSwpComps){
+      const sp = pinSpanAlongAxis(o, axis);
+      const a = (axis==='x') ? {x:cursor, y:mc.fixed} : {x:mc.fixed, y:cursor};
+      const b = (axis==='x') ? {x:sp.lo,  y:mc.fixed} : {x:mc.fixed, y:sp.lo};
+      if( (axis==='x' ? a.x < b.x : a.y < b.y) ){
+        newSegs.push({ id: uid('wire'), points:[a,b], color: mc.color });
+      }
+      cursor = sp.hi;
+    }
+    // Tail segment (last gap → end)
+    const tailA = (axis==='x') ? {x:cursor, y:mc.fixed} : {x:mc.fixed, y:cursor};
+    const tailB = (axis==='x') ? {x:hi,     y:mc.fixed} : {x:mc.fixed, y:hi};
+    if( (axis==='x' ? tailA.x < tailB.x : tailA.y < tailB.y) ){
+      newSegs.push({ id: uid('wire'), points:[tailA, tailB], color: mc.color });
+    }
+
+    // Restore: remove only the collapsed straight run; add the reconstructed SWP segments beside all other wires
+    const untouched = wires.filter(w=> w.id!==mc.collapsedId);
+    wires = untouched.concat(newSegs);
+    moveCollapseCtx = null;
+    lastMoveCompId = null;    
+    normalizeAllWires();
+    rebuildTopology();
+    redraw();
+  }
+
+  // Ensure current selection's SWP is collapsed if possible (Move mode entry or selection of a component).
+  function ensureCollapseForSelection(){
+    if (selection.kind !== 'component') return;
+    const c = components.find(x => x.id === selection.id); if (!c) return;
+    rebuildTopology();
+    const sid = swpIdForComponent(c);
+    if (!sid) return;
+    if (moveCollapseCtx && moveCollapseCtx.kind==='swp' && moveCollapseCtx.sid===sid){
+      lastMoveCompId = c.id; // already collapsed for this SWP
+      return;
+    }
+    // If another SWP is currently collapsed, finalize it first.
+    if (moveCollapseCtx && moveCollapseCtx.kind==='swp'){
+      const prev = components.find(x => x.id === lastMoveCompId);
+      finishSwpMove(prev || c);
+    }
+    beginSwpMove(c);
+  }
+
+  // Finalize any active SWP collapse (used when leaving Move mode or switching selection away).
+  function ensureFinishSwpMove(){
+    if (moveCollapseCtx && moveCollapseCtx.kind==='swp'){
+      const prev = components.find(x => x.id === lastMoveCompId);
+      if (prev) {
+        finishSwpMove(prev);
+      } else {
+        // Fallback: finalize using any component that sits on this SWP
+        const anyOn = components.find(o => swpIdForComponent(o) === moveCollapseCtx.sid);
+        if (anyOn) finishSwpMove(anyOn); else moveCollapseCtx = null;
+      }
+    }
+  }
+  
   // ====== Boot ======
   // start at 1:1
   applyZoom();
