@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+
+# build outputs (keep dist/ committed if you rely on GitHub Pages without CI)
+# dist/
+
+# source maps (optional—ignore if you don’t want to publish them)
+# *.map
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# env / secrets
+.env
+.env.*.local
+
+# editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# tool caches (add/remove as you adopt tools)
+.parcel-cache/
+.turbo/
+.cache/
+.next/
+coverage/
+.nyc_output/
+
+# misc
+*.tmp

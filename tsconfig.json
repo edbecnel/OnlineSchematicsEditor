@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "none",                      // emits classic script safe for file:// and http(s)
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": false,                       // we'll tighten later, incrementally
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "sourceMap": true,
+    "noEmitOnError": false                 // always emit dist/app.js even if types aren’t perfect yet
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist"]
+}
