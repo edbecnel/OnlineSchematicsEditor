@@ -1324,6 +1324,13 @@ function resolveWireColor(mode: WireColorMode): string {
   }, {passive:false});  
 
   window.addEventListener('keydown', (e)=>{
+    // Block ALL app shortcuts while the user is editing a field in the Inspector (or any editable).
+    if (isEditingKeystrokesTarget(e)) {
+      // Also suppress the browser's default Ctrl+S / Ctrl+K while typing, but do nothing app-side.
+      const k = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && (k === 's' || k === 'k')) e.preventDefault();
+      return;
+    }    
     if(e.key==='Escape'){
       if(drawing.active){ drawing.active=false; drawing.points=[]; gDrawing.replaceChildren(); }
     }
@@ -1737,6 +1744,20 @@ function resolveWireColor(mode: WireColorMode): string {
   });
 
   function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+  // ---- NEW: while typing, ignore app keyboard shortcuts ----
+  // Treat focused INPUT / TEXTAREA / SELECT / contenteditable as "editing" targets.
+  function isEditingKeystrokesTarget(evt: KeyboardEvent): boolean {
+    const t = (evt.target as HTMLElement) || null;
+    const a = (document.activeElement as HTMLElement) || null;
+    const isEditable = (el: HTMLElement | null) => {
+      if (!el) return false;
+      if (el.isContentEditable) return true;
+      const tag = el.tagName?.toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select';
+    };
+    return isEditable(t) || isEditable(a);
+  }
 
   // Pan helpers
   let isPanning = false, panStartSvg = null, panStartView = null, panPointerId = null;
