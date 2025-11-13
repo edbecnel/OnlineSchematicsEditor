@@ -57,3 +57,15 @@ interface Net {
   name?: string;     // KiCad label (if any)
   classId?: string;  // netclass id
 }
+
+interface NetClass {
+  id: string;
+  name: string;
+  wire: Stroke;
+  junction: { size: number; color: { r:number; g:number; b:number; a:number } };
+}
+
+interface Theme {
+  wire: Stroke;
+  junction: { size: number; color: { r:number; g:number; b:number; a:number } };
+}

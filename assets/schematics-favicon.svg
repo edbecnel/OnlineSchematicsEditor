@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="rgba(0,0,0,0.35)"/>
+    </filter>
+  </defs>
+
+  <!-- rounded gradient background -->
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="url(#bg)" />
+
+  <!-- grid (subtle) -->
+  <g opacity="0.18" stroke="#fff">
+    <!-- vertical lines every 8px -->
+    <g>
+      <path d="M10 6v52 M18 6v52 M26 6v52 M34 6v52 M42 6v52 M50 6v52" stroke-width="1"/>
+    </g>
+    <!-- horizontal lines every 8px -->
+    <g>
+      <path d="M6 10h52 M6 18h52 M6 26h52 M6 34h52 M6 42h52 M6 50h52" stroke-width="1"/>
+    </g>
+  </g>
+
+  <!-- wire path -->
+  <path d="M12 44 H22 L26 36 H34 L38 44 H48" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- junctions -->
+  <g>
+    <circle cx="22" cy="44" r="3" fill="#fbbf24" stroke="#fff" stroke-width="1"/>
+    <circle cx="34" cy="36" r="3" fill="#fbbf24" stroke="#fff" stroke-width="1"/>
+    <circle cx="38" cy="44" r="3" fill="#fbbf24" stroke="#fff" stroke-width="1"/>
+  </g>
+
+  <!-- resistor symbol in series -->
+  <path d="M26 36 l3 -6 l4 12 l4 -12 l4 12 l4 -12" fill="none" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- cursor arrow (suggests 'online/editor') -->
+  <g transform="translate(40,8) scale(0.9)" filter="url(#soft)">
+    <path d="M2 2 L18 10 L11 12 L14 20 L10 22 L7 14 L2 2 Z" fill="#ffffff"/>
+  </g>
+</svg>

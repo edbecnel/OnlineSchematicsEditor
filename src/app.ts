@@ -35,12 +35,41 @@ function getClientXY(evt: ClientXYEvent) {
   // ====== Core State ======
 const GRID: number = 24; // px
 
-// DOM refs (typed; no behavior change)
+// DOM refs
 const svg = $q<SVGSVGElement>('#svg');
-const gWires = $q<SVGGElement>('#wires');
-const gComps = $q<SVGGElement>('#components');
-const gDrawing = $q<SVGGElement>('#drawing');
-const gOverlay = $q<SVGGElement>('#overlay');
+
+// Ensure required SVG layer <g> elements exist; create them if missing.
+function ensureSvgGroup(id: string): SVGGElement {
+  const existing = document.getElementById(id);
+  if (existing) {
+    if (existing instanceof SVGGElement) {
+      return existing;
+    }
+    // If an element with this id exists but isn’t an <g>, replace it with a proper SVG <g>.
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g') as SVGGElement;
+    g.setAttribute('id', id);
+    existing.replaceWith(g);
+    return g;
+  }
+  if (!svg) throw new Error(`Missing <svg id="svg"> root; cannot create #${id}`);
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g') as SVGGElement;
+  g.setAttribute('id', id);
+  svg.appendChild(g);
+  return g;
+}
+
+// Layers (and enforce visual stacking order)
+const gWires     = ensureSvgGroup('wires');
+const gComps     = ensureSvgGroup('components');
+const gJunctions = ensureSvgGroup('junctions');
+const gDrawing   = ensureSvgGroup('drawing');
+const gOverlay   = ensureSvgGroup('overlay');
+
+// Keep desired order: wires → components → junctions → drawing (ghost/rubber-band) → overlay (marquee/crosshair)
+(function ensureLayerOrder() {
+  if (!svg) return;
+  [gWires, gComps, gJunctions, gDrawing, gOverlay].forEach(g => svg.appendChild(g));
+})();
 
 const inspector = $q<HTMLElement>('#inspector');
 const inspectorNone = $q<HTMLElement>('#inspectorNone');
@@ -79,7 +108,12 @@ interface Component {
 interface Wire {
   id: string;
   points: Point[];
+  /** LEGACY editor field (kept for back-compat saves & SWP color heuristics) */
   color?: string;            // css color string
+  /** KiCad-style override; width=0 and type='default' mean "use netclass/theme" */
+  stroke?: Stroke;
+  /** Optional net hook for later; defaults to 'default' netclass */
+  netId?: string | null;
 }
 
 type CounterKey = PlaceType | 'wire';
@@ -126,12 +160,20 @@ type MoveCollapseCtx = {
 };
 
 // ===== KiCad-friendly types (no behavior; types + adapters only) =====
-type RGBA01 = { r: number; g: number; b: number; a: number };  // 0..1
+type RGBA01 = { r: number; g: number; b: number; a: number };            // 0..1
 type StrokeType = 'default' | 'solid' | 'dash' | 'dot' | 'dash_dot' | 'dash_dot_dot';
-type Stroke = {
-  width: number;               // mm (KiCad expects mm; we’ll use a default below)
-  type: StrokeType;
-  color: RGBA01;               // normalized 0..1 RGBA
+type Stroke = { width: number; type: StrokeType; color: RGBA01 };        // mm + style + RGBA
+
+// Minimal net/theming for precedence (explicit → netclass → theme)
+type NetClass = {
+  id: string;
+  name: string;
+  wire: Stroke;                              // defaults for wires in this class
+  junction: { size: number; color: RGBA01 }; // mm + RGBA
+};
+type Theme = {
+  wire: Stroke;                              // global fallback
+  junction: { size: number; color: RGBA01 };
 };
 type KWire = {
   id: string;                  // uuid in KiCad; we’ll keep our id for now
@@ -203,31 +245,60 @@ let marquee: {
   // Palette state: diode subtype selection
   let diodeSubtype: DiodeSubtype = 'generic';
 
-// Wire color state: default from CSS var, and current palette choice (affects new wires only)
-const defaultWireColor: string = (getComputedStyle(document.documentElement).getPropertyValue('--wire').trim() || '#c7f284');
-
-type WireColorMode = 'auto' | 'red' | 'green' | 'blue' | 'yellow' | 'magenta' | 'cyan';
-let currentWireColorMode: WireColorMode = 'auto';
-
-function resolveWireColor(mode: WireColorMode): string {
-  const map: Record<Exclude<WireColorMode, 'auto'>, string> = {
-    red: 'red',
-    green: 'lime',
-    blue: 'deepskyblue',
-    yellow: 'gold',
-    magenta: 'magenta',
-    cyan: 'cyan'
+  // Wire color state: default from CSS var, and current palette choice (affects new wires only)
+  const defaultWireColor: string = (getComputedStyle(document.documentElement).getPropertyValue('--wire').trim() || '#c7f284');
+  // --- Theme & NetClasses (moved early so redraw() doesn't hit TDZ) ---
+  const THEME: Theme = {
+    wire: { width: 0.25, type: 'solid', color: cssToRGBA01(defaultWireColor) },
+    junction: { size: 1.2, color: cssToRGBA01('#FFFFFF') }
   };
-  if (mode === 'auto') {
-    const bg = getComputedStyle(document.body).backgroundColor;
-    const rgb = bg.match(/\d+/g)?.map(Number) || [0, 0, 0];
-    const [r, g, b] = rgb;
-    const srgb = [r / 255, g / 255, b / 255].map(v => (v <= 0.03928) ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
-    const L = 0.2126*srgb[0] + 0.7152*srgb[1] + 0.0722*srgb[2];
-    return (L < 0.5) ? '#ffffff' : '#000000';
+  const NET_CLASSES: Record<string, NetClass> = {
+    default: {
+      id: 'default',
+      name: 'Default',
+      wire: { width: 0.25, type: 'solid', color: cssToRGBA01(defaultWireColor) },
+      junction: { size: 1.2, color: cssToRGBA01('#FFFFFF') }
     }
+  };
+  function netClassForWire(w: Wire): NetClass {
+    return NET_CLASSES[w.netId || 'default'] || NET_CLASSES.default;
+  }
+
+  type WireColorMode = 'custom' | 'auto' | 'red' | 'green' | 'blue' | 'yellow' | 'magenta' | 'cyan';
+  let currentWireColorMode: WireColorMode = 'auto';
+
+  function resolveWireColor(mode: WireColorMode): string {
+    const map: Record<Exclude<WireColorMode, 'auto'>, string> = {
+      custom: 'custom',
+      red: 'red',
+      green: 'lime',
+      blue: 'deepskyblue',
+      yellow: 'gold',
+      magenta: 'magenta',
+      cyan: 'cyan'
+    };
+
+    // Auto → choose black/white against current page theme
+    if (mode === 'auto') {
+      const bg = getComputedStyle(document.body).backgroundColor;
+      const rgb = bg.match(/\d+/g)?.map(Number) || [0, 0, 0];
+      const [r, g, b] = rgb;
+      const srgb = [r / 255, g / 255, b / 255].map(v => (v <= 0.03928) ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      const L = 0.2126*srgb[0] + 0.7152*srgb[1] + 0.0722*srgb[2];
+      return (L < 0.5) ? '#ffffff' : '#000000';
+    }
+
+    // Custom → mirror the toolbar's explicit stroke color
+    if (mode === 'custom') {
+      const col = (typeof WIRE_DEFAULTS !== 'undefined' && WIRE_DEFAULTS?.stroke?.color)
+        ? WIRE_DEFAULTS.stroke.color
+        : cssToRGBA01(defaultWireColor);
+      return rgba01ToCss(col);
+    }
+
+    // Named swatches
     return map[mode] || defaultWireColor;
-}
+  }
 
   // Options used in both toolbar and Inspector (names -> resolved stroke colors)
   const WIRE_COLOR_OPTIONS: Array<[WireColorMode, string]> = [
@@ -235,6 +306,9 @@ function resolveWireColor(mode: WireColorMode): string {
     ['red','Red'], ['green','Green'], ['blue','Blue'],
     ['yellow','Yellow'], ['magenta','Magenta'], ['cyan','Cyan']
   ];
+
+  let junctions: Array<{ at: Point; size?: number; color?: string; netId?: string|null }> = [];
+
   // Convert CSS color ("rgb(...)" or color name) to #RRGGBB
   function colorToHex(cstr){
     const tmp = document.createElement('span');
@@ -665,13 +739,19 @@ function resolveWireColor(mode: WireColorMode): string {
       g.setAttribute('data-id', w.id);
 
       // visible stroke
+      // visible stroke (effective: explicit → netclass → theme)
+      ensureStroke(w);
+      const eff = effectiveStroke(w, netClassForWire(w), THEME);
+
       const vis = document.createElementNS('http://www.w3.org/2000/svg','polyline');
       vis.setAttribute('class','wire-stroke');
       vis.setAttribute('fill','none');
-      vis.setAttribute('stroke', w.color || defaultWireColor);
-      vis.setAttribute('stroke-width','1');
+      vis.setAttribute('stroke', rgba01ToCss(eff.color));
+      vis.setAttribute('stroke-width', String(mmToPx(eff.width))); // default 0.25mm -> 1px
       vis.setAttribute('stroke-linecap','round');
       vis.setAttribute('stroke-linejoin','round');
+      const dashes = dashArrayFor(eff.type);
+      if (dashes) vis.setAttribute('stroke-dasharray', dashes); else vis.removeAttribute('stroke-dasharray');
       vis.setAttribute('points', w.points.map(p=>`${p.x},${p.y}`).join(' '));
       vis.setAttribute('data-wire-stroke', w.id);
       // visible stroke must NOT catch events—let the hit overlay do it
@@ -718,6 +798,20 @@ function resolveWireColor(mode: WireColorMode): string {
         }
       }      
       gWires.appendChild(g);
+    }
+    // junctions
+    gJunctions.replaceChildren();
+    for (const j of junctions){
+      const nc = NET_CLASSES[j.netId || 'default'] || NET_CLASSES.default;
+      const sizeMm = (j.size!=null ? j.size : nc.junction.size);
+      const color = j.color ? j.color : rgba01ToCss(nc.junction.color);
+      const dot = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      setAttr(dot, 'cx', j.at.x); setAttr(dot, 'cy', j.at.y);
+      setAttr(dot, 'r', Math.max(2, Math.round(mmToPx(sizeMm)/2)));
+      dot.setAttribute('fill', color);
+      dot.setAttribute('stroke', 'var(--bg)');
+      dot.setAttribute('stroke-width', '1');
+      gJunctions.appendChild(dot);
     }
     updateSelectionOutline();    
     updateCounts();
@@ -884,7 +978,21 @@ function resolveWireColor(mode: WireColorMode): string {
       }
     }
     return (best && bestD<=maxDist) ? best : null;
-  }  
+  }
+  // --- Keep selection stable across a restroke that rewrites wire objects ---
+  function midOfSeg(pts: Point[], idx: number): Point {
+    const a = pts[idx], b = pts[idx+1];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  function reselectNearestAt(p: Point) {
+    const hit = nearestSegmentAtPoint(p, 24);
+    if (hit && hit.w) {
+      selecting('wire', hit.w.id, hit.idx); // will redraw + rebuild the Inspector
+    } else {
+      redraw(); // fallback
+    }
+  }
 
   // ----- Marquee helpers -----
   const rectFromPoints = (a,b)=>{
@@ -1056,7 +1164,9 @@ function resolveWireColor(mode: WireColorMode): string {
     pt.x = (evt as any).clientX ?? (evt as any).touches?.[0]?.clientX ?? 0;
     pt.y = (evt as any).clientY ?? (evt as any).touches?.[0]?.clientY ?? 0;
     const ctm = svg.getScreenCTM();
-    return pt.matrixTransform(ctm.inverse());
+    if (!ctm) return { x: pt.x, y: pt.y } as Point;
+    const p = pt.matrixTransform(ctm.inverse());
+    return { x: (p as any).x, y: (p as any).y } as Point;
   }
 
   // ----- Slide helpers (simple case: each pin terminates one 2-point, axis-aligned wire) -----
@@ -1184,12 +1294,17 @@ function resolveWireColor(mode: WireColorMode): string {
     const group = gWires.querySelector(`g[data-id="${w.id}"]`);
     if(!group) return;
     const pts = wirePointsString(w);
-    // update geometry
     group.querySelectorAll('polyline').forEach(pl=> pl.setAttribute('points', pts));
-    // ensure visible stroke uses the wire's own color
     const vis = group.querySelector('polyline[data-wire-stroke]');
-    if (vis) vis.setAttribute('stroke', w.color || defaultWireColor);    
-  }  
+    if (vis) {
+      ensureStroke(w);
+      const eff = effectiveStroke(w, netClassForWire(w), THEME);
+      vis.setAttribute('stroke', rgba01ToCss(eff.color));
+      vis.setAttribute('stroke-width', String(mmToPx(eff.width)));
+      const dashes = dashArrayFor(eff.type);
+      if (dashes) vis.setAttribute('stroke-dasharray', dashes); else vis.removeAttribute('stroke-dasharray');
+    }
+  }
 
   // ====== Interaction ======
   svg.addEventListener('pointerdown', (e)=>{
@@ -1447,6 +1562,25 @@ function resolveWireColor(mode: WireColorMode): string {
     return swp.color || defaultWireColor;
   }
 
+  function strokeOfWire(w: Wire): Stroke {
+    ensureStroke(w);
+    return { width: w.stroke!.width, type: w.stroke!.type, color: w.stroke!.color };
+  }
+
+  // If an endpoint joins colinear to an existing SWP, inherit that wire's *stroke*.
+  function adoptStrokeAtEndpointForAxis(pt: Point, axis: Axis): Stroke | null {
+    if(!axis) return null;
+    rebuildTopology();
+    const hit = findWireEndpointNear(pt, 0.9);
+    if(!hit) return null;
+    const hitAxis = axisAtEndpoint(hit.w, hit.endIndex);
+    if(hitAxis !== axis) return null;
+    const segIdx = (hit.endIndex === 0) ? 0 : (hit.w.points.length - 2);
+    const swp = swpForWireSegment(hit.w.id, segIdx);
+    if(!swp) return null;
+    return strokeOfWire(hit.w);
+  }
+
   // Emit the new polyline as multiple wires:
   // - each axis-aligned run becomes one wire
   // - only the run that attaches *colinear* to an existing SWP adopts that SWP's color
@@ -1457,23 +1591,25 @@ function resolveWireColor(mode: WireColorMode): string {
 
     for(const run of runs){
       const subPts = pts.slice(run.start, run.end + 2); // include end+1 vertex
-      let color = curCol;
+      // default/fallback stroke: use toolbar's explicit stroke when not using netclass; otherwise palette color only
+      const tool = strokeForNewWires();
+      let stroke: Stroke = tool
+        ? { width: tool.width, type: tool.type, color: tool.color }
+        : { width: 0, type: 'default', color: cssToRGBA01(curCol) };
 
-      // If this run starts at the overall polyline start, try adopt at the start
+      // Try to adopt stroke from colinear attachment at the start or end (only one end should match)
       if(run.start === 0){
-        const adopt = adoptColorAtEndpointForAxis(subPts[0], run.axis);
-        if(adopt) color = adopt;
+        const ad = adoptStrokeAtEndpointForAxis(subPts[0], run.axis);
+        if(ad) stroke = ad;
+      }
+      if(run.end === pts.length - 2 && (!stroke || (stroke.type==='default' && stroke.width<=0))){
+        const ad2 = adoptStrokeAtEndpointForAxis(subPts[subPts.length-1], run.axis);
+        if(ad2) stroke = ad2;
       }
 
-      // If this run ends at the overall polyline end, try adopt at the end
-      // (only override if we didn't already adopt at the start)
-      if(run.end === pts.length - 2 && color === curCol){
-        const adoptEnd = adoptColorAtEndpointForAxis(subPts[subPts.length-1], run.axis);
-        if(adoptEnd) color = adoptEnd;
-      }
-
-      // Push this run as its own wire
-      wires.push({ id: uid('wire'), points: subPts, color });
+      // Keep legacy color alongside stroke for back-compat & SWP heuristics
+      const css = rgba01ToCss(stroke.color);
+      wires.push({ id: uid('wire'), points: subPts, color: css, stroke, netId: 'default' });
     }
   }
 
@@ -1679,45 +1815,309 @@ function resolveWireColor(mode: WireColorMode): string {
   document.getElementById('rotateBtn').addEventListener('click', rotateSelected);
   document.getElementById('clearBtn').addEventListener('click', clearAll);
 
-  // Wire color (palette for NEW wires only) — swatch-only dropdown
+
+  // Wire stroke defaults (global for NEW wires) — popover with KiCad-like fields
   const wireColorBtn = document.getElementById('wireColorBtn') as HTMLButtonElement;
   const wireColorMenu = document.getElementById('wireColorMenu') as HTMLElement;
   const wireColorSwatch = document.getElementById('wireColorSwatch') as HTMLElement;
 
+  // Persisted global defaults for new wires
+  type WireStrokeDefaults = {
+    useNetclass: boolean;        // if true, new wires use netclass/theme (stroke width=0, type='default')
+    stroke: Stroke;              // explicit stroke when useNetclass=false
+  };
+
+  function loadWireDefaults(): WireStrokeDefaults {
+    try {
+      const raw = localStorage.getItem('wire.defaults');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        // very defensive merge with reasonable fallbacks
+        return {
+          useNetclass: !!parsed.useNetclass,
+          stroke: {
+            width: Math.max(0, +((parsed.stroke?.width ?? 0))),
+            type: (parsed.stroke?.type ?? 'default'),
+            color: parsed.stroke?.color ?? cssToRGBA01(resolveWireColor('auto')),
+          }
+        } as WireStrokeDefaults;
+      }
+    } catch {}
+    // baseline: netclass defaults, with a sane color for when user flips to custom
+    return {
+      useNetclass: true,
+      stroke: { width: 0, type: 'default', color: cssToRGBA01(resolveWireColor('auto')) }
+    };
+  }
+  function saveWireDefaults(){ localStorage.setItem('wire.defaults', JSON.stringify(WIRE_DEFAULTS)); }
+
+  let WIRE_DEFAULTS: WireStrokeDefaults = loadWireDefaults();
+
+  // keep existing color-mode plumbing backwards compatible by mirroring to it
+  function mirrorDefaultsIntoLegacyColorMode(){
+    if (WIRE_DEFAULTS.useNetclass) {
+      currentWireColorMode = 'auto';
+    } else {
+      currentWireColorMode = 'custom';
+    }
+  }
+
+  // tiny helper: rebuild preview SVG (simple line)
+  function buildStrokePreview(st: Stroke): SVGSVGElement {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('width','160'); svg.setAttribute('height','22');
+    svg.style.display = 'block';
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1','8'); line.setAttribute('x2','152');
+    line.setAttribute('y1','11'); line.setAttribute('y2','11');
+    line.setAttribute('stroke', rgba01ToCss(st.color));
+    line.setAttribute('stroke-width', String(Math.max(1, mmToPx(st.width || 0.25))));
+    // dash mapping like inspector
+    const style = st.type || 'default';
+    const dash = style==='dash' ? '6 4' :
+                style==='dot' ? '2 4' :
+                style==='dash_dot' ? '6 4 2 4' :
+                style==='dash_dot_dot' ? '6 4 2 4 2 4' : '';
+    if (dash) line.setAttribute('stroke-dasharray', dash);
+    svg.appendChild(line);
+    return svg;
+  }
+
+  // Rebuild the popover UI each time it opens
+  function buildWireStrokeMenu(menuEl: HTMLElement){
+    menuEl.replaceChildren();
+
+    // container
+    const box = document.createElement('div');
+    box.style.display = 'grid';
+    box.style.gridTemplateColumns = 'auto';
+    box.style.rowGap = '6px';
+    box.style.padding = '8px';
+    box.style.minWidth = '220px';
+    box.style.maxWidth = '260px';
+
+    // header
+    const h = document.createElement('div');
+    h.textContent = 'Wire Stroke';
+    h.style.fontWeight = '600';
+    box.appendChild(h);
+
+    // Use netclass defaults
+    const rowUse = document.createElement('label');
+    rowUse.style.display = 'flex';
+    rowUse.style.alignItems = 'center';
+    rowUse.style.gap = '8px';
+    const chkUse = document.createElement('input');
+    chkUse.type = 'checkbox';
+    chkUse.checked = WIRE_DEFAULTS.useNetclass;
+    const capUse = document.createElement('span');
+    capUse.textContent = 'Use netclass defaults';
+    rowUse.append(chkUse, capUse);
+    box.appendChild(rowUse);
+
+    // Width (mm)
+    const rowW = document.createElement('label');
+    rowW.style.display = 'grid';
+    rowW.style.gridTemplateColumns = '1fr';
+    const capW = document.createElement('div'); capW.textContent = 'Width (mm)';
+    const inpW = document.createElement('input');
+    inpW.type = 'number'; inpW.min = '0'; inpW.step = '0.05';
+    inpW.value = String(WIRE_DEFAULTS.stroke.width ?? 0);
+    rowW.append(capW, inpW);
+    box.appendChild(rowW);
+
+    // Line style
+    const rowS = document.createElement('label');
+    rowS.style.display = 'grid';
+    rowS.style.gridTemplateColumns = '1fr';
+    const capS = document.createElement('div'); capS.textContent = 'Line style';
+    const selS = document.createElement('select');
+    ['default','solid','dash','dot','dash_dot','dash_dot_dot'].forEach(v=>{
+      const o = document.createElement('option'); o.value = v; o.textContent = v.replace('_','-');
+      selS.appendChild(o);
+    });
+    selS.value = (WIRE_DEFAULTS.stroke.type || 'default') as string;
+    rowS.append(capS, selS);
+    box.appendChild(rowS);
+
+    // Color + opacity
+    const rowC = document.createElement('div');
+    rowC.style.display = 'grid';
+    rowC.style.gridTemplateColumns = '1fr';
+    const capC = document.createElement('div'); capC.textContent = 'Color / Opacity';
+    const wrapC = document.createElement('div');
+    wrapC.style.display = 'grid';
+    wrapC.style.gridTemplateColumns = '1fr 1fr';
+    wrapC.style.gap = '6px';
+    const inpColor = document.createElement('input'); inpColor.type = 'color';
+    const rgb = WIRE_DEFAULTS.stroke.color; // RGBA01
+    const hex = '#'
+      + [rgb.r,rgb.g,rgb.b].map(v => Math.round(v*255).toString(16).padStart(2,'0')).join('');
+    inpColor.value = hex;
+    const inpA = document.createElement('input'); inpA.type = 'range'; inpA.min='0'; inpA.max='1'; inpA.step='0.01'; inpA.value = String(rgb.a ?? 1);
+    wrapC.append(inpColor, inpA);
+    rowC.append(capC, wrapC);
+    box.appendChild(rowC);
+
+    // Preview
+    const rowP = document.createElement('div');
+    const capP = document.createElement('div'); capP.textContent = 'Preview';
+    const prevHolder = document.createElement('div');
+    prevHolder.style.border = '1px solid #ccc';
+    prevHolder.style.borderRadius = '6px';
+    prevHolder.style.padding = '4px';
+    // Match the page background so “auto”/netclass colors always contrast correctly.
+    const bodyBg = getComputedStyle(document.body).backgroundColor;
+    prevHolder.style.background = bodyBg;
+
+    rowP.append(capP, prevHolder);
+    box.appendChild(rowP);
+
+    function currentPreviewStroke(): Stroke {
+      if (WIRE_DEFAULTS.useNetclass) {
+        // Show the *effective netclass stroke* (not “auto” black/white).
+        const nc = NET_CLASSES.default.wire;
+        return { width: nc.width, type: nc.type, color: nc.color };
+      }
+      // Not using netclass defaults: resolve only the LINE STYLE if it is 'default'.
+      const st = { ...WIRE_DEFAULTS.stroke };
+      if (st.type === 'default') {
+        const nc = NET_CLASSES.default.wire;
+        st.type = (nc.type && nc.type !== 'default') ? nc.type : 'solid';
+      }
+      return st;      
+    }
+
+    function refreshPreview(){
+      prevHolder.replaceChildren(buildStrokePreview(currentPreviewStroke()));
+    }
+
+    function syncAllFieldsToEffective(){
+      let st: Stroke;
+      if (WIRE_DEFAULTS.useNetclass) {
+        const nc = NET_CLASSES.default.wire;
+        st = { width: nc.width, type: nc.type, color: nc.color };
+      } else {
+        st = WIRE_DEFAULTS.stroke;
+      }
+      // Width
+      inpW.value = String(st.width ?? 0);
+      // Style
+      selS.value = (st.type || 'default') as string;
+      // Color & opacity
+      const hex = '#' + [st.color.r, st.color.g, st.color.b]
+        .map(v => Math.round(v*255).toString(16).padStart(2,'0')).join('');
+      inpColor.value = hex;
+      inpA.value = String(Math.max(0, Math.min(1, st.color.a ?? 1)));
+    }
+
+    function setEnabledStates(){
+      const on = !WIRE_DEFAULTS.useNetclass;
+      inpW.disabled = !on;
+      selS.disabled = !on;
+      inpColor.disabled = !on;
+      inpA.disabled = !on;
+    }
+
+    // Wire up events
+    chkUse.onchange = () => {
+      WIRE_DEFAULTS.useNetclass = chkUse.checked;
+      mirrorDefaultsIntoLegacyColorMode();
+      saveWireDefaults();
+      syncWireToolbar();
+      setEnabledStates();
+      syncAllFieldsToEffective();
+      refreshPreview();
+    };
+    inpW.oninput = () => {
+      const n = parseFloat(inpW.value);
+      const val = isFinite(n) && n >= 0 ? n : 0;
+      WIRE_DEFAULTS.stroke.width = val;
+
+      if (val <= 0) {
+        // Zero width = defer to netclass
+        WIRE_DEFAULTS.useNetclass = true;
+        WIRE_DEFAULTS.stroke.type = 'default';
+        selS.value = 'default';
+      } else {
+        // Nonzero width = explicit/custom stroke
+        WIRE_DEFAULTS.useNetclass = false;
+        if (WIRE_DEFAULTS.stroke.type === 'default') {
+          WIRE_DEFAULTS.stroke.type = 'solid';
+          selS.value = 'solid';
+        }
+      }
+
+      chkUse.checked = WIRE_DEFAULTS.useNetclass;
+      mirrorDefaultsIntoLegacyColorMode();
+      saveWireDefaults();
+      syncWireToolbar();
+      setEnabledStates();
+      refreshPreview();
+    };
+    selS.onchange = () => {
+      const val = selS.value as StrokeType;
+
+      if (val === 'default') {
+        // Now: only defer the LINE STYLE to the netclass. Do not change the checkbox,
+        // width, or color. Width==0 still means "use netclass width" and is independent.
+        WIRE_DEFAULTS.stroke.type = 'default';
+      } else {
+        WIRE_DEFAULTS.stroke.type = val;
+        if ((WIRE_DEFAULTS.stroke.width || 0) <= 0) {
+          WIRE_DEFAULTS.stroke.width = 0.25; // give it a sane visible width
+        }
+      }
+      // Reflect checkbox + toolbar + preview instantly
+      chkUse.checked = WIRE_DEFAULTS.useNetclass;
+      mirrorDefaultsIntoLegacyColorMode();
+      saveWireDefaults();
+      syncWireToolbar();
+      setEnabledStates();
+      refreshPreview();
+    };
+
+    inpColor.oninput = () => {
+      const c = cssToRGBA01(inpColor.value);
+      WIRE_DEFAULTS.stroke.color = { ...WIRE_DEFAULTS.stroke.color, r:c.r, g:c.g, b:c.b };
+      saveWireDefaults(); syncWireToolbar(); refreshPreview();
+    };
+    inpA.oninput = () => {
+      WIRE_DEFAULTS.stroke.color = { ...WIRE_DEFAULTS.stroke.color, a: clamp(+inpA.value, 0, 1) };
+      saveWireDefaults(); syncWireToolbar(); refreshPreview();
+    };
+
+    setEnabledStates();
+    syncAllFieldsToEffective();
+    refreshPreview();
+    menuEl.appendChild(box);
+  }
+
   function syncWireToolbar(){
-    const col = resolveWireColor(currentWireColorMode);
+    // show effective color in swatch & border
+    const col = WIRE_DEFAULTS.useNetclass
+      ? rgba01ToCss(NET_CLASSES.default.wire.color)     // reflect actual netclass color
+      : rgba01ToCss(WIRE_DEFAULTS.stroke.color);
     setSwatch(wireColorSwatch, col);
     const hex = colorToHex(col);
-    const name = (WIRE_COLOR_OPTIONS.find(([v])=>v===currentWireColorMode)?.[1]) || 'Auto';
-    wireColorBtn.title = `Wire color: ${name} — ${hex}`;
-    // Make the button border reflect the chosen color
-    wireColorBtn.style.borderColor = col;    
-    const dot = document.querySelector('#dot circle'); if(dot) dot.setAttribute('fill', col);
+    const label = WIRE_DEFAULTS.useNetclass
+      ? 'Netclass defaults'
+      : `${(WIRE_DEFAULTS.stroke.type||'default')} @ ${(WIRE_DEFAULTS.stroke.width||0)}mm`;
+    wireColorBtn.title = `Wire Stroke: ${label} — ${hex}`;
+    wireColorBtn.style.borderColor = col;
+    const dot = document.querySelector('#dot circle'); if(dot) (dot as SVGElement).setAttribute('fill', col);
   }
-  function buildWirePalette(menuEl, currentMode, onPick){
-    menuEl.replaceChildren();
-    WIRE_COLOR_OPTIONS.forEach(([mode,label])=>{
-      const col = resolveWireColor(mode);
-      const hex = colorToHex(col);
-      const b = document.createElement('button');
-      b.className = 'swatch-btn'; b.style.background = col;
-      b.title = `${label} — ${hex}`;
-      if(mode===currentMode) b.classList.add('selected');
-      b.addEventListener('click', ()=> onPick(mode));
-      menuEl.appendChild(b);
-    });
-  }
+
   function openWireMenu(){
-    buildWirePalette(wireColorMenu, currentWireColorMode, (mode)=>{
-      currentWireColorMode = mode;
-      syncWireToolbar();
-      wireColorMenu.style.display = 'none';
-    });
-    wireColorMenu.style.display = 'grid';
+    buildWireStrokeMenu(wireColorMenu);
+    // Use block flow for form content (not the old swatch grid)
+    wireColorMenu.style.display = 'block';
   }
   function closeWireMenu(){ wireColorMenu.style.display = 'none'; }
-  if(wireColorBtn){
-    currentWireColorMode = 'auto';
+
+  // init
+  if (wireColorBtn){
+    mirrorDefaultsIntoLegacyColorMode();
     syncWireToolbar();
     wireColorBtn.addEventListener('click', (e)=>{
       e.stopPropagation();
@@ -1760,7 +2160,7 @@ function resolveWireColor(mode: WireColorMode): string {
   }
 
   // Pan helpers
-  let isPanning = false, panStartSvg = null, panStartView = null, panPointerId = null;
+  var isPanning = false, panStartSvg = null, panStartView = null, panPointerId = null;
   function beginPan(e){
     isPanning = true;
     document.body.classList.add('panning');
@@ -1867,6 +2267,7 @@ function resolveWireColor(mode: WireColorMode): string {
       wrap.appendChild(rowPair('X', number(c.x, v=>{ c.x = snap(v); redrawCanvasOnly(); } )));
       wrap.appendChild(rowPair('Y', number(c.y, v=>{ c.y = snap(v); redrawCanvasOnly(); } )));
       wrap.appendChild(rowPair('Rotation', number(c.rot, v=>{ c.rot = (Math.round(v/90)*90)%360; redrawCanvasOnly(); } )));
+
       inspector.appendChild(wrap);
       // After the DOM is in place, size any Value/Units selects to their content (capped at 50%)
       fitInspectorUnitSelects();
@@ -1898,65 +2299,208 @@ function resolveWireColor(mode: WireColorMode): string {
         wrap.appendChild(rowPair('Wire End',   text(`${Math.round(B.x)}, ${Math.round(B.y)}`, true)));
       }
 
-      // ---- Wire Color (swatch palette) ----
-      // Edits recolor the whole SWP (preferred). If no SWP was detected, fallback to recoloring this polyline.
+      // ---- Wire Stroke (KiCad-style) ----
       (function(){
-        const holder = document.createElement('div'); holder.className = 'hstack inspector-color';
-        const btn = document.createElement('button');
-        const chip = document.createElement('span'); chip.className = 'swatch';
+        ensureStroke(w);
+        const holder = document.createElement('div');
 
-        const currentCol = ()=> (swp?.color) || w.color || defaultWireColor;
+        // Use netclass defaults toggle
+        const useNCRow = document.createElement('div'); useNCRow.className='row';
+        const useNCLabel = document.createElement('label'); useNCLabel.textContent = 'Use netclass defaults';
+        useNCLabel.style.width = '90px';
+        const useNC = document.createElement('input'); useNC.type='checkbox';
+        const isUsingNC = () => { ensureStroke(w); return (w.stroke!.type === 'default' && w.stroke!.width <= 0); };
+        useNC.checked = isUsingNC();
+        useNC.onchange = () => {
+          ensureStroke(w);
+          const mid = (segIndex!=null && w.points[segIndex] && w.points[segIndex+1])
+            ? midOfSeg(w.points, segIndex) : null;
 
-        const applyBtnUI = ()=>{
-          const col = currentCol();
-          chip.setAttribute(
-            'style',
-            'display:inline-block;width:14px;height:14px;'
-            + `background:${col};background-color:${col};`
-            + `border:1px solid ${col};border-radius:4px;vertical-align:middle;`
-          );
-          btn.title = `Wire color — ${colorToHex(col)}`;
+          if (useNC.checked) {
+            // Delegate styling to netclass/theme
+            const patch: Partial<Stroke> = { width: 0, type: 'default' };
+            if (swp) {
+              restrokeSwpSegments(swp, patch);
+              if (mid) reselectNearestAt(mid); else redraw();
+            } else {
+              w.stroke = { ...(w.stroke as Stroke), ...patch };
+              updateWireDOM(w); redrawCanvasOnly();
+            }
+          } else {
+            // Start from the current effective stroke so the user gets editable defaults
+            const eff = strokeOfWire(w); // your effective stroke getter used for preview
+            const patch: Partial<Stroke> = {
+              width: Math.max(0.05, eff.width || 0.25),
+              type: (eff.type === 'default' ? 'solid' : eff.type) || 'solid',
+              color: eff.color
+            };
+            if (swp) {
+              restrokeSwpSegments(swp, patch);
+              if (mid) reselectNearestAt(mid); else redraw();
+            } else {
+              w.stroke = { ...(w.stroke as Stroke), ...patch };
+              w.color = rgba01ToCss((w.stroke as Stroke).color);
+              updateWireDOM(w); redrawCanvasOnly();
+            }
+          }
+          // Keep the controls and preview in sync without forcing a full rebuild.
+          syncWidth(); syncStyle(); syncColor(); syncPreview();
         };
-        btn.appendChild(chip);
-        applyBtnUI();
+        useNCRow.appendChild(useNCLabel); useNCRow.appendChild(useNC);
+        holder.appendChild(useNCRow);
 
-        const menu = document.createElement('div'); menu.className='palette'; menu.style.display='none';
-        holder.appendChild(btn); holder.appendChild(menu);
+        // Width (mm)
+        const widthRow = document.createElement('div'); widthRow.className='row';
+        const wLbl = document.createElement('label'); wLbl.textContent='Width (mm)'; wLbl.style.width='90px';
+        const wIn = document.createElement('input'); wIn.type='number'; wIn.step='0.05';
+        const syncWidth = ()=>{ const eff = effectiveStroke(w, netClassForWire(w), THEME); wIn.value = String(eff.width); wIn.disabled = isUsingNC(); };
+        wIn.onchange = () => {
+          ensureStroke(w);
+          const val = Math.max(0, parseFloat(wIn.value || '0')); // 0 means “netclass default”
+          const mid = (segIndex!=null && w.points[segIndex] && w.points[segIndex+1])
+            ? midOfSeg(w.points, segIndex) : null;
+          if (swp) {
+            restrokeSwpSegments(swp, { width: val, type: val>0 ? (w.stroke!.type==='default'?'solid':w.stroke!.type) : 'default' });
+            if (mid) reselectNearestAt(mid); else redraw();
+          } else {
+            w.stroke!.width = val;
+            if (val<=0) w.stroke!.type = 'default'; // mirror KiCad precedence
+            updateWireDOM(w); redrawCanvasOnly();
+          }
+        };
+        widthRow.appendChild(wLbl); widthRow.appendChild(wIn); holder.appendChild(widthRow);
 
-        btn.addEventListener('click', (e)=>{
-          e.stopPropagation();
-          menu.replaceChildren();
-          const selMode = wireColorNameFromValue(currentCol());
-          WIRE_COLOR_OPTIONS.forEach(([mode,label])=>{
-            const col = resolveWireColor(mode);
-            const hex = colorToHex(col);
-            const b = document.createElement('button');
-            b.className='swatch-btn'; b.style.background = col;
-            b.title = `${label} — ${hex}`;
-            if(mode===selMode) b.classList.add('selected');
-            b.addEventListener('click', ()=>{
-              const picked = resolveWireColor(mode);
-              if (swp){
-                // Recolor the entire SWP (affects all its segments, across polylines)
-                recolorSwpSegments(swp, picked);
-              } else {
-                // Fallback: recolor this single polyline and refresh
-                w.color = picked;
-                updateWireDOM(w);
-                rebuildTopology();
-                redraw();
-              }
-              menu.style.display='none';
-            });
-            menu.appendChild(b);
-          });
-          menu.style.display = 'grid';
+        // Line style
+        const styleRow = document.createElement('div'); styleRow.className='row';
+        const sLbl = document.createElement('label'); sLbl.textContent='Line style'; sLbl.style.width='90px';
+        const sSel = document.createElement('select');
+        ['default','solid','dash','dot','dash_dot','dash_dot_dot'].forEach(v=>{
+          const o=document.createElement('option'); o.value=v; o.textContent=v.replace(/_/g,'·'); sSel.appendChild(o);
         });
-        document.addEventListener('pointerdown', (e)=>{
-          const t = e.target as Node;
-          if (t && !menu.contains(t) && t !== btn) menu.style.display='none';
-        });
-        wrap.appendChild(rowPair('Wire Color', holder));
+        const syncStyle = ()=>{ const eff = effectiveStroke(w, netClassForWire(w), THEME); sSel.value = (isUsingNC() ? 'default' : w.stroke!.type); sSel.disabled = isUsingNC(); };
+        sSel.onchange = () => {
+          ensureStroke(w);
+          const val = (sSel.value || 'solid') as StrokeType;
+          const mid = (segIndex!=null && w.points[segIndex] && w.points[segIndex+1])
+            ? midOfSeg(w.points, segIndex) : null;
+          if (swp) {
+            // Only change the style; do not force width to 0 when 'default' is chosen.
+            restrokeSwpSegments(swp, { type: val });            
+            if (mid) reselectNearestAt(mid); else redraw();
+          } else {
+            w.stroke!.type = val;
+            // Selecting 'default' now only defers the style to netclass.
+            // Width and color remain as-is.
+            updateWireDOM(w); redrawCanvasOnly();
+          }
+        };
+        styleRow.appendChild(sLbl); styleRow.appendChild(sSel); holder.appendChild(styleRow);
+                // Color (RGB) + Opacity
+        const colorRow = document.createElement('div');
+        colorRow.className = 'row hstack';
+
+        const cLbl = document.createElement('label');
+        cLbl.textContent = 'Color';
+        cLbl.style.width = '90px';
+
+        const cIn = document.createElement('input');
+        cIn.type = 'color';
+
+        const aIn = document.createElement('input');
+        aIn.type = 'range';
+        aIn.min = '0';
+        aIn.max = '1';
+        aIn.step = '0.05';
+        // keep compact so it fits in the inspector width
+        aIn.style.flex = '0 0 120px';
+        aIn.style.maxWidth = '140px';
+
+        const syncColor = () => {
+          const eff = effectiveStroke(w, netClassForWire(w), THEME);
+          // convert current effective RGBA(0..1) → #RRGGBB for the color input
+          const rgbCss = `rgba(${Math.round(eff.color.r*255)},${Math.round(eff.color.g*255)},${Math.round(eff.color.b*255)},${eff.color.a})`;
+          const hex = colorToHex(rgbCss);
+          cIn.value = hex;
+          aIn.value = String(Math.max(0, Math.min(1, eff.color.a)));
+          const disabled = isUsingNC();
+          cIn.disabled = disabled;
+          aIn.disabled = disabled;
+        };
+
+        function onColorCommit() {
+          // parse #RRGGBB + alpha slider → RGBA01
+          const hex = cIn.value || '#ffffff';
+          const m = hex.replace('#','');
+          const r = parseInt(m.slice(0,2),16), g = parseInt(m.slice(2,4),16), b = parseInt(m.slice(4,6),16);
+          const a = Math.max(0, Math.min(1, parseFloat(aIn.value) || 1));
+          const newColor: RGBA01 = { r:r/255, g:g/255, b:b/255, a };
+
+          const patch: Partial<Stroke> = { color: newColor };
+
+          const mid = (segIndex!=null && w.points[segIndex] && w.points[segIndex+1])
+            ? midOfSeg(w.points, segIndex) : null;
+
+          if (swp) {
+            // update only the segments that belong to this SWP
+            restrokeSwpSegments(swp, patch);
+            if (mid) reselectNearestAt(mid); else redraw();
+          } else {
+            ensureStroke(w);
+            w.stroke = { ...w.stroke!, color: newColor };
+            // keep legacy css color in sync for any flows that still read w.color
+            w.color = rgba01ToCss(w.stroke.color);
+            updateWireDOM(w);
+            redrawCanvasOnly();
+          }
+          // refresh all inspector controls + live preview
+          syncWidth(); syncStyle(); syncColor(); syncPreview();
+        }
+
+        cIn.onchange = onColorCommit;    // commit on color picker close or change
+        aIn.oninput  = onColorCommit;    // live commit while sliding alpha
+
+        colorRow.appendChild(cLbl);
+        colorRow.appendChild(cIn);
+        colorRow.appendChild(aIn);
+        holder.appendChild(colorRow);
+
+        // Live preview of effective stroke
+        const prevRow = document.createElement('div'); prevRow.className='row';
+        const pLbl = document.createElement('label'); pLbl.textContent='Preview'; pLbl.style.width='90px';
+        const pSvg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+        pSvg.setAttribute('width','160'); pSvg.setAttribute('height','24');
+        const pLine = document.createElementNS('http://www.w3.org/2000/svg','line');
+        setAttrs(pLine, { x1:10, y1:12, x2:150, y2:12 });
+        pLine.setAttribute('stroke-linecap','round');
+        pSvg.appendChild(pLine);
+        function syncPreview(){
+          const eff = effectiveStroke(w, netClassForWire(w), THEME);
+          pLine.setAttribute('stroke', rgba01ToCss(eff.color));
+          pLine.setAttribute('stroke-width', String(mmToPx(eff.width)));
+          const d = dashArrayFor(eff.type);
+          if(d) pLine.setAttribute('stroke-dasharray', d); else pLine.removeAttribute('stroke-dasharray');
+        }
+        prevRow.appendChild(pLbl); prevRow.appendChild(pSvg);
+        holder.appendChild(prevRow);
+
+        // One-shot rebuild to wire up initial UI state
+        function rebuild(){
+        // refresh live stroke from model + precedence
+        syncWidth(); syncStyle(); syncColor(); syncPreview();
+        }
+        rebuild();
+
+        // Header row: left-justified section title (“Wire Stroke”)
+        const wsHeader = document.createElement('div'); wsHeader.className = 'row';
+        const wsLabel = document.createElement('label');
+        wsLabel.textContent = 'Wire Stroke';
+        wsLabel.style.width = 'auto';          // don’t reserve the 90px label column
+        wsLabel.style.fontWeight = '600';
+        wsHeader.appendChild(wsLabel);
+        wrap.appendChild(wsHeader);
+
+        // Then put the stroke rows directly below the header (no indent)
+        wrap.appendChild(holder);
       })();
 
       inspector.appendChild(wrap);
@@ -2175,11 +2719,19 @@ function resolveWireColor(mode: WireColorMode): string {
     return c;
   }
   function normalizeAllWires(){
-    wires = wires.reduce((acc,w)=>{
+    wires = wires.reduce((acc, w) => {
       const c = normalizedPolylineOrNull(w.points);
-      if (c) acc.push({ id: w.id, points: c, color: w.color || defaultWireColor });
+      if (c) {
+        acc.push({
+          id: w.id,
+          points: c,
+          color: w.color || defaultWireColor,
+          stroke: w.stroke,               // preserve KiCad stroke
+          netId: (w as any).netId || 'default' // preserve net id if present
+        } as Wire);
+      }
       return acc;
-    }, []);
+    }, [] as Wire[]);
   }
   
   // Split a polyline by removing segments whose 0-based indices are in removeIdxSet.
@@ -2318,12 +2870,14 @@ function resolveWireColor(mode: WireColorMode): string {
       const merged = normalizedPolylineOrNull(mergedPts);
       if(!merged) continue;
 
-      // Adopt left/top wire's color
-      const newColor = left.w.color || defaultWireColor;
+      // Adopt left/top wire's stroke (and keep legacy color in sync)
+      ensureStroke(left.w);
+      const newStroke = strokeOfWire(left.w);
+      const newColor = rgba01ToCss(newStroke.color);
 
       // Replace
       wires = wires.filter(w => w !== left.w && w !== right.w);
-      wires.push({ id: uid('wire'), points: merged, color: newColor });
+      wires.push({ id: uid('wire'), points: merged, color: newColor, stroke: newStroke, netId: left.w.netId || 'default' });
 
       changed = true;
       break; // wires changed; stop this pass and recurse
@@ -2336,41 +2890,41 @@ function resolveWireColor(mode: WireColorMode): string {
     return false;
   }
 
-  // Recolor all segments that belong to the given SWP to `newColor`.
-  // Segments outside the SWP keep their original wire color.
-  function recolorSwpSegments(swp: SWP | null, newColor: string){
+  // Apply a stroke "patch" to all segments in the SWP.
+  // Segments outside the SWP keep their original stroke/color.
+  function restrokeSwpSegments(swp: SWP | null, patch: Partial<Stroke>){
     if(!swp) return;
-    const byId = new Map(wires.map(w=>[w.id,w]));
-    const result = [];
-
+    const result: Wire[] = [];
     for(const w of wires){
+      ensureStroke(w);
       const keepIdxs = new Set((swp.edgeIndicesByWire && swp.edgeIndicesByWire[w.id]) || []);
       if(keepIdxs.size === 0){
         result.push(w); // untouched whole wire
         continue;
       }
-      // Pieces that are NOT in the SWP (remove kept idxs)
+      // Not-in-SWP pieces
       const otherPieces = splitPolylineByRemovedSegments(w.points, keepIdxs);
-      // Pieces that ARE in the SWP (keep kept idxs)
-      const swpPieces   = splitPolylineByKeptSegments(w.points, keepIdxs);
-
-      // Emit others with original color
       for(const pts of otherPieces){
-        result.push({ id: uid('wire'), points: pts, color: w.color || defaultWireColor });
+        result.push({ id: uid('wire'), points: pts, color: w.color || defaultWireColor, stroke: w.stroke, netId: w.netId || 'default' });
       }
-      // Emit SWP pieces with newColor
+      // In-SWP pieces → apply stroke patch
+      const swpPieces = splitPolylineByKeptSegments(w.points, keepIdxs);
       for(const pts of swpPieces){
-        result.push({ id: uid('wire'), points: pts, color: newColor });
+        const src = w.stroke!;
+        const next: Stroke = {
+          width: (patch.width!=null ? patch.width : src.width),
+          type:  (patch.type !=null ? patch.type  : src.type),
+          color: (patch.color!=null ? patch.color : src.color)
+        };
+        const css = rgba01ToCss(next.color);
+        result.push({ id: uid('wire'), points: pts, color: css, stroke: next, netId: w.netId || 'default' });
       }
     }
     wires = result;
-    // No need to manually push color back into SWP; on next rebuild it will
-    // derive from the (now-uniform) segment colors.
-    selection = {kind:null,id:null,segIndex:null}; // selection may have been split; clear it
     normalizeAllWires();
-    rebuildTopology();
-    redraw();
+    rebuildTopology(); // caller will refresh selection + UI
   }
+
   // ===== CSS <-> RGBA helpers (0..1) + internal<->KiCad wire adapters =====
 
   // Parse any CSS color to [0..1] RGBA
@@ -2396,6 +2950,82 @@ function resolveWireColor(mode: WireColorMode): string {
     const b = Math.round(c.b * 255);
     const a = Math.max(0, Math.min(1, c.a));
     return `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+
+  // Map Stroke.type to SVG dash arrays for preview
+  function dashArrayFor(type: Stroke['type']): string | null {
+    switch(type){
+      case 'dash': return '8 6';
+      case 'dot': return '1 6';
+      case 'dash_dot': return '8 6 1 6';
+      case 'dash_dot_dot': return '8 6 1 6 1 6';
+      default: return null; // 'solid' or 'default'
+    }
+  }
+
+  // Small inline SVG preview for a Stroke
+  // function buildStrokePreview(st: Stroke): SVGSVGElement {
+  //   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg') as unknown as SVGSVGElement;
+  //   svg.setAttribute('width','100%');
+  //   svg.setAttribute('height','28');
+  //   svg.setAttribute('viewBox','0 0 200 28');
+  //   const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+  //   line.setAttribute('x1','8'); line.setAttribute('x2','192');
+  //   line.setAttribute('y1','14'); line.setAttribute('y2','14');
+  //   line.setAttribute('stroke', rgba01ToCss(st.color as RGBA01));
+  //   line.setAttribute('stroke-width', String(Math.max(0.25, st.width || 0.25)));
+  //   const d = dashArrayFor(st.type);
+  //   if(d) line.setAttribute('stroke-dasharray', d);
+  //   svg.appendChild(line);
+  //   return svg;
+  // }
+
+  // px rendering helpers (keep visuals stable; 0.25 mm ≈ 1 px on canvas)
+  const PX_PER_MM = 4;  // 1 mm → 4 px; 0.25 mm → 1 px
+  const mmToPx = (mm: number) => Math.max(1, Math.round(Math.max(0, mm) * PX_PER_MM));
+
+  // Precedence: explicit wire.stroke → netclass → theme.
+  // NOTE: width<=0 OR type==='default' means "don’t override lower-precedence value".
+  function effectiveStroke(w: Wire, nc: NetClass, th: Theme): Stroke {
+    const from = (base: Stroke, over?: Stroke): Stroke => {
+      if (!over) return base;
+      return {
+        width: (over.width && over.width > 0) ? over.width : base.width,
+        type: (over.type && over.type !== 'default') ? over.type : base.type,
+        // New rule: if the wire is set to *full* netclass defaults (width<=0 AND type='default'),
+        // use the base (netclass/theme) color; otherwise keep the wire's explicit color even if
+        // the style is 'default' so only the pattern is inherited.
+        color: ((over.width ?? 0) <= 0 && (!over.type || over.type === 'default'))
+              ? base.color : (over.color || base.color)
+      };
+    };
+    const sWire = w.stroke;
+    const sNC   = nc.wire;
+    const sTH   = th.wire;
+    return from(from(sTH, sNC), sWire);
+  }
+
+  // NEW: stroke used for **newly placed wires** from the global Wire control.
+  // Returning `undefined` means: do not attach an explicit stroke → let netclass/theme render it.
+  function strokeForNewWires(): Stroke | undefined {
+    // If the toolbar is set to use netclass defaults, we don't provide an explicit stroke.
+    // That lets effectiveStroke() fall back to the netclass/theme settings.
+    if (WIRE_DEFAULTS.useNetclass) return undefined;
+
+    // Clone the configured explicit stroke so we don't accidentally share references.
+    const st = WIRE_DEFAULTS.stroke;
+    return {
+      width: st.width,
+      type: st.type,
+      color: { r: st.color.r, g: st.color.g, b: st.color.b, a: st.color.a }
+    };
+  }
+
+  // Ensure a wire has a stroke object (mapping legacy color→stroke.color, width=0, type='default')
+  function ensureStroke(w: Wire): void {
+    if (!w.stroke) {
+      w.stroke = { width: 0, type: 'default', color: cssToRGBA01(w.color || defaultWireColor) };
+    }
   }
 
   // Choose a sensible default wire stroke to match our current look (no behavior change)
@@ -2436,13 +3066,22 @@ function resolveWireColor(mode: WireColorMode): string {
 
   function saveJSON(){
     // Clean up any accidental duplicates/zero-length segments before saving
-    normalizeAllWires();    
+    const SAVE_LEGACY_WIRE_COLOR = true; // back-compat flag (old format keeps {color})
+    normalizeAllWires();
+    // build a wires array that always includes KiCad-style stroke; keep {color} if flag enabled
+    const wiresOut = wires.map(w=>{
+      ensureStroke(w);
+      const base = { id: w.id, points: w.points, stroke: w.stroke, netId: w.netId || 'default' } as any;
+      if (SAVE_LEGACY_WIRE_COLOR) base.color = w.color || rgba01ToCss(w.stroke!.color);
+      return base;
+    });
     const data = {
-      version: 1,
+      version: 2,
       title: projTitle.value || 'Untitled',
       grid: GRID,
       components,
-      wires
+      wires: wiresOut,
+      junctions
     };
     const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
     const a = document.createElement('a');
@@ -2453,10 +3092,25 @@ function resolveWireColor(mode: WireColorMode): string {
 
   function loadFromJSON(text){
     const data = JSON.parse(text);
-    components = data.components||[]; wires = (data.wires||[]); projTitle.value = data.title||'';
-    // Backfill color for legacy wires
-    wires.forEach(w=>{ if(!w.color) w.color = defaultWireColor; });
+    components = data.components||[];
+    wires = (data.wires||[]);
+    projTitle.value = data.title||'';
+
+    // Backfill stroke from legacy color (and ensure presence for v2)
+    wires.forEach((w:any)=>{
+      if (!w.stroke) {
+        const css = w.color || defaultWireColor;
+        w.stroke = { width: 0, type:'default', color: cssToRGBA01(css) };
+      }
+      // keep legacy color in sync so SWP heuristics & old flows remain stable
+      if (!w.color) w.color = rgba01ToCss(w.stroke.color);
+      if (!w.netId) w.netId = 'default';
+    });
+
+    junctions = Array.isArray(data.junctions) ? data.junctions : [];
+
     normalizeAllWires();
+
     // re-seed counters so new IDs continue incrementing nicely
     const used = { resistor:0, capacitor:0, inductor:0, diode:0, npn:0, pnp:0, ground:0, battery:0, ac:0, wire:0 };
     for(const c of components){ const k=c.type; const num=parseInt((c.label||'').replace(/^[A-Z]+/,'').trim())||0; used[k]=Math.max(used[k], num); }
