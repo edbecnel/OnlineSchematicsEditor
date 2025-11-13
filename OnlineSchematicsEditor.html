@@ -15,11 +15,11 @@
     html, body {height:100%;}
     body{margin:0; font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color:var(--ink); background:var(--bg);}
     .app{display:grid; grid-template-columns: 320px 1fr 320px; grid-template-rows:auto 1fr; height:100%;}
-    header{grid-column: 1/4; display:flex; align-items:center; gap:.5rem; padding:.5rem .75rem; background:var(--panel); border-bottom:1px solid #22262f; position:sticky; top:0; z-index:3}
+  header{grid-column: 1/4; display:flex; align-items:center; gap:.25rem; padding:.5rem .75rem; background:var(--panel); border-bottom:1px solid #22262f; position:sticky; top:0; z-index:3}
     /* Keep everything on one row (no wrap); we'll popup sub-types absolutely */
     header{ flex-wrap: nowrap; align-items: center; }
-    /* Thin vertical separator between mode buttons and components */
-    .vsep{ width:1px; height:32px; background:#22262f; margin:0 .5rem; border-radius:1px; }
+  /* Thin vertical separator between mode buttons and components */
+  .vsep{ width:1px; height:32px; background:#22262f; margin:0 .125rem; border-radius:1px; }
     /* Sub-type popup: small, only as wide as content, positioned under the Diode button */
     #paletteRow2{
       position:absolute;
@@ -29,7 +29,7 @@
       z-index:5;                    /* above header background */
     }
     #paletteRow2 select{ width:auto; white-space:nowrap; }
-    header .group{display:flex; gap:.25rem; align-items:center; background:#0e1219; padding:.25rem; border-radius:10px; border:1px solid #1e2430}
+  header .group{display:flex; gap:.15rem; align-items:center; background:#0e1219; padding:.22rem; border-radius:10px; border:1px solid #1e2430; position:relative}
     button{appearance:none; background:#0e1219; border:1px solid #273042; color:var(--ink); padding:.45rem .6rem; border-radius:8px; cursor:pointer; font-size:.92rem}
     button:hover{border-color:#3a4a68}
     button.active{outline:2px solid var(--accent);}
@@ -131,7 +131,7 @@
       <button data-mode="move" title="Move selected (M / Arrow keys)">Move</button>      
     </div>
     <div class="vsep"></div> 
-    <div class="group" id="paletteRow1">
+  <div class="group" id="paletteRow1">
       <button data-tool="resistor" title="Place Resistor (R)">Resistor</button>
       <button data-tool="capacitor" title="Place Capacitor (C)">Capacitor</button>
       <button data-tool="inductor" title="Place Inductor (L)">Inductor</button>

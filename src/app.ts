@@ -33,7 +33,16 @@ function getClientXY(evt: ClientXYEvent) {
 }
 
   // ====== Core State ======
-const GRID: number = 24; // px
+  const GRID: number = 24; // px
+
+  // Nanometer resolution constants (internal units)
+  const NM_PER_MM = 1_000_000;   // 1 mm == 1,000,000 nm
+  const NM_PER_IN = 25_400_000;  // 25.4 mm == 1 inch
+  const NM_PER_MIL = NM_PER_IN / 1000; // 0.001 in
+
+  // Global units state and persistence (available at module-init time to avoid TDZ issues)
+  let globalUnits: 'mm' | 'in' | 'mils' = (localStorage.getItem('global.units') as any) || 'mm';
+  function saveGlobalUnits(){ localStorage.setItem('global.units', globalUnits); }
 
 // DOM refs
 const svg = $q<SVGSVGElement>('#svg');
@@ -863,8 +872,10 @@ let marquee: {
       // Replace the two wires with a single merged polyline
       wires = wires.filter(w => w!==wA && w!==wB);
       if (merged.length >= 2) {
-        // prefer left-side color; if mismatch, we still keep wA's color
-        wires.push({ id: uid('wire'), points: merged, color: wA.color || wB.color || defaultWireColor });
+        // prefer left-side stroke; fall back to right-side stroke; else fall back to legacy color
+        const inheritedStroke = wA.stroke ? { ...wA.stroke } : (wB.stroke ? { ...wB.stroke } : undefined);
+        const colorCss = inheritedStroke ? rgba01ToCss(inheritedStroke.color) : (wA.color || wB.color || defaultWireColor);
+        wires.push({ id: uid('wire'), points: merged, color: colorCss, stroke: inheritedStroke });
       }
     }        
   }
@@ -908,8 +919,8 @@ let marquee: {
      // Add split pieces back if they contain at least one segment
      const L = normalizedPolylineOrNull(left);
      const R = normalizedPolylineOrNull(right);
-     if (L) wires.push({ id: uid('wire'), points: L, color: w.color });
-     if (R) wires.push({ id: uid('wire'), points: R, color: w.color });
+  if (L) wires.push({ id: uid('wire'), points: L, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
+  if (R) wires.push({ id: uid('wire'), points: R, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
      if (selection.id === w.id) selection = { kind:null, id:null, segIndex:null };
      normalizeAllWires();
      unifyInlineWires();
@@ -1132,8 +1143,8 @@ let marquee: {
           wires = wires.filter(x=>x.id!==w.id);
           const L = normalizedPolylineOrNull(left);
           const R = normalizedPolylineOrNull(right);
-          if (L) wires.push({ id: uid('wire'), points: L, color: w.color });
-          if (R) wires.push({ id: uid('wire'), points: R, color: w.color });
+          if (L) wires.push({ id: uid('wire'), points: L, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
+          if (R) wires.push({ id: uid('wire'), points: R, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
           return true;
         }
       }
@@ -1447,7 +1458,16 @@ let marquee: {
       return;
     }    
     if(e.key==='Escape'){
-      if(drawing.active){ drawing.active=false; drawing.points=[]; gDrawing.replaceChildren(); }
+      if(drawing.active){
+        drawing.active=false; drawing.points=[]; gDrawing.replaceChildren();
+      } else {
+        // Deselect any selected component or wire (including a single wire segment)
+        if(selection.kind === 'component' || selection.kind === 'wire'){
+          selection = { kind: null, id: null, segIndex: null };
+          // Refresh UI to reflect cleared selection
+          renderInspector(); redraw();
+        }
+      }
     }
     if(e.key==='Enter' && drawing.active){ finishWire(); }
     if(e.key.toLowerCase()==='w'){ setMode('wire'); }
@@ -1919,10 +1939,14 @@ let marquee: {
     const rowW = document.createElement('label');
     rowW.style.display = 'grid';
     rowW.style.gridTemplateColumns = '1fr';
-    const capW = document.createElement('div'); capW.textContent = 'Width (mm)';
+    const capW = document.createElement('div'); capW.textContent = `Width (${globalUnits})`;
     const inpW = document.createElement('input');
-    inpW.type = 'number'; inpW.min = '0'; inpW.step = '0.05';
-    inpW.value = String(WIRE_DEFAULTS.stroke.width ?? 0);
+    // Use text so users can type unit suffixes (e.g., "0.5 mm", "12 mils", "0.02 in").
+    inpW.type = 'text';
+    const initialNm = ((WIRE_DEFAULTS.stroke as any).widthNm != null)
+      ? (WIRE_DEFAULTS.stroke as any).widthNm
+      : unitToNm(WIRE_DEFAULTS.stroke.width || 0, 'mm');
+    inpW.value = formatDimForDisplay(initialNm);
     rowW.append(capW, inpW);
     box.appendChild(rowW);
 
@@ -2000,8 +2024,9 @@ let marquee: {
       } else {
         st = WIRE_DEFAULTS.stroke;
       }
-      // Width
-      inpW.value = String(st.width ?? 0);
+      // Width: show in the currently selected global units using nm internal representation when available
+      const stNm = (st && (st as any).widthNm != null) ? (st as any).widthNm : unitToNm(st.width ?? 0, 'mm');
+      inpW.value = formatDimForDisplay(stNm);
       // Style
       selS.value = (st.type || 'default') as string;
       // Color & opacity
@@ -2030,16 +2055,18 @@ let marquee: {
       refreshPreview();
     };
     // Allow temporary empty/invalid text while typing without snapping back to netclass.
+    // Allow temporary empty/invalid text while typing. Parse with suffixes when a valid numeric+suffix present.
     inpW.oninput = () => {
       const raw = (inpW.value || '').trim();
-      // While user is clearing/typing (e.g. "", "-", ".", "-."), don't flip the checkbox.
       if (raw === '' || raw === '-' || raw === '.' || raw === '-.') return;
-      const n = parseFloat(raw);
-      if (!isFinite(n) || n < 0) return;
-      WIRE_DEFAULTS.stroke.width = n;
+      const parsed = parseDimInput(raw);
+      if (!parsed) return;
+      const mmVal = parsed.nm / NM_PER_MM;
+      // update defaults using mm for backward compatibility, but keep widthNm for internal precision
+      WIRE_DEFAULTS.stroke.width = mmVal;
+      (WIRE_DEFAULTS.stroke as any).widthNm = parsed.nm;
       // If a positive width is typed, treat it as explicit/custom immediately
-      // so other controls stay enabled during editing.
-      if (n > 0 && WIRE_DEFAULTS.useNetclass) {
+      if (mmVal > 0 && WIRE_DEFAULTS.useNetclass) {
         WIRE_DEFAULTS.useNetclass = false;
         if (WIRE_DEFAULTS.stroke.type === 'default') {
           WIRE_DEFAULTS.stroke.type = 'solid';
@@ -2053,11 +2080,13 @@ let marquee: {
       syncWireToolbar();
       refreshPreview();
     };
-    // Commit on blur/Enter: only here do we snap 0 → "Use netclass defaults".
+    // Commit on blur/Enter: parse with optional suffix and normalize to nm/mm
     inpW.onchange = () => {
-      const n = parseFloat(inpW.value);
-      const val = isFinite(n) && n >= 0 ? n : 0;
+      const parsed = parseDimInput((inpW.value||'').trim());
+      const nm = parsed ? parsed.nm : 0;
+      const val = (nm / NM_PER_MM) || 0;
       WIRE_DEFAULTS.stroke.width = val;
+      (WIRE_DEFAULTS.stroke as any).widthNm = nm;
       if (val <= 0) {
         WIRE_DEFAULTS.useNetclass = true;
         WIRE_DEFAULTS.stroke.type = 'default';
@@ -2074,6 +2103,8 @@ let marquee: {
       saveWireDefaults();
       syncWireToolbar();
       setEnabledStates();
+      // Normalize and show the committed value in the current global units.
+      inpW.value = formatDimForDisplay(nm);
       refreshPreview();
     };
     selS.onchange = () => {
@@ -2100,14 +2131,26 @@ let marquee: {
 
     inpColor.oninput = () => {
       const c = cssToRGBA01(inpColor.value);
-      WIRE_DEFAULTS.stroke.color = { ...WIRE_DEFAULTS.stroke.color, r:c.r, g:c.g, b:c.b };
-      saveWireDefaults(); syncWireToolbar(); refreshPreview();
+      WIRE_DEFAULTS.stroke.color = {
+        ...WIRE_DEFAULTS.stroke.color,
+        r: c.r,
+        g: c.g,
+        b: c.b,
+      };
+      saveWireDefaults();
+      syncWireToolbar();
+      refreshPreview();
     };
     inpA.oninput = () => {
-      WIRE_DEFAULTS.stroke.color = { ...WIRE_DEFAULTS.stroke.color, a: clamp(+inpA.value, 0, 1) };
-      saveWireDefaults(); syncWireToolbar(); refreshPreview();
+      WIRE_DEFAULTS.stroke.color = {
+        ...WIRE_DEFAULTS.stroke.color,
+        a: clamp(+inpA.value, 0, 1),
+      };
+      saveWireDefaults();
+      syncWireToolbar();
+      refreshPreview();
     };
-
+    
     setEnabledStates();
     syncAllFieldsToEffective();
     refreshPreview();
@@ -2123,7 +2166,7 @@ let marquee: {
     const hex = colorToHex(col);
     const label = WIRE_DEFAULTS.useNetclass
       ? 'Netclass defaults'
-      : `${(WIRE_DEFAULTS.stroke.type||'default')} @ ${(WIRE_DEFAULTS.stroke.width||0)}mm`;
+      : `${(WIRE_DEFAULTS.stroke.type||'default')} @ ${formatDimForDisplay((WIRE_DEFAULTS.stroke as any).widthNm != null ? (WIRE_DEFAULTS.stroke as any).widthNm : unitToNm(WIRE_DEFAULTS.stroke.width || 0, 'mm'))}`;
     wireColorBtn.title = `Wire Stroke: ${label} — ${hex}`;
     wireColorBtn.style.borderColor = col;
     const dot = document.querySelector('#dot circle'); if(dot) (dot as SVGElement).setAttribute('fill', col);
@@ -2223,6 +2266,110 @@ let marquee: {
   }
 
   // ====== Inspector ======
+  // ====== Units & conversion helpers ======
+  // Internal resolution: nanometers (integers). Display units: mm / in / mils
+  // (NM_PER_* constants are declared near the top-level so they're available to all code.)
+
+  // Global units state & persistence are declared at module top-level to avoid TDZ issues
+
+  // px <-> nm helpers (PX_PER_MM is defined lower in the file; it's safe because these helpers are
+  // used only after initialization completes at runtime).
+  function pxToNm(px: number){ return Math.round(px * (NM_PER_MM / (PX_PER_MM || 4))); }
+  function nmToPx(nm: number){ return (nm * (PX_PER_MM || 4)) / NM_PER_MM; }
+
+  // Convert nm -> value in requested display unit (number)
+  function nmToUnit(nm: number, u: 'mm'|'in'|'mils'){
+    if(u==='mm') return nm / NM_PER_MM;
+    if(u==='in') return nm / NM_PER_IN;
+    return nm / NM_PER_MIL; // mils
+  }
+  // Convert value in unit -> nm
+  function unitToNm(val: number, u: 'mm'|'in'|'mils'){
+    if(u==='mm') return Math.round(val * NM_PER_MM);
+    if(u==='in') return Math.round(val * NM_PER_IN);
+    return Math.round(val * NM_PER_MIL);
+  }
+
+  // Parse a user-typed dimension like "1 mm", "0.0254 in", "39.37 mils" (case-insensitive)
+  // Returns { nm, unitNormalized } or null if parse failed.
+  function parseDimInput(str: string, assumeUnit: 'mm'|'in'|'mils' = globalUnits){
+    if(!str) return null;
+    const s = String(str).trim();
+    const m = s.match(/^([0-9.+\-eE]+)\s*([a-zA-Z]*)$/);
+    if(!m) return null;
+    const n = parseFloat(m[1]); if(Number.isNaN(n)) return null;
+    const suf = (m[2]||'').toLowerCase();
+    if(!suf) return { nm: unitToNm(n, assumeUnit), unit: assumeUnit };
+    if(suf==='mm') return { nm: unitToNm(n,'mm'), unit:'mm' };
+    if(suf==='in' || suf==='inch' || suf==='inches') return { nm: unitToNm(n,'in'), unit:'in' };
+    if(suf==='mil' || suf==='mils') return { nm: unitToNm(n,'mils'), unit:'mils' };
+    // Unknown suffix: treat as assumeUnit
+    return { nm: unitToNm(n, assumeUnit), unit: assumeUnit };
+  }
+
+  // Format an nm value for display in the currently selected global units.
+  // Returns string like "12.34 mm" or "39.37 mils". For 'in' uses suffix 'in'.
+  function formatDimForDisplay(nm: number){
+    const u = globalUnits;
+    const v = nmToUnit(nm, u);
+    if(u==='mm') return `${(Math.round(v*100)/100).toFixed(2)} mm`;
+    if(u==='in') return `${(Math.round(v*10000)/10000).toFixed(4)} in`;
+    // mils
+    return `${(Math.round(v*100)/100).toFixed(2)} mils`;
+  }
+
+  // Specialized input used for coordinates (x/y) that are stored in px internally.
+  function dimNumberPx(pxVal: number, onCommit: (px:number)=>void){
+    const inp = document.createElement('input'); inp.type = 'text';
+    // display initial value converted to current units
+    const nm = pxToNm(pxVal);
+    inp.value = formatDimForDisplay(nm);
+    // commit on blur or Enter
+    function commitFromStr(str: string){
+      const parsed = parseDimInput(str);
+      if(!parsed) return; // ignore invalid
+      const px = Math.round(nmToPx(parsed.nm));
+      onCommit(px);
+      // refresh displayed (normalize units & formatting)
+      inp.value = formatDimForDisplay(parsed.nm);
+    }
+    inp.addEventListener('blur', ()=> commitFromStr(inp.value));
+    inp.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ commitFromStr(inp.value); inp.blur(); } });
+    return inp;
+  }
+
+  // Update UI after unit changes
+  function setGlobalUnits(u: 'mm'|'in'|'mils'){
+    globalUnits = u; saveGlobalUnits();
+    // Refresh inspector UI and any open popovers
+    renderInspector(); // safe to call repeatedly
+  }
+
+  // Insert a simple Units selector into the header (shows current units; opens dropdown)
+  (function installUnitsButton(){
+    const header = document.querySelector('header'); if(!header) return;
+    const modeGroup = document.getElementById('modeGroup');
+    const grp = document.createElement('div'); grp.className = 'group'; grp.style.marginLeft = '8px';
+    grp.style.position = 'relative'; // anchor for absolute dropdown
+    const btn = document.createElement('button'); btn.id = 'unitsBtn'; btn.title = 'Display units'; btn.textContent = (globalUnits === 'mm') ? 'mm' : (globalUnits==='in'? 'in' : 'mils');
+    const menu = document.createElement('div'); menu.id = 'unitsMenu';
+    // Always open downward: anchor at top:100% (below the header group)
+    menu.style.position='absolute'; menu.style.top='calc(100% + 6px)'; menu.style.left='0'; menu.style.bottom='auto';
+    menu.style.display='none'; menu.style.background='#0e1219'; menu.style.border='1px solid #273042'; menu.style.padding='6px'; menu.style.borderRadius='8px'; menu.style.zIndex = '1000';
+    menu.style.maxHeight = '50vh'; menu.style.overflow = 'auto';
+    ['mm','in','mils'].forEach(u=>{
+      const b = document.createElement('button'); b.style.display='block'; b.style.width='100%'; b.textContent = u;
+      b.addEventListener('click', ()=>{ setGlobalUnits(u as any); btn.textContent = (u==='mm')? 'mm' : (u==='in' ? 'in' : 'mils'); menu.style.display='none'; });
+      menu.appendChild(b);
+    });
+    btn.addEventListener('click', (e)=>{ e.stopPropagation(); menu.style.display = menu.style.display==='none' ? 'block' : 'none'; });
+    document.addEventListener('click', ()=>{ menu.style.display='none'; });
+    grp.appendChild(btn); grp.appendChild(menu);
+  // Insert the units group into the modeGroup so it sits immediately after the Mode buttons
+  if(modeGroup) modeGroup.appendChild(grp);
+  else header.appendChild(grp);
+  })();
+
   function renderInspector(){
     inspector.replaceChildren();
     if(selection.kind==='component'){
@@ -2284,9 +2431,9 @@ let marquee: {
         if(!c.props) c.props = {};
         wrap.appendChild(rowPair('Voltage (V)', number(c.props.voltage ?? 0, v=>{ c.props.voltage=v; redrawCanvasOnly(); } )));
       }
-      // position + rotation
-      wrap.appendChild(rowPair('X', number(c.x, v=>{ c.x = snap(v); redrawCanvasOnly(); } )));
-      wrap.appendChild(rowPair('Y', number(c.y, v=>{ c.y = snap(v); redrawCanvasOnly(); } )));
+      // position + rotation (X/Y are shown in selected units; internal positions are px)
+      wrap.appendChild(rowPair('X', dimNumberPx(c.x, v=>{ c.x = snap(v); redrawCanvasOnly(); } )));
+      wrap.appendChild(rowPair('Y', dimNumberPx(c.y, v=>{ c.y = snap(v); redrawCanvasOnly(); } )));
       wrap.appendChild(rowPair('Rotation', number(c.rot, v=>{ c.rot = (Math.round(v/90)*90)%360; redrawCanvasOnly(); } )));
 
       inspector.appendChild(wrap);
@@ -2312,12 +2459,12 @@ let marquee: {
       // ---- Wire Endpoints (read-only) ----
       // If we have an SWP, show its canonical endpoints. Else fallback to the polyline endpoints.
       if (swp){
-        wrap.appendChild(rowPair('Wire Start', text(`${Math.round(swp.start.x)}, ${Math.round(swp.start.y)}`, true)));
-        wrap.appendChild(rowPair('Wire End',   text(`${Math.round(swp.end.x)}, ${Math.round(swp.end.y)}`, true)));
+        wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(swp.start.x))}, ${formatDimForDisplay(pxToNm(swp.start.y))}`, true)));
+        wrap.appendChild(rowPair('Wire End',   text(`${formatDimForDisplay(pxToNm(swp.end.x))}, ${formatDimForDisplay(pxToNm(swp.end.y))}`, true)));
       } else {
         const A = w.points[0], B = w.points[w.points.length-1];
-        wrap.appendChild(rowPair('Wire Start', text(`${Math.round(A.x)}, ${Math.round(A.y)}`, true)));
-        wrap.appendChild(rowPair('Wire End',   text(`${Math.round(B.x)}, ${Math.round(B.y)}`, true)));
+        wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(A.x))}, ${formatDimForDisplay(pxToNm(A.y))}`, true)));
+        wrap.appendChild(rowPair('Wire End',   text(`${formatDimForDisplay(pxToNm(B.x))}, ${formatDimForDisplay(pxToNm(B.y))}`, true)));
       }
 
       // ---- Wire Stroke (KiCad-style) ----
@@ -2336,58 +2483,120 @@ let marquee: {
           ensureStroke(w);
           const mid = (segIndex!=null && w.points[segIndex] && w.points[segIndex+1])
             ? midOfSeg(w.points, segIndex) : null;
-
-          if (useNC.checked) {
-            // Delegate styling to netclass/theme
-            const patch: Partial<Stroke> = { width: 0, type: 'default' };
-            if (swp) {
-              restrokeSwpSegments(swp, patch);
-              if (mid) reselectNearestAt(mid); else redraw();
-            } else {
-              w.stroke = { ...(w.stroke as Stroke), ...patch };
-              updateWireDOM(w); redrawCanvasOnly();
-            }
-          } else {
-            // Start from the current effective stroke so the user gets editable defaults
-            const eff = strokeOfWire(w); // your effective stroke getter used for preview
-            const patch: Partial<Stroke> = {
-              width: Math.max(0.05, eff.width || 0.25),
-              type: (eff.type === 'default' ? 'solid' : eff.type) || 'solid',
-              color: eff.color
-            };
-            if (swp) {
-              restrokeSwpSegments(swp, patch);
-              if (mid) reselectNearestAt(mid); else redraw();
-            } else {
-              w.stroke = { ...(w.stroke as Stroke), ...patch };
-              w.color = rgba01ToCss((w.stroke as Stroke).color);
-              updateWireDOM(w); redrawCanvasOnly();
-            }
-          }
+              if (useNC.checked) {
+                // Delegate styling to netclass/theme
+                const patch: Partial<Stroke> = { width: 0, type: 'default' };
+                // If a specific segment is selected, isolate it and apply only to that segment
+                if (segIndex != null) {
+                  const target = isolateWireSegment(w, segIndex);
+                  if (target) {
+                    ensureStroke(target);
+                    target.stroke = { ...(target.stroke as Stroke), ...patch };
+                    target.color = rgba01ToCss((target.stroke as Stroke).color);
+                    updateWireDOM(target); redrawCanvasOnly();
+                    // select the isolated segment (it will be the only segment in that wire)
+                    selection = { kind: 'wire', id: target.id, segIndex: 0 };
+                  }
+                } else if (swp) {
+                  restrokeSwpSegments(swp, patch);
+                  if (mid) reselectNearestAt(mid); else redraw();
+                } else {
+                  w.stroke = { ...(w.stroke as Stroke), ...patch };
+                  updateWireDOM(w); redrawCanvasOnly();
+                }
+              } else {
+                // Start from the current effective stroke so the user gets editable defaults
+                const eff = strokeOfWire(w); // your effective stroke getter used for preview
+                const patch: Partial<Stroke> = {
+                  width: Math.max(0.05, eff.width || 0.25),
+                  type: (eff.type === 'default' ? 'solid' : eff.type) || 'solid',
+                  color: eff.color
+                };
+                if (segIndex != null) {
+                  const target = isolateWireSegment(w, segIndex);
+                  if (target) {
+                    ensureStroke(target);
+                    target.stroke = { ...(target.stroke as Stroke), ...patch };
+                    target.color = rgba01ToCss((target.stroke as Stroke).color);
+                    updateWireDOM(target); redrawCanvasOnly();
+                    selection = { kind: 'wire', id: target.id, segIndex: 0 };
+                  }
+                } else if (swp) {
+                  restrokeSwpSegments(swp, patch);
+                  if (mid) reselectNearestAt(mid); else redraw();
+                } else {
+                  w.stroke = { ...(w.stroke as Stroke), ...patch };
+                  w.color = rgba01ToCss((w.stroke as Stroke).color);
+                  updateWireDOM(w); redrawCanvasOnly();
+                }
+              }
           // Keep the controls and preview in sync without forcing a full rebuild.
           syncWidth(); syncStyle(); syncColor(); syncPreview();
         };
         useNCRow.appendChild(useNCLabel); useNCRow.appendChild(useNC);
         holder.appendChild(useNCRow);
 
-        // Width (mm)
+        // Width (in selected units)
         const widthRow = document.createElement('div'); widthRow.className='row';
-        const wLbl = document.createElement('label'); wLbl.textContent='Width (mm)'; wLbl.style.width='90px';
-        const wIn = document.createElement('input'); wIn.type='number'; wIn.step='0.05';
-        const syncWidth = ()=>{ const eff = effectiveStroke(w, netClassForWire(w), THEME); wIn.value = String(eff.width); wIn.disabled = isUsingNC(); };
+        const wLbl = document.createElement('label'); wLbl.textContent = `Width (${globalUnits})`; wLbl.style.width='90px';
+        const wIn = document.createElement('input'); wIn.type='text'; wIn.step = '0.05';
+        const syncWidth = ()=>{
+          const eff = effectiveStroke(w, netClassForWire(w), THEME);
+          const effNm = Math.round((eff.width || 0) * NM_PER_MM);
+          wIn.value = formatDimForDisplay(effNm);
+          wIn.disabled = isUsingNC();
+        };
+        // Live, non-destructive width updates while typing so the inspector DOM
+        // isn't rebuilt on every keystroke. The final onchange will perform any
+        // SWP-wide restroke and normalization.
+        wIn.oninput = () => {
+          try {
+            const parsed = parseDimInput(wIn.value || '0');
+            if (!parsed) return;
+            const nm = parsed.nm;
+            const valMm = nm / NM_PER_MM;
+            // store both mm and nm for precision; update DOM for immediate feedback
+            ensureStroke(w);
+            (w.stroke as any).widthNm = nm;
+            w.stroke!.width = valMm;
+            w.color = rgba01ToCss(w.stroke!.color);
+            updateWireDOM(w);
+            syncPreview();
+          } catch (err) {
+            // ignore transient parse errors while typing
+          }
+        };
+
         wIn.onchange = () => {
           ensureStroke(w);
-          const val = Math.max(0, parseFloat(wIn.value || '0')); // 0 means “netclass default”
+          const parsed = parseDimInput(wIn.value || '0');
+          const nm = parsed ? parsed.nm : 0;
+          const valMm = nm / NM_PER_MM; // mm for legacy fields
           const mid = (segIndex!=null && w.points[segIndex] && w.points[segIndex+1])
             ? midOfSeg(w.points, segIndex) : null;
-          if (swp) {
-            restrokeSwpSegments(swp, { width: val, type: val>0 ? (w.stroke!.type==='default'?'solid':w.stroke!.type) : 'default' });
+          if (segIndex != null) {
+            const target = isolateWireSegment(w, segIndex);
+            if (target) {
+              ensureStroke(target);
+              (target.stroke as any).widthNm = nm;
+              target.stroke!.width = valMm;
+              if (valMm <= 0) target.stroke!.type = 'default';
+              target.color = rgba01ToCss(target.stroke!.color);
+              updateWireDOM(target); redrawCanvasOnly();
+              selection = { kind: 'wire', id: target.id, segIndex: 0 };
+            }
+          } else if (swp) {
+            restrokeSwpSegments(swp, { width: valMm, type: valMm>0 ? (w.stroke!.type==='default'?'solid':w.stroke!.type) : 'default' });
             if (mid) reselectNearestAt(mid); else redraw();
           } else {
-            w.stroke!.width = val;
-            if (val<=0) w.stroke!.type = 'default'; // mirror KiCad precedence
+            // store both mm (for compatibility) and nm (for internal precision)
+            (w.stroke as any).widthNm = nm;
+            w.stroke!.width = valMm;
+            if (valMm<=0) w.stroke!.type = 'default'; // mirror KiCad precedence
             updateWireDOM(w); redrawCanvasOnly();
           }
+          // Normalize displayed value to chosen units
+          wIn.value = formatDimForDisplay(nm);
         };
         widthRow.appendChild(wLbl); widthRow.appendChild(wIn); holder.appendChild(widthRow);
 
@@ -2404,7 +2613,15 @@ let marquee: {
           const val = (sSel.value || 'solid') as StrokeType;
           const mid = (segIndex!=null && w.points[segIndex] && w.points[segIndex+1])
             ? midOfSeg(w.points, segIndex) : null;
-          if (swp) {
+          if (segIndex != null) {
+            const target = isolateWireSegment(w, segIndex);
+            if (target) {
+              ensureStroke(target);
+              target.stroke!.type = val;
+              updateWireDOM(target); redrawCanvasOnly();
+              selection = { kind: 'wire', id: target.id, segIndex: 0 };
+            }
+          } else if (swp) {
             // Only change the style; do not force width to 0 when 'default' is chosen.
             restrokeSwpSegments(swp, { type: val });            
             if (mid) reselectNearestAt(mid); else redraw();
@@ -2461,7 +2678,17 @@ let marquee: {
           const mid = (segIndex!=null && w.points[segIndex] && w.points[segIndex+1])
             ? midOfSeg(w.points, segIndex) : null;
 
-          if (swp) {
+          if (segIndex != null) {
+            const target = isolateWireSegment(w, segIndex);
+            if (target) {
+              ensureStroke(target);
+              target.stroke = { ...target.stroke!, color: newColor };
+              target.color = rgba01ToCss(target.stroke.color);
+              updateWireDOM(target);
+              redrawCanvasOnly();
+              selection = { kind: 'wire', id: target.id, segIndex: 0 };
+            }
+          } else if (swp) {
             // update only the segments that belong to this SWP
             restrokeSwpSegments(swp, patch);
             if (mid) reselectNearestAt(mid); else redraw();
@@ -2477,8 +2704,33 @@ let marquee: {
           syncWidth(); syncStyle(); syncColor(); syncPreview();
         }
 
-        cIn.onchange = onColorCommit;    // commit on color picker close or change
-        aIn.oninput  = onColorCommit;    // live commit while sliding alpha
+        // Live (non-destructive) updates while the user drags the color/alpha controls.
+        // These update only the selected wire's stroke and DOM so the native color picker
+        // isn't closed by a full inspector re-render mid-drag. The heavier commit that
+        // applies edits across an SWP (restrokeSwpSegments) runs on change/commit.
+        const liveApplyColor = () => {
+          try {
+            const hex = cIn.value || '#ffffff';
+            const m = hex.replace('#','');
+            const r = parseInt(m.slice(0,2),16), g = parseInt(m.slice(2,4),16), b = parseInt(m.slice(4,6),16);
+            const a = Math.max(0, Math.min(1, parseFloat(aIn.value) || 1));
+            const newColor: RGBA01 = { r: r/255, g: g/255, b: b/255, a };
+            // Apply locally to this wire only (no SWP-wide restroke) so we don't replace the inspector DOM.
+            ensureStroke(w);
+            w.stroke = { ...w.stroke!, color: newColor };
+            w.color = rgba01ToCss(w.stroke.color);
+            updateWireDOM(w);
+            syncPreview(); // update the tiny preview line
+          } catch (err) {
+            // Ignore transient parse errors while typing
+          }
+        };
+
+        cIn.oninput = liveApplyColor;
+        aIn.oninput = liveApplyColor;
+        // Finalize (apply across SWP if present) when the picker is closed or change is committed
+        cIn.onchange = onColorCommit;
+        aIn.onchange = onColorCommit;
 
         colorRow.appendChild(cLbl);
         colorRow.appendChild(cIn);
@@ -2807,6 +3059,45 @@ let marquee: {
     return out;
   }
 
+  // Isolate a single segment (by index) from a polyline `w`.
+  // Replaces the original wire with up to three wires: left, mid, right.
+  // Returns the newly-created mid wire (whose points length==2) or the original wire
+  // if no split was necessary. The new wires copy the original stroke/color/netId.
+  function isolateWireSegment(w: Wire, segIndex: number): Wire | null {
+    if (!w) return null;
+    if (!Number.isInteger(segIndex) || segIndex < 0 || segIndex >= (w.points.length - 1)) return null;
+    // If the wire already consists of a single segment, nothing to do.
+    if (w.points.length === 2) return w;
+
+    const leftPts = w.points.slice(0, segIndex + 1);
+    const midPts = w.points.slice(segIndex, segIndex + 2);
+    const rightPts = w.points.slice(segIndex + 1);
+
+    const L = normalizedPolylineOrNull(leftPts);
+    const M = normalizedPolylineOrNull(midPts);
+    const R = normalizedPolylineOrNull(rightPts);
+
+    // Remove the original wire and insert the pieces in its place
+    wires = wires.filter(x => x.id !== w.id);
+    let midWire: Wire | null = null;
+    const pushPiece = (pts: Point[] | null) => {
+      if (!pts) return null;
+      const nw: Wire = { id: uid('wire'), points: pts, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined, netId: (w as any).netId || 'default' } as Wire;
+      wires.push(nw);
+      return nw;
+    };
+
+    // Preserve ordering: left, mid, right
+    if (L) pushPiece(L);
+    if (M) midWire = pushPiece(M);
+    if (R) pushPiece(R);
+
+    // Normalize and rebuild topology so downstream code sees updated indices
+    normalizeAllWires();
+    rebuildTopology();
+    return midWire;
+  }
+
     // === Inline merge: join collinear wires that meet end-to-end (excluding component pins) ===
   function allPinKeys(){
     const s = new Set();
@@ -2865,9 +3156,10 @@ let marquee: {
         if(aLeft && !bLeft){ left=a; right=b; }
         else if(bLeft && !aLeft){ left=b; right=a; }
         else {
-          const minxA = Math.min(...a.w.points.map(p=>p.x));
-          const minxB = Math.min(...b.w.points.map(p=>p.x));
-          left = (minxA <= minxB) ? a : b; right = (left===a) ? b : a;
+          const minxA = Math.min(...a.w.points.map(p => p.x));
+          const minxB = Math.min(...b.w.points.map(p => p.x));
+          left  = (minxA <= minxB) ? a : b;
+          right = (left === a) ? b : a;
         }
       } else { // 'y'
         const aTop = Math.min(a.other.y, ky) < ky;
@@ -2932,11 +3224,15 @@ let marquee: {
       const swpPieces = splitPolylineByKeptSegments(w.points, keepIdxs);
       for(const pts of swpPieces){
         const src = w.stroke!;
+        const nextWidthMm = (patch.width!=null ? patch.width : src.width);
+        const nextWidthNm = (patch.width!=null ? Math.round(patch.width * NM_PER_MM) : ((src as any).widthNm != null ? (src as any).widthNm : Math.round((src.width || 0) * NM_PER_MM)));
         const next: Stroke = {
-          width: (patch.width!=null ? patch.width : src.width),
+          width: nextWidthMm,
           type:  (patch.type !=null ? patch.type  : src.type),
           color: (patch.color!=null ? patch.color : src.color)
         };
+        // preserve precise nm representation where possible
+        (next as any).widthNm = nextWidthNm;
         const css = rgba01ToCss(next.color);
         result.push({ id: uid('wire'), points: pts, color: css, stroke: next, netId: w.netId || 'default' });
       }
@@ -3008,16 +3304,26 @@ let marquee: {
   // Precedence: explicit wire.stroke → netclass → theme.
   // NOTE: width<=0 OR type==='default' means "don’t override lower-precedence value".
   function effectiveStroke(w: Wire, nc: NetClass, th: Theme): Stroke {
+    // Helper to obtain width in mm for a Stroke: prefer widthNm if present.
+    const widthMmOf = (s?: Stroke | null): number => {
+      if (!s) return 0;
+      // @ts-ignore allow optional widthNm property
+      if (s && (s as any).widthNm != null) return (s as any).widthNm / NM_PER_MM;
+      return s.width || 0;
+    };
+
     const from = (base: Stroke, over?: Stroke): Stroke => {
       if (!over) return base;
+      const baseW = widthMmOf(base);
+      const overW = widthMmOf(over);
       return {
-        width: (over.width && over.width > 0) ? over.width : base.width,
-        type: (over.type && over.type !== 'default') ? over.type : base.type,
+        width: (overW && overW > 0) ? overW : baseW,
+        type: (over && over.type && over.type !== 'default') ? over.type : base.type,
         // New rule: if the wire is set to *full* netclass defaults (width<=0 AND type='default'),
         // use the base (netclass/theme) color; otherwise keep the wire's explicit color even if
         // the style is 'default' so only the pattern is inherited.
-        color: ((over.width ?? 0) <= 0 && (!over.type || over.type === 'default'))
-              ? base.color : (over.color || base.color)
+        color: ((overW ?? 0) <= 0 && (!over || !over.type || over.type === 'default'))
+              ? base.color : ((over && over.color) || base.color)
       };
     };
     const sWire = w.stroke;
@@ -3035,11 +3341,15 @@ let marquee: {
 
     // Clone the configured explicit stroke so we don't accidentally share references.
     const st = WIRE_DEFAULTS.stroke;
-    return {
+    const out: Stroke = {
       width: st.width,
       type: st.type,
       color: { r: st.color.r, g: st.color.g, b: st.color.b, a: st.color.a }
     };
+    // preserve nm precision when available
+    if ((st as any).widthNm != null) (out as any).widthNm = (st as any).widthNm;
+    else if (typeof st.width === 'number') (out as any).widthNm = Math.round((st.width || 0) * NM_PER_MM);
+    return out;
   }
 
   // Ensure a wire has a stroke object (mapping legacy color→stroke.color, width=0, type='default')
@@ -3058,16 +3368,23 @@ let marquee: {
   };
 
   // Adapter: current internal wire -> KiCad-style KWire (keeps geometry; maps color only)
-  function toKicadWire(w: { id: string; points: Point[]; color?: string }, strokeBase: Stroke = DEFAULT_KICAD_STROKE): KWire {
+  // Adapter: current internal wire -> KiCad-style KWire (keeps geometry; maps color only)
+  function toKicadWire(
+    w: { id: string; points: Point[]; color?: string },
+    strokeBase: Stroke = DEFAULT_KICAD_STROKE
+  ): KWire {
     const col = w.color || defaultWireColor;
     return {
       id: w.id,
       points: w.points.map(p => ({ x: p.x, y: p.y })),    // shallow copy
-      stroke: { ...strokeBase, color: cssToRGBA01(col) },
-      netId: null
+      stroke: {
+        ...strokeBase,
+        color: cssToRGBA01(col),
+      },
+      netId: null,
     };
   }
-
+  
   // Batch adapter (not used yet; future export step can call this)
   function collectKicadWires(): KWire[] {
     return wires.map(w => toKicadWire(w));
@@ -3125,6 +3442,10 @@ let marquee: {
       }
       // keep legacy color in sync so SWP heuristics & old flows remain stable
       if (!w.color) w.color = rgba01ToCss(w.stroke.color);
+      // Preserve an internal nanometer resolution where possible
+      if ((w.stroke as any).widthNm == null && typeof w.stroke.width === 'number') {
+        (w.stroke as any).widthNm = Math.round((w.stroke.width || 0) * NM_PER_MM);
+      }
       if (!w.netId) w.netId = 'default';
     });
 
@@ -3348,19 +3669,37 @@ function swpForWireSegment(wireId: string, segIndex: number): SWP | null {
     // then add one straight polyline for the collapsed SWP.
     const originalWires = JSON.parse(JSON.stringify(wires));
     const rebuilt = [];
+  // Collect original segment strokes for the SWP so we can reassign them after move
+  const originalSegments: Array<{ wireId?: string; index?: number; lo: number; hi: number; mid: number; stroke?: Stroke }>=[];
+  // Also capture a snapshot of the full wires that contributed to this SWP so we can
+  // find the closest original physical segment by distance at restore time.
+  const origWireSnapshot: Array<{ id: string; points: Point[]; stroke?: Stroke }> = [];
     for(const w of originalWires){
       const idxs = (swp.edgeIndicesByWire && swp.edgeIndicesByWire[w.id]) || null;
       if(!idxs || idxs.length===0){
-        rebuilt.push(w); // untouched wire
+        rebuilt.push(w); // untouched wire (preserve full object including stroke)
       }else{
         const pieces = splitPolylineByRemovedSegments(w.points, new Set(idxs));
         for(const pts of pieces){
-          rebuilt.push({ id: uid('wire'), points: pts, color: w.color || defaultWireColor });
+          rebuilt.push({ id: uid('wire'), points: pts, color: w.color || defaultWireColor, stroke: w.stroke, netId: w.netId || 'default' });
         }
+        // Record strokes for the raw contributing segments
+        for(const i of idxs){
+          const p0 = w.points[i]; const p1 = w.points[i+1];
+          if (!p0 || !p1) continue;
+          const lo = (swp.axis === 'x') ? Math.min(p0.x, p1.x) : Math.min(p0.y, p1.y);
+          const hi = (swp.axis === 'x') ? Math.max(p0.x, p1.x) : Math.max(p0.y, p1.y);
+          const mid = (lo + hi) / 2;
+          originalSegments.push({ wireId: w.id, index: i, lo, hi, mid, stroke: w.stroke } as any);
+        }
+        // add a snapshot of this original wire (shallow copy)
+        origWireSnapshot.push({ id: w.id, points: w.points.map(p=>({x:p.x,y:p.y})), stroke: w.stroke });
       }
     }
+  // sort original segments along axis (by midpoint)
+  originalSegments.sort((a,b)=> a.mid - b.mid);
     const p0 = swp.start, p1 = swp.end;
-    const collapsed = { id: uid('wire'), points:[{x:p0.x,y:p0.y},{x:p1.x,y:p1.y}], color: swp.color };
+  const collapsed = { id: uid('wire'), points:[{x:p0.x,y:p0.y},{x:p1.x,y:p1.y}], color: swp.color };
     wires = rebuilt.concat([collapsed]);
 
     // Compute allowed span for c (no overlap with other components in this SWP)
@@ -3388,8 +3727,11 @@ function swpForWireSegment(wireId: string, segIndex: number): SWP | null {
       minCenter: leftBound, maxCenter: rightBound,
       ends:{ lo:endLo, hi:endHi }, color: swp.color,
       collapsedId: collapsed.id,
-      lastCenter: t0
-    };
+      lastCenter: t0,
+      // attached metadata: original SWP contributing segments (lo/hi in axis coords + stroke)
+      originalSegments,
+      origWireSnapshot
+    } as any;
     lastMoveCompId = c.id;
     return moveCollapseCtx;
   }
@@ -3428,7 +3770,52 @@ function swpForWireSegment(wireId: string, segIndex: number): SWP | null {
       const a = (axis==='x') ? {x:cursor, y:mc.fixed} : {x:mc.fixed, y:cursor};
       const b = (axis==='x') ? {x:sp.lo,  y:mc.fixed} : {x:mc.fixed, y:sp.lo};
       if( (axis==='x' ? a.x < b.x : a.y < b.y) ){
-        newSegs.push({ id: uid('wire'), points:[a,b], color: mc.color });
+        // choose stroke for this segment by finding the closest original physical segment
+        // using the origWireSnapshot (distance to segment) and fall back to overlap matching
+        const segMidPt = { x: (a.x + b.x)/2, y: (a.y + b.y)/2 };
+        let chosenStroke: Stroke | undefined = undefined;
+        if ((mc as any).origWireSnapshot && (mc as any).origWireSnapshot.length){
+          let bestD = Infinity;
+          for(const ow of (mc as any).origWireSnapshot){
+            const pts = ow.points || [];
+            for(let i=0;i<pts.length-1;i++){
+              const d = pointToSegmentDistance(segMidPt, pts[i], pts[i+1]);
+              if (d < bestD){ bestD = d; chosenStroke = ow.stroke; }
+            }
+          }
+          // If closest distance is too large, attempt overlap-based match as fallback
+          if (bestD > 12 && (mc as any).originalSegments && (mc as any).originalSegments.length){
+            let bestOverlap = 0;
+            const segStart = axis==='x' ? a.x : a.y;
+            const segEnd = axis==='x' ? b.x : b.y;
+            const segLo = Math.min(segStart, segEnd), segHi = Math.max(segStart, segEnd);
+            for(const os of (mc as any).originalSegments){
+              const ov = Math.max(0, Math.min(segHi, os.hi) - Math.max(segLo, os.lo));
+              if (ov > bestOverlap){ bestOverlap = ov; chosenStroke = os.stroke; }
+            }
+            // if still none, choose nearest by midpoint
+            if(!chosenStroke){
+              const segMid = (segStart + segEnd) / 2;
+              let bestDist = Infinity;
+              for(const os of (mc as any).originalSegments){
+                const osMid = (os.lo + os.hi) / 2;
+                const d = Math.abs(segMid - osMid);
+                if (d < bestDist){ bestDist = d; chosenStroke = os.stroke; }
+              }
+            }
+          }
+        } else if ((mc as any).originalSegments && (mc as any).originalSegments.length){
+          // fallback if no snapshot present
+          let bestOverlap = 0;
+          const segStart = axis==='x' ? a.x : a.y;
+          const segEnd = axis==='x' ? b.x : b.y;
+          const segLo = Math.min(segStart, segEnd), segHi = Math.max(segStart, segEnd);
+          for(const os of (mc as any).originalSegments){
+            const ov = Math.max(0, Math.min(segHi, os.hi) - Math.max(segLo, os.lo));
+            if (ov > bestOverlap){ bestOverlap = ov; chosenStroke = os.stroke; }
+          }
+        }
+        newSegs.push({ id: uid('wire'), points:[a,b], color: chosenStroke ? rgba01ToCss(chosenStroke.color) : mc.color, stroke: chosenStroke });
       }
       cursor = sp.hi;
     }
@@ -3436,11 +3823,69 @@ function swpForWireSegment(wireId: string, segIndex: number): SWP | null {
     const tailA = (axis==='x') ? {x:cursor, y:mc.fixed} : {x:mc.fixed, y:cursor};
     const tailB = (axis==='x') ? {x:hi,     y:mc.fixed} : {x:mc.fixed, y:hi};
     if( (axis==='x' ? tailA.x < tailB.x : tailA.y < tailB.y) ){
-      newSegs.push({ id: uid('wire'), points:[tailA, tailB], color: mc.color });
+      const segMidPt = { x: (tailA.x + tailB.x)/2, y: (tailA.y + tailB.y)/2 };
+      let chosenStroke: Stroke | undefined = undefined;
+      if ((mc as any).origWireSnapshot && (mc as any).origWireSnapshot.length){
+        let bestD = Infinity;
+        for(const ow of (mc as any).origWireSnapshot){
+          const pts = ow.points || [];
+          for(let i=0;i<pts.length-1;i++){
+            const d = pointToSegmentDistance(segMidPt, pts[i], pts[i+1]);
+            if (d < bestD){ bestD = d; chosenStroke = ow.stroke; }
+          }
+        }
+        if (bestD > 12 && (mc as any).originalSegments && (mc as any).originalSegments.length){
+          let bestOverlap = 0;
+          const segStart = axis==='x' ? tailA.x : tailA.y;
+          const segEnd = axis==='x' ? tailB.x : tailB.y;
+          const segLo = Math.min(segStart, segEnd), segHi = Math.max(segStart, segEnd);
+          for(const os of (mc as any).originalSegments){
+            const ov = Math.max(0, Math.min(segHi, os.hi) - Math.max(segLo, os.lo));
+            if (ov > bestOverlap){ bestOverlap = ov; chosenStroke = os.stroke; }
+          }
+          if(!chosenStroke){
+            const segMid = (segStart + segEnd) / 2;
+            let bestDist = Infinity;
+            for(const os of (mc as any).originalSegments){
+              const osMid = (os.lo + os.hi) / 2;
+              const d = Math.abs(segMid - osMid);
+              if (d < bestDist){ bestDist = d; chosenStroke = os.stroke; }
+            }
+          }
+        }
+      } else if ((mc as any).originalSegments && (mc as any).originalSegments.length){
+        let bestOverlap = 0;
+        const segStart = axis==='x' ? tailA.x : tailA.y;
+        const segEnd = axis==='x' ? tailB.x : tailB.y;
+        const segLo = Math.min(segStart, segEnd), segHi = Math.max(segStart, segEnd);
+        for(const os of (mc as any).originalSegments){
+          const ov = Math.max(0, Math.min(segHi, os.hi) - Math.max(segLo, os.lo));
+          if (ov > bestOverlap){ bestOverlap = ov; chosenStroke = os.stroke; }
+        }
+      }
+      newSegs.push({ id: uid('wire'), points:[tailA, tailB], color: chosenStroke ? rgba01ToCss(chosenStroke.color) : mc.color, stroke: chosenStroke });
     }
 
     // Restore: remove only the collapsed straight run; add the reconstructed SWP segments beside all other wires
     const untouched = wires.filter(w=> w.id!==mc.collapsedId);
+    // Map original segments -> reconstructed segments by order along the axis when possible
+    try {
+      const orig = ((mc as any).originalSegments || []).slice().sort((a,b)=> a.mid - b.mid);
+      const mapped = newSegs.map((s, idx) => ({ idx, mid: (axis==='x' ? (s.points[0].x + s.points[1].x)/2 : (s.points[0].y + s.points[1].y)/2), seg: s }));
+      mapped.sort((a,b)=> a.mid - b.mid);
+      const n = Math.min(orig.length, mapped.length);
+      for(let i=0;i<n;i++){
+        const os = orig[i];
+        const tar = mapped[i].seg;
+        if(os && os.stroke){
+          tar.stroke = os.stroke;
+          tar.color = rgba01ToCss(os.stroke.color);
+        }
+      }
+      // any remaining unmapped segments keep mc.color (already set)
+    } catch (err) {
+      // fall back to default behavior if matching fails
+    }
     wires = untouched.concat(newSegs);
     moveCollapseCtx = null;
     lastMoveCompId = null;    
