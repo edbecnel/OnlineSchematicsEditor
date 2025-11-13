@@ -2089,18 +2089,43 @@
             syncAllFieldsToEffective();
             refreshPreview();
         };
+        // Allow temporary empty/invalid text while typing without snapping back to netclass.
         inpW.oninput = () => {
+            const raw = (inpW.value || '').trim();
+            // While user is clearing/typing (e.g. "", "-", ".", "-."), don't flip the checkbox.
+            if (raw === '' || raw === '-' || raw === '.' || raw === '-.')
+                return;
+            const n = parseFloat(raw);
+            if (!isFinite(n) || n < 0)
+                return;
+            WIRE_DEFAULTS.stroke.width = n;
+            // If a positive width is typed, treat it as explicit/custom immediately
+            // so other controls stay enabled during editing.
+            if (n > 0 && WIRE_DEFAULTS.useNetclass) {
+                WIRE_DEFAULTS.useNetclass = false;
+                if (WIRE_DEFAULTS.stroke.type === 'default') {
+                    WIRE_DEFAULTS.stroke.type = 'solid';
+                    selS.value = 'solid';
+                }
+                chkUse.checked = false;
+                setEnabledStates();
+            }
+            mirrorDefaultsIntoLegacyColorMode();
+            saveWireDefaults();
+            syncWireToolbar();
+            refreshPreview();
+        };
+        // Commit on blur/Enter: only here do we snap 0 → "Use netclass defaults".
+        inpW.onchange = () => {
             const n = parseFloat(inpW.value);
             const val = isFinite(n) && n >= 0 ? n : 0;
             WIRE_DEFAULTS.stroke.width = val;
             if (val <= 0) {
-                // Zero width = defer to netclass
                 WIRE_DEFAULTS.useNetclass = true;
                 WIRE_DEFAULTS.stroke.type = 'default';
                 selS.value = 'default';
             }
             else {
-                // Nonzero width = explicit/custom stroke
                 WIRE_DEFAULTS.useNetclass = false;
                 if (WIRE_DEFAULTS.stroke.type === 'default') {
                     WIRE_DEFAULTS.stroke.type = 'solid';
