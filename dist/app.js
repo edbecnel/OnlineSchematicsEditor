@@ -67,7 +67,8 @@
     const overlayMode = $q('#modeLabel');
     let mode = 'select';
     let placeType = null;
-    // selection optionally includes segIndex for wire-segment selection
+    // Selection object: prefer `wire.id` for segment selections. `segIndex` is
+    // deprecated and retained only for backwards compatibility (use `null`).
     let selection = { kind: null, id: null, segIndex: null };
     let drawing = { active: false, points: [], cursor: null };
     // Marquee selection (click+drag rectangle) state
@@ -247,12 +248,11 @@
             }
             if (selection.kind === 'wire') {
                 const w = wires.find(x => x.id === selection.id);
-                if (w && Number.isInteger(selection.segIndex)) {
-                    removeWireSegment(w, selection.segIndex);
-                }
-                else if (w) {
+                if (w) {
                     wires = wires.filter(x => x.id !== w.id);
                     selection = { kind: null, id: null, segIndex: null };
+                    normalizeAllWires();
+                    unifyInlineWires();
                     redraw();
                 }
                 return;
@@ -710,18 +710,17 @@
                     removeWireAtPoint(w, svgPoint(e));
                 }
                 else if (mode === 'select' || mode === 'move') {
-                    const idx = nearestSegmentIndex(w.points, svgPoint(e));
-                    selecting('wire', w.id, idx);
+                    // Select by wire (segment) id only; legacy segIndex is no longer required.
+                    selecting('wire', w.id, null);
                 }
                 e.stopPropagation();
             });
             g.appendChild(hit);
             g.appendChild(vis);
-            // persistent selection highlight for a specific wire segment
-            if (selection.kind === 'wire' && selection.id === w.id && Number.isInteger(selection.segIndex)) {
-                const i = selection.segIndex;
-                if (i >= 0 && i < w.points.length - 1) {
-                    const a = w.points[i], b = w.points[i + 1];
+            // persistent selection highlight for the selected wire segment
+            if (selection.kind === 'wire' && selection.id === w.id) {
+                if (w.points.length >= 2) {
+                    const a = w.points[0], b = w.points[w.points.length - 1];
                     const selSeg = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                     setAttr(selSeg, 'x1', a.x);
                     setAttr(selSeg, 'y1', a.y);
@@ -776,7 +775,9 @@
                 ensureFinishSwpMove();
             }
         }
-        selection = { kind, id, segIndex };
+        // Normalize segIndex: legacy callers may pass undefined; prefer null for clarity.
+        const si = Number.isInteger(segIndex) ? segIndex : null;
+        selection = { kind, id, segIndex: si };
         // If we're in Move mode and a component is now selected, collapse its SWP immediately.
         if (mode === 'move' && kind === 'component') {
             ensureCollapseForSelection();
@@ -800,7 +801,12 @@
                 // prefer left-side stroke; fall back to right-side stroke; else fall back to legacy color
                 const inheritedStroke = wA.stroke ? { ...wA.stroke } : (wB.stroke ? { ...wB.stroke } : undefined);
                 const colorCss = inheritedStroke ? rgba01ToCss(inheritedStroke.color) : (wA.color || wB.color || defaultWireColor);
-                wires.push({ id: uid('wire'), points: merged, color: colorCss, stroke: inheritedStroke });
+                // Push as per-segment wires rather than a single polyline
+                for (let i = 0; i < merged.length - 1; i++) {
+                    const segPts = [merged[i], merged[i + 1]];
+                    const segStroke = inheritedStroke ? { ...inheritedStroke, color: { ...inheritedStroke.color } } : undefined;
+                    wires.push({ id: uid('wire'), points: segPts, color: segStroke ? rgba01ToCss(segStroke.color) : colorCss, stroke: segStroke });
+                }
             }
         }
     }
@@ -827,7 +833,18 @@
         redraw();
     }
     function removeWireAtPoint(w, p) {
-        // Delete ONLY the clicked segment; split at nearest segment index.
+        // For per-segment wires, deleting the clicked segment removes the whole wire object.
+        if (!w)
+            return;
+        if (w.points.length === 2) {
+            wires = wires.filter(x => x.id !== w.id);
+            selection = { kind: null, id: null, segIndex: null };
+            normalizeAllWires();
+            unifyInlineWires();
+            redraw();
+            return;
+        }
+        // Fallback for multi-point polylines: delete only the clicked sub-segment.
         const idx = nearestSegmentIndex(w.points, p);
         if (idx < 0 || idx >= w.points.length - 1)
             return;
@@ -1045,7 +1062,7 @@
             if (segs.length) {
                 segs.sort((u, v) => u.d2 - v.d2);
                 const pick = segs[0];
-                selection = { kind: 'wire', id: pick.w.id, segIndex: pick.idx };
+                selection = { kind: 'wire', id: pick.w.id, segIndex: null };
                 redraw();
                 return true;
             }
@@ -1054,7 +1071,7 @@
             if (segs.length) {
                 segs.sort((u, v) => u.d2 - v.d2);
                 const pick = segs[0];
-                selection = { kind: 'wire', id: pick.w.id, segIndex: pick.idx };
+                selection = { kind: 'wire', id: pick.w.id, segIndex: null };
                 redraw();
                 return true;
             }
@@ -1508,13 +1525,13 @@
                 removeComponent(selection.id);
             }
             if (selection.kind === 'wire') {
+                // Per-segment model: each segment is its own Wire object. Delete the selected segment wire.
                 const w = wires.find(x => x.id === selection.id);
-                if (w && Number.isInteger(selection.segIndex)) {
-                    removeWireSegment(w, selection.segIndex);
-                }
-                else {
-                    wires = wires.filter(x => x.id !== selection.id);
+                if (w) {
+                    wires = wires.filter(x => x.id !== w.id);
                     selection = { kind: null, id: null, segIndex: null };
+                    normalizeAllWires();
+                    unifyInlineWires();
                     redraw();
                 }
             }
@@ -1667,7 +1684,13 @@
             }
             // Keep legacy color alongside stroke for back-compat & SWP heuristics
             const css = rgba01ToCss(stroke.color);
-            wires.push({ id: uid('wire'), points: subPts, color: css, stroke, netId: 'default' });
+            // Emit as per-segment wires: one 2-point Wire per adjacent pair
+            for (let i = 0; i < subPts.length - 1; i++) {
+                const segmentPts = [subPts[i], subPts[i + 1]];
+                // clone stroke so each segment can be edited independently
+                const segStroke = stroke ? { ...stroke, color: { ...stroke.color } } : undefined;
+                wires.push({ id: uid('wire'), points: segmentPts, color: rgba01ToCss(segStroke ? segStroke.color : cssToRGBA01(curCol)), stroke: segStroke, netId: 'default' });
+            }
         }
     }
     function finishWire() {
@@ -2549,15 +2572,23 @@
             if (!w)
                 return;
             const wrap = document.createElement('div');
-            // Determine the “Wire” (SWP) that the clicked segment belongs to
-            const segIndex = Number.isInteger(selection.segIndex) ? selection.segIndex : null;
-            const swp = (segIndex != null) ? swpForWireSegment(w.id, segIndex) : null;
+            // Legacy selection.segIndex is deprecated. Treat the selected `wire` as the
+            // segment itself (per-segment `Wire` objects). Find the SWP by wire id.
+            const swp = swpForWireSegment(w.id, 0);
             // ---- Wire ID (read-only) ----
             // Prefer the SWP id (e.g. "swp3"). Fallback to the underlying polyline id if no SWP detected.
-            wrap.appendChild(rowPair('Wire ID', text((swp ? swp.id : w.id), true)));
+            wrap.appendChild(rowPair('Segment ID', text(w.id, true)));
+            if (swp)
+                wrap.appendChild(rowPair('SWP', text(swp.id, true)));
             // ---- Wire Endpoints (read-only) ----
-            // If we have an SWP, show its canonical endpoints. Else fallback to the polyline endpoints.
-            if (swp) {
+            // If a specific segment is selected, show that segment's endpoints.
+            // Otherwise, prefer the SWP canonical endpoints; fallback to the polyline endpoints.
+            if (w && w.points && w.points.length >= 2) {
+                const A = w.points[0], B = w.points[w.points.length - 1];
+                wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(A.x))}, ${formatDimForDisplay(pxToNm(A.y))}`, true)));
+                wrap.appendChild(rowPair('Wire End', text(`${formatDimForDisplay(pxToNm(B.x))}, ${formatDimForDisplay(pxToNm(B.y))}`, true)));
+            }
+            else if (swp) {
                 wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(swp.start.x))}, ${formatDimForDisplay(pxToNm(swp.start.y))}`, true)));
                 wrap.appendChild(rowPair('Wire End', text(`${formatDimForDisplay(pxToNm(swp.end.x))}, ${formatDimForDisplay(pxToNm(swp.end.y))}`, true)));
             }
@@ -2582,23 +2613,20 @@
                 useNC.checked = isUsingNC();
                 useNC.onchange = () => {
                     ensureStroke(w);
-                    const mid = (segIndex != null && w.points[segIndex] && w.points[segIndex + 1])
-                        ? midOfSeg(w.points, segIndex) : null;
+                    // Selected wire is the target segment itself (per-segment wires).
+                    const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
                     if (useNC.checked) {
                         // Delegate styling to netclass/theme
                         const patch = { width: 0, type: 'default' };
                         // If a specific segment is selected, isolate it and apply only to that segment
-                        if (segIndex != null) {
-                            const target = isolateWireSegment(w, segIndex);
-                            if (target) {
-                                ensureStroke(target);
-                                target.stroke = { ...target.stroke, ...patch };
-                                target.color = rgba01ToCss(target.stroke.color);
-                                updateWireDOM(target);
-                                redrawCanvasOnly();
-                                // select the isolated segment (it will be the only segment in that wire)
-                                selection = { kind: 'wire', id: target.id, segIndex: 0 };
-                            }
+                        // The selected `wire` represents the segment; operate on it directly.
+                        if (w.points && w.points.length === 2) {
+                            ensureStroke(w);
+                            w.stroke = { ...w.stroke, ...patch };
+                            w.color = rgba01ToCss(w.stroke.color);
+                            updateWireDOM(w);
+                            redrawCanvasOnly();
+                            selection = { kind: 'wire', id: w.id, segIndex: null };
                         }
                         else if (swp) {
                             restrokeSwpSegments(swp, patch);
@@ -2621,16 +2649,13 @@
                             type: (eff.type === 'default' ? 'solid' : eff.type) || 'solid',
                             color: eff.color
                         };
-                        if (segIndex != null) {
-                            const target = isolateWireSegment(w, segIndex);
-                            if (target) {
-                                ensureStroke(target);
-                                target.stroke = { ...target.stroke, ...patch };
-                                target.color = rgba01ToCss(target.stroke.color);
-                                updateWireDOM(target);
-                                redrawCanvasOnly();
-                                selection = { kind: 'wire', id: target.id, segIndex: 0 };
-                            }
+                        if (w.points && w.points.length === 2) {
+                            ensureStroke(w);
+                            w.stroke = { ...w.stroke, ...patch };
+                            w.color = rgba01ToCss(w.stroke.color);
+                            updateWireDOM(w);
+                            redrawCanvasOnly();
+                            selection = { kind: 'wire', id: w.id, segIndex: null };
                         }
                         else if (swp) {
                             restrokeSwpSegments(swp, patch);
@@ -2697,21 +2722,17 @@
                     const parsed = parseDimInput(wIn.value || '0');
                     const nm = parsed ? parsed.nm : 0;
                     const valMm = nm / NM_PER_MM; // mm for legacy fields
-                    const mid = (segIndex != null && w.points[segIndex] && w.points[segIndex + 1])
-                        ? midOfSeg(w.points, segIndex) : null;
-                    if (segIndex != null) {
-                        const target = isolateWireSegment(w, segIndex);
-                        if (target) {
-                            ensureStroke(target);
-                            target.stroke.widthNm = nm;
-                            target.stroke.width = valMm;
-                            if (valMm <= 0)
-                                target.stroke.type = 'default';
-                            target.color = rgba01ToCss(target.stroke.color);
-                            updateWireDOM(target);
-                            redrawCanvasOnly();
-                            selection = { kind: 'wire', id: target.id, segIndex: 0 };
-                        }
+                    const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
+                    // Selected wire is the segment itself: apply directly to `w`.
+                    if (w.points && w.points.length === 2) {
+                        w.stroke.widthNm = nm;
+                        w.stroke.width = valMm;
+                        if (valMm <= 0)
+                            w.stroke.type = 'default';
+                        w.color = rgba01ToCss(w.stroke.color);
+                        updateWireDOM(w);
+                        redrawCanvasOnly();
+                        selection = { kind: 'wire', id: w.id, segIndex: null };
                     }
                     else if (swp) {
                         restrokeSwpSegments(swp, { width: valMm, type: valMm > 0 ? (w.stroke.type === 'default' ? 'solid' : w.stroke.type) : 'default' });
@@ -2721,7 +2742,6 @@
                             redraw();
                     }
                     else {
-                        // store both mm (for compatibility) and nm (for internal precision)
                         w.stroke.widthNm = nm;
                         w.stroke.width = valMm;
                         if (valMm <= 0)
@@ -2752,17 +2772,13 @@
                 sSel.onchange = () => {
                     ensureStroke(w);
                     const val = (sSel.value || 'solid');
-                    const mid = (segIndex != null && w.points[segIndex] && w.points[segIndex + 1])
-                        ? midOfSeg(w.points, segIndex) : null;
-                    if (segIndex != null) {
-                        const target = isolateWireSegment(w, segIndex);
-                        if (target) {
-                            ensureStroke(target);
-                            target.stroke.type = val;
-                            updateWireDOM(target);
-                            redrawCanvasOnly();
-                            selection = { kind: 'wire', id: target.id, segIndex: 0 };
-                        }
+                    const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
+                    if (w.points && w.points.length === 2) {
+                        ensureStroke(w);
+                        w.stroke.type = val;
+                        updateWireDOM(w);
+                        redrawCanvasOnly();
+                        selection = { kind: 'wire', id: w.id, segIndex: null };
                     }
                     else if (swp) {
                         // Only change the style; do not force width to 0 when 'default' is chosen.
@@ -2818,18 +2834,14 @@
                     const a = Math.max(0, Math.min(1, parseFloat(aIn.value) || 1));
                     const newColor = { r: r / 255, g: g / 255, b: b / 255, a };
                     const patch = { color: newColor };
-                    const mid = (segIndex != null && w.points[segIndex] && w.points[segIndex + 1])
-                        ? midOfSeg(w.points, segIndex) : null;
-                    if (segIndex != null) {
-                        const target = isolateWireSegment(w, segIndex);
-                        if (target) {
-                            ensureStroke(target);
-                            target.stroke = { ...target.stroke, color: newColor };
-                            target.color = rgba01ToCss(target.stroke.color);
-                            updateWireDOM(target);
-                            redrawCanvasOnly();
-                            selection = { kind: 'wire', id: target.id, segIndex: 0 };
-                        }
+                    const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
+                    if (w.points && w.points.length === 2) {
+                        ensureStroke(w);
+                        w.stroke = { ...w.stroke, color: newColor };
+                        w.color = rgba01ToCss(w.stroke.color);
+                        updateWireDOM(w);
+                        redrawCanvasOnly();
+                        selection = { kind: 'wire', id: w.id, segIndex: null };
                     }
                     else if (swp) {
                         // update only the segments that belong to this SWP
@@ -3197,19 +3209,26 @@
         return c;
     }
     function normalizeAllWires() {
-        wires = wires.reduce((acc, w) => {
+        // Convert each wire polyline into one or more 2-point segment wires.
+        // This gives each straight segment its own persistent `id` and stroke.
+        const next = [];
+        for (const w of wires) {
             const c = normalizedPolylineOrNull(w.points);
-            if (c) {
-                acc.push({
-                    id: w.id,
-                    points: c,
-                    color: w.color || defaultWireColor,
-                    stroke: w.stroke, // preserve KiCad stroke
-                    netId: w.netId || 'default' // preserve net id if present
-                });
+            if (!c)
+                continue;
+            if (c.length === 2) {
+                // Already a single segment — preserve id to keep stability where possible
+                next.push({ id: w.id, points: c, color: w.color || defaultWireColor, stroke: w.stroke, netId: w.netId || 'default' });
             }
-            return acc;
-        }, []);
+            else {
+                // Break into per-segment wires. Each segment gets a fresh id.
+                for (let i = 0; i < c.length - 1; i++) {
+                    const pts = [c[i], c[i + 1]];
+                    next.push({ id: uid('wire'), points: pts, color: w.color || defaultWireColor, stroke: w.stroke ? { ...w.stroke } : undefined, netId: w.netId || 'default' });
+                }
+            }
+        }
+        wires = next;
     }
     // Split a polyline by removing segments whose 0-based indices are in removeIdxSet.
     // Returns an array of point arrays (each ≥ 2 points after normalization).
@@ -3438,34 +3457,27 @@
         if (!swp)
             return;
         const result = [];
+        // With per-segment wires, a SWP lists contributing wire IDs in `edgeWireIds`.
+        // Apply the patch to any wire whose id is included in that list; leave others untouched.
+        const swpSet = new Set((swp.edgeWireIds || []).filter(Boolean));
         for (const w of wires) {
             ensureStroke(w);
-            const keepIdxs = new Set((swp.edgeIndicesByWire && swp.edgeIndicesByWire[w.id]) || []);
-            if (keepIdxs.size === 0) {
-                result.push(w); // untouched whole wire
+            if (!swpSet.has(w.id)) {
+                result.push(w);
                 continue;
             }
-            // Not-in-SWP pieces
-            const otherPieces = splitPolylineByRemovedSegments(w.points, keepIdxs);
-            for (const pts of otherPieces) {
-                result.push({ id: uid('wire'), points: pts, color: w.color || defaultWireColor, stroke: w.stroke, netId: w.netId || 'default' });
-            }
-            // In-SWP pieces → apply stroke patch
-            const swpPieces = splitPolylineByKeptSegments(w.points, keepIdxs);
-            for (const pts of swpPieces) {
-                const src = w.stroke;
-                const nextWidthMm = (patch.width != null ? patch.width : src.width);
-                const nextWidthNm = (patch.width != null ? Math.round(patch.width * NM_PER_MM) : (src.widthNm != null ? src.widthNm : Math.round((src.width || 0) * NM_PER_MM)));
-                const next = {
-                    width: nextWidthMm,
-                    type: (patch.type != null ? patch.type : src.type),
-                    color: (patch.color != null ? patch.color : src.color)
-                };
-                // preserve precise nm representation where possible
-                next.widthNm = nextWidthNm;
-                const css = rgba01ToCss(next.color);
-                result.push({ id: uid('wire'), points: pts, color: css, stroke: next, netId: w.netId || 'default' });
-            }
+            // This wire is part of the SWP: apply the patch to the whole two-point segment.
+            const src = w.stroke;
+            const nextWidthMm = (patch.width != null ? patch.width : src.width);
+            const nextWidthNm = (patch.width != null ? Math.round(patch.width * NM_PER_MM) : (src.widthNm != null ? src.widthNm : Math.round((src.width || 0) * NM_PER_MM)));
+            const next = {
+                width: nextWidthMm,
+                type: (patch.type != null ? patch.type : src.type),
+                color: (patch.color != null ? patch.color : src.color)
+            };
+            next.widthNm = nextWidthNm;
+            const css = rgba01ToCss(next.color);
+            result.push({ id: w.id, points: w.points.slice(), color: css, stroke: next, netId: w.netId || 'default' });
         }
         wires = result;
         normalizeAllWires();
@@ -3891,8 +3903,7 @@
     // Return the SWP that contains wire segment (wireId, segIndex), or null
     function swpForWireSegment(wireId, segIndex) {
         for (const s of topology.swps) {
-            const arr = s.edgeIndicesByWire && s.edgeIndicesByWire[wireId];
-            if (arr && arr.includes(segIndex))
+            if (s.edgeWireIds && s.edgeWireIds.includes(wireId))
                 return s;
         }
         return null;
@@ -3935,29 +3946,24 @@
         // Also capture a snapshot of the full wires that contributed to this SWP so we can
         // find the closest original physical segment by distance at restore time.
         const origWireSnapshot = [];
+        // With per-segment wires, originalWires already contains 2-point wires.
         for (const w of originalWires) {
-            const idxs = (swp.edgeIndicesByWire && swp.edgeIndicesByWire[w.id]) || null;
-            if (!idxs || idxs.length === 0) {
-                rebuilt.push(w); // untouched wire (preserve full object including stroke)
-            }
-            else {
-                const pieces = splitPolylineByRemovedSegments(w.points, new Set(idxs));
-                for (const pts of pieces) {
-                    rebuilt.push({ id: uid('wire'), points: pts, color: w.color || defaultWireColor, stroke: w.stroke, netId: w.netId || 'default' });
-                }
-                // Record strokes for the raw contributing segments
-                for (const i of idxs) {
-                    const p0 = w.points[i];
-                    const p1 = w.points[i + 1];
-                    if (!p0 || !p1)
-                        continue;
+            if (swp.edgeWireIds && swp.edgeWireIds.includes(w.id)) {
+                // This segment is part of the SWP: remove it from the collapsed set and
+                // record its axis-aligned extent + stroke for later remapping.
+                const p0 = w.points[0];
+                const p1 = w.points[1];
+                if (p0 && p1) {
                     const lo = (swp.axis === 'x') ? Math.min(p0.x, p1.x) : Math.min(p0.y, p1.y);
                     const hi = (swp.axis === 'x') ? Math.max(p0.x, p1.x) : Math.max(p0.y, p1.y);
                     const mid = (lo + hi) / 2;
-                    originalSegments.push({ wireId: w.id, index: i, lo, hi, mid, stroke: w.stroke });
+                    originalSegments.push({ wireId: w.id, index: 0, lo, hi, mid, stroke: w.stroke });
                 }
-                // add a snapshot of this original wire (shallow copy)
                 origWireSnapshot.push({ id: w.id, points: w.points.map(p => ({ x: p.x, y: p.y })), stroke: w.stroke });
+            }
+            else {
+                // untouched wire (preserve full object including stroke)
+                rebuilt.push(w);
             }
         }
         // sort original segments along axis (by midpoint)
