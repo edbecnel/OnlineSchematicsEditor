@@ -551,6 +551,11 @@
             if (mode === 'none') {
                 setMode('select');
             }
+            // If Select mode is active and this component is already selected,
+            // interpret the click as intent to move the component: switch to Move.
+            if (mode === 'select' && selection.kind === 'component' && selection.id === c.id) {
+                setMode('move');
+            }
             if (!(mode === 'select' || mode === 'move'))
                 return;
             if (e.button !== 0)
@@ -1746,6 +1751,22 @@
     // ====== Interaction ======
     svg.addEventListener('pointerdown', (e) => {
         const p = svgPoint(e);
+        // If user clicks on empty canvas while in Move mode, cancel the move and
+        // return to Select mode with no selection. This matches the expectation
+        // that clicking off deselects and exits Move.
+        try {
+            const tgt = e.target;
+            const onComp = !!(tgt && tgt.closest && tgt.closest('g.comp'));
+            const onWire = !!(tgt && tgt.closest && tgt.closest('#wires g'));
+            if (mode === 'move' && e.button === 0 && !onComp && !onWire) {
+                selection = { kind: null, id: null, segIndex: null };
+                setMode('select');
+                renderInspector();
+                redraw();
+                return;
+            }
+        }
+        catch (_) { }
         const snapCandDown = (mode === 'wire') ? snapPointPreferAnchor({ x: p.x, y: p.y }) : { x: snap(p.x), y: snap(p.y) };
         const x = snapCandDown.x, y = snapCandDown.y;
         // Middle mouse drag pans
@@ -1933,19 +1954,26 @@
             return;
         }
         if (e.key === 'Escape') {
+            // If a drawing is in progress, cancel it first
             if (drawing.active) {
                 drawing.active = false;
                 drawing.points = [];
                 gDrawing.replaceChildren();
+                return;
             }
-            else {
-                // Deselect any selected component or wire (including a single wire segment)
-                if (selection.kind === 'component' || selection.kind === 'wire') {
-                    selection = { kind: null, id: null, segIndex: null };
-                    // Refresh UI to reflect cleared selection
-                    renderInspector();
-                    redraw();
-                }
+            // If any non-none mode is active (wire/delete/pan/move/select), pressing
+            // Escape should deactivate the active button and enter 'none'. This
+            // mirrors typical toolbar behavior and ensures Escape clears modes other
+            // than just Select.
+            if (mode !== 'none') {
+                setMode('none');
+                return;
+            }
+            // If already in 'none', fallback to clearing selection if present.
+            if (selection.kind === 'component' || selection.kind === 'wire') {
+                selection = { kind: null, id: null, segIndex: null };
+                renderInspector();
+                redraw();
             }
         }
         if (e.key === 'Enter' && drawing.active) {
@@ -2521,6 +2549,39 @@
         wrapC.append(inpColor, inpA);
         rowC.append(capC, wrapC);
         box.appendChild(rowC);
+        // Standard color swatches (toolbar menu)
+        (function () {
+            const swatches = [
+                ['red', '#FF0000'], ['green', '#00FF00'], ['blue', '#0000FF'],
+                ['cyan', '#00FFFF'], ['magenta', '#FF00FF'], ['yellow', '#FFFF00'], ['orange', '#FFA500']
+            ];
+            const pal = document.createElement('div');
+            pal.className = 'palette';
+            pal.style.gridTemplateColumns = `repeat(${swatches.length}, 20px)`;
+            swatches.forEach(([k, col]) => {
+                const b = document.createElement('button');
+                b.className = 'swatch-btn';
+                b.title = k.toUpperCase();
+                b.style.background = String(col);
+                b.addEventListener('click', (ev) => {
+                    // Switch to custom color immediately
+                    WIRE_DEFAULTS.useNetclass = false;
+                    const rgba = cssToRGBA01(String(col));
+                    rgba.a = parseFloat(inpA.value) || 1;
+                    WIRE_DEFAULTS.stroke.color = rgba;
+                    chkUse.checked = false;
+                    mirrorDefaultsIntoLegacyColorMode();
+                    saveWireDefaults();
+                    syncWireToolbar();
+                    // update inputs + preview
+                    inpColor.value = String(col);
+                    refreshPreview();
+                });
+                pal.appendChild(b);
+            });
+            box.appendChild(document.createElement('div'));
+            box.appendChild(pal);
+        })();
         // Preview
         const rowP = document.createElement('div');
         const capP = document.createElement('div');
@@ -3262,6 +3323,8 @@
                 cLbl.style.width = '90px';
                 const cIn = document.createElement('input');
                 cIn.type = 'color';
+                // Tooltip for the color button
+                cIn.title = 'Pick color';
                 const aIn = document.createElement('input');
                 aIn.type = 'range';
                 aIn.min = '0';
@@ -3350,7 +3413,134 @@
                 colorRow.appendChild(cLbl);
                 colorRow.appendChild(cIn);
                 colorRow.appendChild(aIn);
+                // small toggle to open the swatch popover (separate from the native color picker)
+                const swatchToggle = document.createElement('button');
+                swatchToggle.type = 'button';
+                swatchToggle.className = 'swatch-toggle';
+                swatchToggle.title = 'Show swatches';
+                swatchToggle.setAttribute('aria-haspopup', 'true');
+                swatchToggle.setAttribute('aria-expanded', 'false');
+                swatchToggle.tabIndex = 0;
+                swatchToggle.setAttribute('role', 'button');
+                swatchToggle.style.marginLeft = '6px';
+                swatchToggle.style.width = '22px';
+                swatchToggle.style.height = '22px';
+                swatchToggle.style.borderRadius = '4px';
+                swatchToggle.style.display = 'inline-flex';
+                swatchToggle.style.alignItems = 'center';
+                swatchToggle.style.justifyContent = 'center';
+                swatchToggle.style.padding = '0';
+                swatchToggle.style.fontSize = '12px';
+                // small caret SVG for consistency
+                swatchToggle.innerHTML = '<svg width="12" height="8" viewBox="0 0 12 8" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1 1l5 5 5-5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+                colorRow.appendChild(swatchToggle);
                 holder.appendChild(colorRow);
+                // Small swatch palette for the inspector color picker — hidden by default.
+                (function () {
+                    const swatches = [
+                        ['red', '#FF0000'], ['green', '#00FF00'], ['blue', '#0000FF'],
+                        ['cyan', '#00FFFF'], ['magenta', '#FF00FF'], ['yellow', '#FFFF00'], ['orange', '#FFA500']
+                    ];
+                    const palWrap = document.createElement('div');
+                    // Build a floating swatch popover that appears under the color input (not inline in the inspector)
+                    const popover = document.createElement('div');
+                    popover.className = 'inspector-color-popover';
+                    popover.style.position = 'absolute';
+                    popover.style.display = 'none';
+                    popover.style.zIndex = '9999';
+                    popover.style.background = 'white';
+                    popover.style.padding = '8px';
+                    popover.style.borderRadius = '6px';
+                    popover.style.boxShadow = '0 6px 18px rgba(0,0,0,0.12)';
+                    popover.style.pointerEvents = 'auto';
+                    popover.style.userSelect = 'none';
+                    const pal = document.createElement('div');
+                    pal.style.display = 'grid';
+                    pal.style.gridTemplateColumns = `repeat(${swatches.length}, 18px)`;
+                    pal.style.gap = '8px';
+                    pal.style.alignItems = 'center';
+                    swatches.forEach(([k, col]) => {
+                        const b = document.createElement('button');
+                        b.className = 'swatch-btn';
+                        b.title = k.toUpperCase();
+                        b.style.background = String(col);
+                        b.style.width = '18px';
+                        b.style.height = '18px';
+                        b.style.borderRadius = '4px';
+                        b.style.border = '1px solid rgba(0,0,0,0.12)';
+                        b.style.padding = '0';
+                        // Prevent blur race when user clicks a swatch
+                        b.addEventListener('pointerdown', (ev) => { ev.preventDefault(); });
+                        b.addEventListener('click', () => {
+                            cIn.value = String(col);
+                            aIn.value = '1';
+                            onColorCommit();
+                            hidePopover();
+                        });
+                        pal.appendChild(b);
+                    });
+                    popover.appendChild(pal);
+                    document.body.appendChild(popover);
+                    function showPopover() {
+                        const r = cIn.getBoundingClientRect();
+                        const left = Math.max(6, window.scrollX + r.left);
+                        let top = window.scrollY + r.bottom + 6;
+                        const popH = popover.offsetHeight || 120;
+                        const viewportBottom = window.scrollY + window.innerHeight;
+                        if (top + popH > viewportBottom - 8) {
+                            // place above the input if below space is constrained
+                            top = window.scrollY + r.top - popH - 6;
+                        }
+                        popover.style.left = `${left}px`;
+                        popover.style.top = `${top}px`;
+                        // animate in
+                        popover.style.display = 'block';
+                        popover.style.transition = 'opacity 140ms ease, transform 140ms ease';
+                        popover.style.opacity = '0';
+                        popover.style.transform = 'translateY(-6px)';
+                        // force layout then animate
+                        popover.getBoundingClientRect();
+                        requestAnimationFrame(() => { popover.style.opacity = '1'; popover.style.transform = 'translateY(0)'; });
+                        swatchToggle.setAttribute('aria-expanded', 'true');
+                    }
+                    function hidePopover() {
+                        popover.style.opacity = '0';
+                        popover.style.transform = 'translateY(-6px)';
+                        swatchToggle.setAttribute('aria-expanded', 'false');
+                        setTimeout(() => { popover.style.display = 'none'; }, 160);
+                    }
+                    // Show popover when the swatch toggle is clicked. Keep the native
+                    // color picker behavior on the color input unchanged (clicking
+                    // `cIn` will open the browser color picker as before).
+                    swatchToggle.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); if (popover.style.display === 'block') {
+                        hidePopover();
+                    }
+                    else {
+                        showPopover();
+                    } });
+                    // keyboard accessibility: toggle on Enter/Space
+                    swatchToggle.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                            e.preventDefault();
+                            if (popover.style.display === 'block') {
+                                hidePopover();
+                            }
+                            else {
+                                showPopover();
+                            }
+                        }
+                    });
+                    // If user clicks outside the popover and color input, hide it
+                    document.addEventListener('pointerdown', (ev) => {
+                        const t = ev.target;
+                        if (!t)
+                            return;
+                        if (t === cIn || popover.contains(t))
+                            return;
+                        hidePopover();
+                    });
+                    // host popover is used (showHost / hideHost) — legacy popover handlers removed
+                })();
                 // Live preview of effective stroke
                 const prevRow = document.createElement('div');
                 prevRow.className = 'row';
