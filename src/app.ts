@@ -34,11 +34,14 @@ function getClientXY(evt: ClientXYEvent) {
 
   // ====== Core State ======
   const GRID: number = 24; // px
-
   // Nanometer resolution constants (internal units)
   const NM_PER_MM = 1_000_000;   // 1 mm == 1,000,000 nm
   const NM_PER_IN = 25_400_000;  // 25.4 mm == 1 inch
   const NM_PER_MIL = NM_PER_IN / 1000; // 0.001 in
+
+  // Snapping resolution: 50 mils (0.05 in) internal nm value
+  const SNAP_MILS = 50;
+  const SNAP_NM = Math.round(NM_PER_MIL * SNAP_MILS); // nanometers for snap resolution
 
   // Global units state and persistence (available at module-init time to avoid TDZ issues)
   let globalUnits: 'mm' | 'in' | 'mils' = (localStorage.getItem('global.units') as any) || 'mm';
@@ -86,8 +89,21 @@ const projTitle = $q<HTMLInputElement>('#projTitle'); // uses .value later
 const countsEl = $q<HTMLElement>('#counts');
 const overlayMode = $q<HTMLElement>('#modeLabel');
 
+// Grid visibility toggle state (persisted)
+let showGrid = (localStorage.getItem('grid.visible') !== 'false');
+
+// UI button ref (may be used before DOM-ready in some cases; guard accordingly)
+let gridToggleBtnEl: HTMLButtonElement | null = null;
+
+// Track Shift key state globally so we can enforce orthogonal preview even
+// when the user presses/releases Shift while dragging (some browsers/platforms
+// may not include shift in pointer events reliably during capture).
+let globalShiftDown = false;
+window.addEventListener('keydown', (e) => { if (e.key === 'Shift') globalShiftDown = true; });
+window.addEventListener('keyup',   (e) => { if (e.key === 'Shift') globalShiftDown = false; });
+
 // ===== Types (editor-only; no runtime) =====
-type Mode = 'select' | 'wire' | 'delete' | 'place' | 'pan' | 'move';
+type Mode = 'none' | 'select' | 'wire' | 'delete' | 'place' | 'pan' | 'move';
 type PlaceType = 'resistor' | 'capacitor' | 'inductor' | 'diode' | 'npn' | 'pnp' | 'ground' | 'battery' | 'ac';
 // Selection shape. Note: legacy `segIndex` support remains for backward
 // compatibility (some UI code may still set it to `null`), but the editor now
@@ -232,23 +248,160 @@ let marquee: {
     viewH = viewW / aspect;              // compute height from live aspect
     svg.setAttribute('viewBox', `${viewX} ${viewY} ${viewW} ${viewH}`);
     redrawGrid();
+    // Re-render canvas overlays (endpoint squares, wires) so overlays stay aligned after zoom
+    redrawCanvasOnly();
     updateZoomUI();
   }
   // keep grid filling canvas on window resizes
   window.addEventListener('resize', applyZoom);
   function redrawGrid(){
     const w = viewW, h = viewH;
-    const r = document.getElementById('gridRect');
+    const rEl = document.getElementById('gridRect');
+    const r = rEl as unknown as SVGRectElement | null;
     if(!r) return;
     setAttr(r, 'x', viewX);
     setAttr(r, 'y', viewY);
     setAttr(r, 'width', w);
     setAttr(r, 'height', h);
+
+    // We want minor grid lines to appear at ~10 screen px spacing, but grid
+    // coordinates must remain on multiples of the SNAP_NM base (50 mils).
+    // Strategy:
+    //  - Compute baseSnapUser: user-space units per SNAP_NM (50 mils).
+    //  - Choose minorFactor so that minorUser = baseSnapUser * minorFactor
+    //    maps to ~10 screen px (rounded to an integer multiple of baseSnapUser).
+    //  - Choose a major multiple (cellsPerMajor) so major cell on-screen is
+    //    comfortable; the `#gridBold` pattern will use majorUser = minorUser * cellsPerMajor.
+    const scale = svg.clientWidth / Math.max(1, viewW); // screen px per user unit
+    const baseSnapUser = nmToPx(SNAP_NM) / Math.max(1e-6, scale); // user units per base snap
+    const desiredMinorPx = 10; // target screen pixels between minor lines
+    // number of baseSnap units per minor line (integer >=1)
+    const minorFactor = Math.max(1, Math.round((desiredMinorPx / scale) / baseSnapUser));
+    let minorUser = baseSnapUser * minorFactor; // user units between minor grid lines (may be fractional)
+
+    // choose major cells as multiples of minorUser so that major cell screen px is readable
+    const candidateMajors = [4,5,8,10,16,20];
+    let cellsPerMajor = candidateMajors[0];
+    for(const c of candidateMajors){
+      const screenPx = minorUser * c * scale;
+      if(screenPx >= 80 && screenPx <= 220){ cellsPerMajor = c; break; }
+      if(screenPx <= 220) cellsPerMajor = c;
+    }
+    // Round to integer user units to avoid fractional offsets between
+    // pattern rendering and snapping. Ensure at least 1 user unit.
+    minorUser = Math.max(1, Math.round(minorUser));
+    const majorUser = minorUser * cellsPerMajor;
+
+    // Save chosen snap spacing (minor grid) for use by snap() — snap to minorUser.
+    CURRENT_SNAP_USER_UNITS = minorUser;
+
+    // Update grid pattern defs: `#grid` will represent a major cell and draw
+    // its internal minor lines at multiples of minorUser. Anchor patterns to
+    // the global origin (0,0) so lines lie on absolute multiples of minorUser.
+    const patEl = document.getElementById('grid');
+    const pat = patEl as unknown as SVGPatternElement | null;
+    const patBoldEl = document.getElementById('gridBold');
+    const patBold = patBoldEl as unknown as SVGPatternElement | null;
+    const ns = 'http://www.w3.org/2000/svg';
+    if(pat){
+      pat.setAttribute('width', String(majorUser));
+      pat.setAttribute('height', String(majorUser));
+      // clear and draw lines at every minorUser step within majorUser
+      while(pat.firstChild) pat.removeChild(pat.firstChild);
+      const bg = document.createElementNS(ns, 'rect');
+      bg.setAttribute('x','0'); bg.setAttribute('y','0');
+      bg.setAttribute('width', String(majorUser)); bg.setAttribute('height', String(majorUser));
+      bg.setAttribute('fill','none'); pat.appendChild(bg);
+      // vertical lines (iterate integer steps to avoid FP drift)
+      for(let xi = 0; xi <= cellsPerMajor; xi++){
+        const x = xi * minorUser;
+        const ln = document.createElementNS(ns, 'line');
+        ln.setAttribute('x1', String(x)); ln.setAttribute('y1', '0'); ln.setAttribute('x2', String(x)); ln.setAttribute('y2', String(majorUser));
+        // major line if xi is multiple of cellsPerMajor
+        const isMajor = (xi % cellsPerMajor) === 0;
+        ln.setAttribute('stroke', isMajor ? 'var(--grid-bold)' : 'var(--grid)');
+        ln.setAttribute('stroke-width', isMajor ? '1.5' : '0.6');
+        pat.appendChild(ln);
+      }
+      // horizontal lines (iterate integer steps)
+      for(let yi = 0; yi <= cellsPerMajor; yi++){
+        const y = yi * minorUser;
+        const ln = document.createElementNS(ns, 'line');
+        ln.setAttribute('x1', '0'); ln.setAttribute('y1', String(y)); ln.setAttribute('x2', String(majorUser)); ln.setAttribute('y2', String(y));
+        const isMajor = (yi % cellsPerMajor) === 0;
+        ln.setAttribute('stroke', isMajor ? 'var(--grid-bold)' : 'var(--grid)');
+        ln.setAttribute('stroke-width', isMajor ? '1.5' : '0.6');
+        pat.appendChild(ln);
+      }
+      // Anchor to global origin: no patternTransform so lines occur at absolute multiples
+      pat.removeAttribute('patternTransform');
+    }
+    if(patBold){
+      // patBold will simply tile the major cell — ensure it matches majorUser
+      patBold.setAttribute('width', String(majorUser));
+      patBold.setAttribute('height', String(majorUser));
+      // replace inner rect so it references current grid pattern
+      while(patBold.firstChild) patBold.removeChild(patBold.firstChild);
+      const rect = document.createElementNS(ns, 'rect');
+      rect.setAttribute('width', String(majorUser)); rect.setAttribute('height', String(majorUser));
+      rect.setAttribute('fill', 'url(#grid)'); patBold.appendChild(rect);
+      const border = document.createElementNS(ns, 'path');
+      border.setAttribute('d', `M${majorUser} 0H0V${majorUser}`);
+      border.setAttribute('fill', 'none'); border.setAttribute('stroke', 'var(--grid-bold)'); border.setAttribute('stroke-width', '1.5');
+      patBold.appendChild(border);
+      patBold.removeAttribute('patternTransform');
+    }
+
+    // Update header UI with the current visible grid cell size (in screen px)
+    try{
+      const k = document.getElementById('gridSizeKbd');
+      if(k) k.textContent = `${Math.round(majorUser * scale)}px`;
+      const snapK = document.getElementById('snapKbd');
+      if(snapK) snapK.textContent = 'on';
+    }catch(err){/* ignore */}
+
+    // Ensure gridRect visibility matches `showGrid` state
+    try{
+      const rEl = document.getElementById('gridRect') as unknown as SVGRectElement | null;
+      if(rEl){
+        if(showGrid) rEl.setAttribute('fill', 'url(#gridBold)');
+        else rEl.setAttribute('fill', 'none');
+      }
+    }catch(_){ }
   }
   function updateZoomUI(){
     const z = Math.round(zoom * 100);
     const inp = document.getElementById('zoomPct') as HTMLInputElement | null;
     if (inp && inp.value !== z + '%') inp.value = z + '%';
+  }
+
+  // Toggle grid visibility UI and persistence
+  function updateGridToggleButton(){
+    if(!gridToggleBtnEl) gridToggleBtnEl = document.getElementById('gridToggleBtn') as HTMLButtonElement | null;
+    if(!gridToggleBtnEl) return;
+    if(showGrid){
+      gridToggleBtnEl.classList.remove('dim');
+      gridToggleBtnEl.classList.add('grid-on');
+      gridToggleBtnEl.classList.remove('grid-off');
+      gridToggleBtnEl.style.fontWeight = '';
+    } else {
+      gridToggleBtnEl.classList.add('dim');
+      gridToggleBtnEl.classList.add('grid-off');
+      gridToggleBtnEl.classList.remove('grid-on');
+      gridToggleBtnEl.style.fontWeight = '400';
+    }
+  }
+
+  function toggleGrid(visible?: boolean){
+    showGrid = typeof visible === 'boolean' ? visible : !showGrid;
+    localStorage.setItem('grid.visible', showGrid ? 'true' : 'false');
+    // Apply immediately to the rect if present
+    const rEl = document.getElementById('gridRect') as unknown as SVGRectElement | null;
+    if(rEl){
+      if(showGrid) rEl.setAttribute('fill', 'url(#gridBold)');
+      else rEl.setAttribute('fill', 'none');
+    }
+    updateGridToggleButton();
   }
 
   let counters = { resistor:1, capacitor:1, inductor:1, diode:1, npn:1, pnp:1, ground:1, battery:1, ac:1, wire:1 };
@@ -364,7 +517,18 @@ let marquee: {
     inductor: ['TH','GH','MH','kH','H','mH','\u00B5H','nH']                               // µ = \u00B5
   };
 
-  const snap = (v: number): number => Math.round(v / GRID) * GRID;
+  // Snap to the configured SNAP_NM resolution (converted to px). We keep the
+  // `GRID` constant for component/layout sizes; snapping is driven by SNAP_NM.
+  // Current chosen snap spacing in SVG user units (set by redrawGrid()).
+  let CURRENT_SNAP_USER_UNITS: number | null = null;
+
+  const snap = (v: number): number => {
+    // Always snap to the implicit base 50-mil grid in user units. Visual minor grid
+    // spacing (`CURRENT_SNAP_USER_UNITS`) remains zoom-dependent for rendering only.
+    const scale = svg.clientWidth / Math.max(1, viewW); // screen px per user unit
+    const snapUnits = baseSnapUser(); // already rounded and >=1
+    return Math.round(v / snapUnits) * snapUnits;
+  };
   const uid = (prefix: CounterKey): string => `${prefix}${counters[prefix]++}`;
 
   function updateCounts(){
@@ -407,6 +571,28 @@ let marquee: {
     }
     redraw(); // refresh wire/comp hit gating for the new mode
   }
+
+  // Wire up Grid toggle button and shortcut (G)
+  (function attachGridToggle(){
+    try{
+      gridToggleBtnEl = document.getElementById('gridToggleBtn') as HTMLButtonElement | null;
+      if(gridToggleBtnEl){
+        gridToggleBtnEl.addEventListener('click', ()=>{ toggleGrid(); });
+        // initialize appearance
+        updateGridToggleButton();
+      }
+    }catch(_){ }
+
+    window.addEventListener('keydown', (e)=>{
+      // Ignore when typing in inputs or with modifier keys
+      if(e.altKey || e.ctrlKey || e.metaKey) return;
+      const active = document.activeElement as HTMLElement | null;
+      if(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+      if(e.key === 'g' || e.key === 'G'){
+        e.preventDefault(); toggleGrid();
+      }
+    });
+  })();
 
   // ====== Component Drawing ======
   function compPinPositions(c){
@@ -500,7 +686,7 @@ let marquee: {
         // fallback to legacy slide along adjacent wires (if no SWP)
         slideCtx = buildSlideContext(c);
       }
-      const pins0 = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
+      const pins0 = compPinPositions(c).map(p=>({x:snapToBaseScalar(p.x),y:snapToBaseScalar(p.y)}));
       const wsA = wiresEndingAt(pins0[0]);
       const wsB = wiresEndingAt(pins0[1]||pins0[0]);
       dragStart = {
@@ -521,7 +707,8 @@ let marquee: {
     if(moveCollapseCtx && moveCollapseCtx.kind==='swp'){
       const mc = moveCollapseCtx;
       if(mc.axis==='x'){
-        let nx = snap(p.x + dragOff.x);
+        let cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
+        let nx = cand.x;
         nx = Math.max(mc.minCenter, Math.min(mc.maxCenter, nx));
         const candX = nx, candY = mc.fixed;
         if(!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)){
@@ -529,7 +716,8 @@ let marquee: {
           updateComponentDOM(c);
         }
       } else {
-        let ny = snap(p.y + dragOff.y);
+        let cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
+        let ny = cand.y;
         ny = Math.max(mc.minCenter, Math.min(mc.maxCenter, ny));
         const candX = mc.fixed, candY = ny;
         if(!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)){
@@ -551,15 +739,16 @@ let marquee: {
           if(!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)){
             c.y = candY; c.x = candX;
           }
-          const pinsNow = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
+          const pinsNow = compPinPositions(c).map(p=>({x:snapToBaseScalar(p.x),y:snapToBaseScalar(p.y)}));
           adjustWireEnd(slideCtx.wA, slideCtx.pinAStart, pinsNow[0]);
           adjustWireEnd(slideCtx.wB, slideCtx.pinBStart, pinsNow[1]);
           slideCtx.pinAStart = pinsNow[0]; slideCtx.pinBStart = pinsNow[1];
           updateComponentDOM(c); updateWireDOM(slideCtx.wA); updateWireDOM(slideCtx.wB);
         }
       }else{
-        const candX = snap(p.x + dragOff.x);
-        const candY = snap(p.y + dragOff.y);
+        const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
+        const candX = cand.x;
+        const candY = cand.y;
         if(!overlapsAnyOtherAt(c, candX, candY)){
           c.x = candX; c.y = candY;
           updateComponentDOM(c);
@@ -828,6 +1017,96 @@ let marquee: {
     }
     updateSelectionOutline();    
     updateCounts();
+
+    // Endpoint selection squares (overlay). Visible while placing wires or components
+    // Remove any previous endpoint markers in the overlay
+    try{
+      $qa('[data-endpoint]', gOverlay).forEach(el => el.remove());
+    }catch(_){ }
+    // Show endpoint squares while wiring, placing, or when Select is active
+    if(mode === 'wire' || mode === 'place' || mode === 'select'){
+      const ns = 'http://www.w3.org/2000/svg';
+      for(const w of wires){
+        if(!w.points || w.points.length < 2) continue;
+        ensureStroke(w);
+        const eff = effectiveStroke(w, netClassForWire(w), THEME);
+        // compute square size in user units: about 3x the visible stroke width (in px -> user units)
+        const strokePx = Math.max(1, mmToPx(eff.width || 0.25));
+        // convert px to user units: 1 user unit == 1 SVG coordinate; userScale = screen px per user unit
+        const userPerPx = 1 / Math.max(1e-6, userScale());
+        const side = Math.max(4, Math.round(strokePx * 3 * userPerPx));
+        const half = side / 2;
+        const ends = [ w.points[0], w.points[w.points.length-1] ];
+        for(const [ei, pt] of ends.map((p,i)=>[i,p] as [number,Point])){
+          // Use base-grid-snapped anchor so clicks match anchor-based snapping elsewhere
+          const anchor = { x: snapToBaseScalar(pt.x), y: snapToBaseScalar(pt.y) };
+          const rx = anchor.x - half, ry = anchor.y - half;
+          const rect = document.createElementNS(ns, 'rect');
+          rect.setAttribute('data-endpoint', '1');
+          rect.setAttribute('x', String(rx)); rect.setAttribute('y', String(ry));
+          rect.setAttribute('width', String(side)); rect.setAttribute('height', String(side));
+          rect.setAttribute('fill', 'rgba(0,200,0,0.12)');
+          rect.setAttribute('stroke', 'lime'); rect.setAttribute('stroke-width', '0.8');
+          rect.style.cursor = 'pointer';
+          // store snapped anchor coordinates for handler
+          (rect as any).endpoint = { x: anchor.x, y: anchor.y };
+          (rect as any).wireId = w.id;
+          (rect as any).endpointIndex = ei; // 0=start, 1=end
+          // Click/tap behavior: snap to exact endpoint when placing wires/components
+          rect.addEventListener('pointerdown', (ev)=>{
+            const ep = (ev.currentTarget as any).endpoint as Point;
+            const wid = (ev.currentTarget as any).wireId as string | undefined;
+            // Prevent the event from bubbling up to the main SVG handler which
+            // also listens for pointerdown; overlay clicks must be handled here
+            // exclusively to guarantee canonical base-grid snapping.
+            ev.preventDefault(); ev.stopPropagation();
+            try{ console.debug('[overlay] endpoint-click', { ep, wireId: wid }); }catch(_){ }
+            if(mode === 'select'){
+              // In select mode, pick the wire segment corresponding to this endpoint
+              if(wid){ selection = { kind: 'wire', id: wid, segIndex: null }; renderInspector(); updateSelectionOutline(); }
+              return;
+            }
+            if(!ep) return;
+            if(mode === 'wire'){
+              // start or add a drawing point exactly at the endpoint
+              if(!drawing.active){ drawing.active = true; drawing.points = [{ x: ep.x, y: ep.y }]; drawing.cursor = { x: ep.x, y: ep.y }; }
+              else {
+                // If Shift is held, constrain to orthogonal relative to first point
+                const last = drawing.points && drawing.points.length>0 ? drawing.points[drawing.points.length-1] : null;
+                let nx = ep.x, ny = ep.y;
+                if(last && (((ev as PointerEvent).shiftKey) || globalShiftDown)){
+                  // choose axis by larger delta from last point
+                  const dx = Math.abs(nx - last.x); const dy = Math.abs(ny - last.y);
+                  if(dx >= dy) ny = last.y; else nx = last.x;
+                }
+                drawing.points.push({ x: nx, y: ny });
+                drawing.cursor = { x: nx, y: ny };
+              }
+              renderDrawing(); redraw();
+            } else if(mode === 'place' && placeType){
+              // Place a component centered at the endpoint (mimic pointerdown place behavior)
+              const at = { x: ep.x, y: ep.y };
+              let rot = 0;
+              if(isTwoPinType(placeType)){
+                const hit = nearestSegmentAtPoint(at, 18);
+                if(hit){ rot = normDeg(hit.angle); }
+              }
+              const id = uid(placeType);
+              const labelPrefix = {resistor:'R', capacitor:'C', inductor:'L', diode:'D', npn:'Q', pnp:'Q', ground:'GND', battery:'BT', ac:'AC'}[placeType] || 'X';
+              const comp: Component = { id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType]-1}`, value: '', props: {} };
+              if (placeType === 'diode') (comp.props as Component['props']).subtype = diodeSubtype as DiodeSubtype;
+              components.push(comp);
+              breakWiresForComponent(comp);
+              if(isTwoPinType(placeType)) deleteBridgeBetweenPins(comp);
+              setMode('select'); placeType = null;
+              selection = { kind: 'component', id, segIndex: null };
+              redraw();
+            }
+          });
+          gOverlay.appendChild(rect);
+        }
+      }
+    }
   }
 
   function redraw(){
@@ -1157,7 +1436,7 @@ let marquee: {
         const nearInterior = (t>0.001 && t<0.999 && dist <= 20);        
         if( withinVert || withinHorz || nearInterior ){
           // For angled (nearInterior), split at the exact projection q; else use snapped pin
-          const bp = nearInterior ? {x:q.x, y:q.y} : {x:snap(pin.x), y:snap(pin.y)};
+          const bp = nearInterior ? {x:q.x, y:q.y} : {x:snapToBaseScalar(pin.x), y:snapToBaseScalar(pin.y)};
           const left  = w.points.slice(0,i+1).concat([bp]);
           const right = [bp].concat(w.points.slice(i+1));
           // replace original with normalized children (drop degenerate)
@@ -1203,6 +1482,69 @@ let marquee: {
 
   // ----- Slide helpers (simple case: each pin terminates one 2-point, axis-aligned wire) -----
   const eqPt = (p,q)=> p.x===q.x && p.y===q.y;
+  function userScale(){ return svg.clientWidth / Math.max(1, viewW); }
+
+  // base snap in SVG user units corresponding to SNAP_NM (50 mils)
+  function baseSnapUser(){
+    const scale = userScale();
+    return Math.max(1, Math.round(nmToPx(SNAP_NM) / Math.max(1e-6, scale)));
+  }
+
+  // Snap a scalar value to the base 50-mil grid in user units
+  function snapToBaseScalar(v: number){ const b = baseSnapUser(); return Math.round(v / b) * b; }
+
+  // Collect anchor points: component pins and wire endpoints (snapped to base grid)
+  function collectAnchors(){
+    const out: Point[] = [];
+    for(const c of components){
+      const pins = compPinPositions(c);
+      for(const p of pins) out.push({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) });
+    }
+    for(const w of wires){
+      if(!w.points || w.points.length<2) continue;
+      const a = w.points[0], b = w.points[w.points.length-1];
+      out.push({ x: snapToBaseScalar(a.x), y: snapToBaseScalar(a.y) });
+      out.push({ x: snapToBaseScalar(b.x), y: snapToBaseScalar(b.y) });
+    }
+    return out;
+  }
+
+  // Find nearest anchor to `pt` within thresholdPx screen pixels. Returns Point or null.
+  function nearestAnchorTo(pt: Point, thresholdPx = 10){
+    const anchors = collectAnchors();
+    const scale = userScale();
+    let best: Point | null = null; let bestD = Infinity;
+    for(const a of anchors){
+      const dx = (a.x - pt.x) * scale; const dy = (a.y - pt.y) * scale;
+      const d = Math.hypot(dx, dy);
+      if(d < bestD){ bestD = d; best = a; }
+    }
+    if(bestD <= thresholdPx) return best;
+    return null;
+  }
+
+  // Debug helper: dump anchors, overlay rects, and wire endpoints to console
+  function debugDumpAnchors(){
+    try{
+      console.groupCollapsed('DEBUG Anchors Dump');
+      console.log('collectAnchors()', collectAnchors());
+      const rects = $qa<SVGElement>('[data-endpoint]', gOverlay).map(r=>({
+        endpoint: (r as any).endpoint || null,
+        wireId: (r as any).wireId || null,
+        bbox: (r as SVGGraphicsElement).getBBox()
+      }));
+      console.log('overlayRects', rects);
+      console.log('wires endpoints', wires.map(w=>({ id: w.id, start: w.points?.[0] || null, end: w.points?.[w.points.length-1] || null })));
+      console.groupEnd();
+    }catch(err){ console.warn('debugDumpAnchors failed', err); }
+  }
+
+  // Snap a user-space point to nearest anchor (50-mil snapped) if within threshold, else to minor grid via snap().
+  function snapPointPreferAnchor(p: Point, thresholdPx = 10){
+    const a = nearestAnchorTo(p, thresholdPx);
+    if(a) return { x: a.x, y: a.y };
+    return { x: snap(p.x), y: snap(p.y) };
+  }
   function wiresEndingAt(pt){
     return wires.filter(w=>{
       const a=w.points[0], b=w.points[w.points.length-1];
@@ -1229,7 +1571,7 @@ let marquee: {
   function buildSlideContext(c){
     // only for simple 2-pin parts
     if(!['resistor','capacitor','inductor','diode','battery','ac'].includes(c.type)) return null;
-    const pins = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
+    const pins = compPinPositions(c).map(p=>({x:snapToBaseScalar(p.x),y:snapToBaseScalar(p.y)}));
     if(pins.length!==2) return null;
     const axis = axisFromPins(pins);
     if(!axis) return null;
@@ -1341,7 +1683,8 @@ let marquee: {
   // ====== Interaction ======
   svg.addEventListener('pointerdown', (e)=>{
     const p = svgPoint(e);
-    const x = snap(p.x), y=snap(p.y);
+    const snapCandDown = (mode==='wire') ? snapPointPreferAnchor({ x: p.x, y: p.y }) : { x: snap(p.x), y: snap(p.y) };
+    const x = snapCandDown.x, y = snapCandDown.y;
     // Middle mouse drag pans
     if (e.button === 1){
       e.preventDefault(); beginPan(e);
@@ -1385,7 +1728,15 @@ let marquee: {
       if(!drawing.active){ 
         drawing.active=true; drawing.points=[{x,y}]; drawing.cursor={x,y};
       } else {
-        drawing.points.push({x,y});
+        // Respect Shift: constrain the new point to orthogonal relative to last point
+        let nx = x, ny = y;
+        const last = drawing.points && drawing.points.length>0 ? drawing.points[drawing.points.length-1] : null;
+        if(last && ((e as PointerEvent).shiftKey || globalShiftDown)){
+          const dx = Math.abs(nx - last.x), dy = Math.abs(ny - last.y);
+          if(dx >= dy) ny = last.y; else nx = last.x;
+        }
+        drawing.points.push({x: nx, y: ny});
+        drawing.cursor = { x: nx, y: ny };
       }
       renderDrawing();
     }
@@ -1410,14 +1761,23 @@ let marquee: {
   // Rubber-band wire, placement ghost, crosshair, and hover pan cursor
   svg.addEventListener('pointermove', (e)=>{
     const p = svgPoint(e);
-    const x = snap(p.x), y = snap(p.y);
+    // Prefer anchors while wiring so cursor and added points align to endpoints/pins
+    const snapCandMove = (mode === 'wire') ? snapPointPreferAnchor({ x: p.x, y: p.y }) : { x: snap(p.x), y: snap(p.y) };
+    let x = snapCandMove.x, y = snapCandMove.y;
     if (isPanning){ doPan(e); return; }
     // Marquee update (Select mode). Track Shift to flip priority while dragging.
-    if(marquee.active){
-      marquee.shiftPreferComponents = !!e.shiftKey;
+      if(marquee.active){
+      marquee.shiftPreferComponents = !!((e as PointerEvent).shiftKey || globalShiftDown);
       updateMarqueeTo(svgPoint(e));
     }  
     if(mode==='wire' && drawing.active){
+      // enforce orthogonal preview while Shift is down (or globally tracked)
+      const isShift = (e as PointerEvent).shiftKey || globalShiftDown;
+      if(isShift && drawing.points && drawing.points.length>0){
+        const last = drawing.points[drawing.points.length-1];
+        const dx = Math.abs(x - last.x), dy = Math.abs(y - last.y);
+        if(dx >= dy) y = last.y; else x = last.x;
+      }
       drawing.cursor = {x, y};
       renderDrawing();
     } else {
@@ -1524,6 +1884,10 @@ let marquee: {
     }    
     if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); saveJSON(); }
     if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); clearAll(); }
+    // Quick debug dump: press 'D' (when not focused on an input) to log anchors/overlays
+    if(e.key.toLowerCase()==='d' && !isEditingKeystrokesTarget(e)){
+      e.preventDefault(); debugDumpAnchors();
+    }
   });
 
   // Decide color for a just-drawn wire if it will merge into an existing straight wire path (Wire/SWP).
@@ -1770,7 +2134,9 @@ let marquee: {
     if (!btn) return;
     const m = btn.dataset.mode as Mode | undefined;
     if (!m) return;
-    setMode(m);
+    // Toggle Select: clicking Select when already active deselects (goes to 'none')
+    if (m === 'select' && mode === 'select') setMode('none');
+    else setMode(m);
   });
 
   // Fallback selection by delegation (ensures inspector opens on click)
@@ -2858,7 +3224,7 @@ let marquee: {
   }
   // ====== Embed / overlap helpers ======
   function isEmbedded(c){
-    const pins = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
+    const pins = compPinPositions(c).map(p=>({x:snapToBaseScalar(p.x),y:snapToBaseScalar(p.y)}));
     if(pins.length<2) return false;
     return wiresEndingAt(pins[0]).length===1 && wiresEndingAt(pins[1]).length===1;
   }
@@ -2937,7 +3303,7 @@ let marquee: {
           c.y = ny; c.x = ctx.fixed;
         }
       }
-      const pins = compPinPositions(c).map(p=>({x:snap(p.x),y:snap(p.y)}));
+      const pins = compPinPositions(c).map(p=>({x:snapToBaseScalar(p.x),y:snapToBaseScalar(p.y)}));
       adjustWireEnd(ctx.wA, ctx.pinAStart, pins[0]);
       adjustWireEnd(ctx.wB, ctx.pinBStart, pins[1]);
       ctx.pinAStart = pins[0]; ctx.pinBStart = pins[1];
@@ -3005,6 +3371,28 @@ let marquee: {
     const c = collapseDuplicateVertices(pts||[]);
     if (c.length < 2) return null;
     if (c.length === 2 && samePt(c[0], c[1])) return null; // zero-length line
+    // Remove intermediate colinear points so straight runs collapse to two-point segments
+    if (c.length > 2){
+      const out = [] as Point[];
+      out.push(c[0]);
+      for(let i=1;i<c.length-1;i++){
+        const a = out[out.length-1];
+        const b = c[i];
+        const d = c[i+1];
+        // Check colinearity via cross product: (b-a) x (d-b) == 0
+        const v1x = b.x - a.x, v1y = b.y - a.y;
+        const v2x = d.x - b.x, v2y = d.y - b.y;
+        if((v1x * v2y - v1y * v2x) === 0){
+          // b is colinear; skip it
+          continue;
+        } else {
+          out.push(b);
+        }
+      }
+      out.push(c[c.length-1]);
+      if(out.length < 2) return null;
+      return out;
+    }
     return c;
   }
   function normalizeAllWires(){
@@ -3156,72 +3544,108 @@ let marquee: {
 
   function unifyInlineWires(){
     const pinKeys = allPinKeys();
-    let changed = false;
+    let anyChange = false;
 
-    const pairs = endpointPairsByKey();
-    // Try to merge exactly-two-endpoint nodes that are collinear and not at a component pin.
-    for(const [key, list] of pairs){
-      if(pinKeys.has(key)) continue;          // never merge across component pins
-      if(list.length !== 2) continue;         // only consider clean 1:1 joins
-      const a = list[0], b = list[1];
-      if(a.w === b.w) continue;               // ignore self-joins
-      if(!a.axis || !b.axis) continue;        // must both be axis-aligned
-      if(a.axis !== b.axis) continue;         // must be the same axis
+    // Iterate merges until stable, but guard against pathological loops.
+    const MAX_ITER = 200;
+    let iter = 0;
+    const seen = new Set<string>();
+    while(iter < MAX_ITER){
+      iter++;
+      let mergedThisPass = false;
 
-      const [kx, ky] = key.split(',').map(n=>parseInt(n,10));
-      let left, right;                         // "left" == left/top piece, per your rule
-      if(a.axis==='x'){
-        // Decide which piece is to the left of the join
-        const aLeft = Math.min(a.other.x, kx) < kx;
-        const bLeft = Math.min(b.other.x, kx) < kx;
-        if(aLeft && !bLeft){ left=a; right=b; }
-        else if(bLeft && !aLeft){ left=b; right=a; }
-        else {
-          const minxA = Math.min(...a.w.points.map(p => p.x));
-          const minxB = Math.min(...b.w.points.map(p => p.x));
-          left  = (minxA <= minxB) ? a : b;
-          right = (left === a) ? b : a;
+      // detect repeated global state to avoid endless cycles
+      const sig = wires.map(w => `${w.id}:${w.points.map(p=>keyPt(p)).join('|')}`).join(';');
+      if(seen.has(sig)){
+        console.warn('unifyInlineWires: detected repeating state, aborting merge loop', { iter, sig });
+        break;
+      }
+      seen.add(sig);
+
+      const pairs = endpointPairsByKey();
+      // Try to merge exactly-two-endpoint nodes that are collinear and not at a component pin.
+      for(const [key, list] of pairs){
+        if(pinKeys.has(key)) continue;          // never merge across component pins
+        if(list.length !== 2) continue;         // only consider clean 1:1 joins
+        const a = list[0], b = list[1];
+        if(a.w === b.w) continue;               // ignore self-joins
+        if(!a.axis || !b.axis) continue;        // must both be axis-aligned
+        if(a.axis !== b.axis) continue;         // must be the same axis
+
+        const [kx, ky] = key.split(',').map(n=>parseInt(n,10));
+        // Choose the "existing/first" wire as primary by their order in the
+        // `wires` array (earlier index = older/existing). Primary's properties
+        // will be adopted for the merged segment.
+        const idxA = wires.indexOf(a.w);
+        const idxB = wires.indexOf(b.w);
+        // If either wire reference is no longer present in `wires` (because a prior
+        // merge in this same scan mutated the array), skip this stale pair and
+        // continue. We'll recompute pairs on the next outer iteration.
+        if(idxA === -1 || idxB === -1){
+          console.debug('unifyInlineWires: stale pair skipped (wire ref missing)', { key, idxA, idxB, aId: a.w?.id, bId: b.w?.id });
+          continue;
         }
-      } else { // 'y'
-        const aTop = Math.min(a.other.y, ky) < ky;
-        const bTop = Math.min(b.other.y, ky) < ky;
-        if(aTop && !bTop){ left=a; right=b; }
-        else if(bTop && !aTop){ left=b; right=a; }
-        else {
-          const minyA = Math.min(...a.w.points.map(p=>p.y));
-          const minyB = Math.min(...b.w.points.map(p=>p.y));
-          left = (minyA <= minyB) ? a : b; right = (left===a) ? b : a;
+        const primary = (idxA <= idxB) ? a : b;
+        const secondary = (primary === a) ? b : a;
+
+        // Orient primary (left) so it ENDS at the join, secondary (right) so it STARTS at the join
+        // Ensure endpoints are canonicalized to base-grid before merging to
+        // avoid tiny rounding differences that can re-split after normalization.
+        const lp = primary.w.points.map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
+        const rp = secondary.w.points.map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
+        const lPts = (primary.endIndex === lp.length-1) ? lp : lp.reverse();
+        const rPts = (secondary.endIndex === 0) ? rp : rp.reverse();
+
+        const mergedPts = lPts.concat(rPts.slice(1));  // drop duplicate join point
+        const merged = normalizedPolylineOrNull(mergedPts);
+        if(!merged) continue;
+
+        // Adopt primary wire's stroke/color (preserve its id when possible)
+        ensureStroke(primary.w);
+        const newStroke = strokeOfWire(primary.w);
+        const newColor = rgba01ToCss(newStroke.color);
+        const primaryId = primary.w.id;
+        console.debug('unifyInlineWires: attempting merge', { key, primaryId, primaryIdx: idxA, secondaryIdx: idxB, lPts, rPts, merged });
+
+        // Replace both wires with a single merged segment that uses the primary id
+        const countBefore = wires.length;
+        wires = wires.filter(w => w !== primary.w && w !== secondary.w);
+        wires.push({ id: primaryId, points: merged, color: newColor, stroke: newStroke, netId: primary.w.netId || 'default' });
+
+        mergedThisPass = true;
+        anyChange = true;
+        // normalize and check that progress was made (wire count decreased)
+        normalizeAllWires();
+        if(wires.length >= countBefore){
+          // Emit a richer diagnostic to help reproduce and debug why the merge
+          // failed to reduce the wire count (likely due to normalization/splitting).
+          console.warn('unifyInlineWires: merge did not reduce wire count; aborting to avoid loop', {
+            key, primaryId, primaryIdx: idxA, secondaryIdx: idxB, countBefore, countAfter: wires.length,
+            primaryPts: primary.w.points.slice(), secondaryPts: secondary.w.points.slice(), mergedPts: merged, sigBefore: sig
+          });
+          // Also dump current wires summary to console for deeper inspection
+          try{ console.debug('wires snapshot', wires.map(w => ({ id: w.id, start: w.points?.[0], end: w.points?.[w.points.length-1], pts: w.points }))); }catch(_){ }
+          break;
         }
+        // restart scanning from fresh topology by breaking out of the inner loop so
+        // the outer while() recomputes endpoint pairs against the new `wires` list.
+        rebuildTopology();
+        break;
       }
 
-      // Orient left piece so it ENDS at the join, right piece so it STARTS at the join
-      const lp = left.w.points.slice();
-      const rp = right.w.points.slice();
-      const lPts = (left.endIndex === lp.length-1) ? lp : lp.reverse();
-      const rPts = (right.endIndex === 0) ? rp : rp.reverse();
+      if(mergedThisPass){
+        // already continued after handling merge
+        continue;
+      }
 
-      const mergedPts = lPts.concat(rPts.slice(1));  // drop duplicate join point
-      const merged = normalizedPolylineOrNull(mergedPts);
-      if(!merged) continue;
-
-      // Adopt left/top wire's stroke (and keep legacy color in sync)
-      ensureStroke(left.w);
-      const newStroke = strokeOfWire(left.w);
-      const newColor = rgba01ToCss(newStroke.color);
-
-      // Replace
-      wires = wires.filter(w => w !== left.w && w !== right.w);
-      wires.push({ id: uid('wire'), points: merged, color: newColor, stroke: newStroke, netId: left.w.netId || 'default' });
-
-      changed = true;
-      break; // wires changed; stop this pass and recurse
+      // nothing merged on this pass -> stable
+      break;
     }
-    if(changed){
-      normalizeAllWires();
-      // Re-run until no merges remain
-      return unifyInlineWires() || true;
+
+    if(iter >= MAX_ITER){
+      console.warn('unifyInlineWires: reached iteration limit', MAX_ITER);
     }
-    return false;
+    return anyChange;
   }
 
   // Apply a stroke "patch" to all segments in the SWP.

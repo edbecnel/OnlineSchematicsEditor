@@ -118,6 +118,12 @@
     /* Inspector wire-color holder must be relative for its palette */
     .inspector-color{ position:relative; }
     .inspector-color .palette{ top:calc(100% + 6px); left:0; }    
+    /* Grid button dim/off visual */
+    .group button.dim{ color:var(--muted); opacity:0.75; font-weight:400 }
+    /* Grid ON: green outline */
+    .group button.grid-on{ box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.15), inset 0 0 0 1px var(--ok); }
+    /* Grid OFF: red outline */
+    .group button.grid-off{ box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.12), inset 0 0 0 1px var(--danger); }
   </style>
 </head>
 <body>
@@ -175,9 +181,10 @@
     <div class="group">
       <button id="saveBtn" class="ok" title="Save JSON (Ctrl+S)">Save</button>
       <button id="loadBtn" title="Load JSON">Load</button>
+      <button id="gridToggleBtn" title="Toggle Grid (G)">Grid</button>
       <input id="fileInput" type="file" accept="application/json" style="display:none" />
     </div>
-    <div style="margin-left:auto; color:#9aa3b2">Grid: <span class="kbd">24px</span> · Snap: <span class="kbd">on</span></div>
+    <div style="margin-left:auto; color:#9aa3b2">Grid: <span id="gridSizeKbd" class="kbd">24px</span> · Snap: <span id="snapKbd" class="kbd">on</span></div>
   </header>
   <aside id="left">
     <h2>Inspector </h2>
