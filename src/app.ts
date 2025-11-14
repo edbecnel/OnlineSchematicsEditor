@@ -660,6 +660,9 @@ let marquee: {
     let dragging=false, dragOff={x:0,y:0}, slideCtx=null, dragStart=null;
     g.addEventListener('pointerdown', (e)=>{
       if(mode==='delete'){ removeComponent(c.id); return; }
+      // If no action is active, automatically activate Select mode when
+      // the user clicks a component so the click behaves like a selection.
+      if(mode === 'none'){ setMode('select'); }
       if(!(mode==='select' || mode==='move')) return;
       if(e.button!==0) return;
       // persist selection until user clicks elsewhere
@@ -976,9 +979,12 @@ let marquee: {
       hit.addEventListener('pointerleave', ()=>{ if(allowHits) vis.classList.remove('hover'); });
       hit.addEventListener('pointerdown', (e)=>{
         if (mode === 'delete') { removeWireAtPoint(w, svgPoint(e)); }
-        else if (mode === 'select' || mode==='move') {
-          // Select by wire (segment) id only; legacy segIndex is no longer required.
-          selecting('wire', w.id, null);
+        else {
+          if(mode === 'none'){ setMode('select'); }
+          if (mode === 'select' || mode==='move') {
+            // Select by wire (segment) id only; legacy segIndex is no longer required.
+            selecting('wire', w.id, null);
+          }
         }
         e.stopPropagation();
       });
@@ -1034,19 +1040,33 @@ let marquee: {
         const strokePx = Math.max(1, mmToPx(eff.width || 0.25));
         // convert px to user units: 1 user unit == 1 SVG coordinate; userScale = screen px per user unit
         const userPerPx = 1 / Math.max(1e-6, userScale());
-        const side = Math.max(4, Math.round(strokePx * 3 * userPerPx));
+        // Slightly reduce the visual prominence: use a smaller multiplier and
+        // a smaller minimum side so squares are less dominant.
+        const side = Math.max(3, Math.round(strokePx * 2.2 * userPerPx));
         const half = side / 2;
         const ends = [ w.points[0], w.points[w.points.length-1] ];
         for(const [ei, pt] of ends.map((p,i)=>[i,p] as [number,Point])){
           // Use base-grid-snapped anchor so clicks match anchor-based snapping elsewhere
-          const anchor = { x: snapToBaseScalar(pt.x), y: snapToBaseScalar(pt.y) };
-          const rx = anchor.x - half, ry = anchor.y - half;
-          const rect = document.createElementNS(ns, 'rect');
-          rect.setAttribute('data-endpoint', '1');
-          rect.setAttribute('x', String(rx)); rect.setAttribute('y', String(ry));
-          rect.setAttribute('width', String(side)); rect.setAttribute('height', String(side));
-          rect.setAttribute('fill', 'rgba(0,200,0,0.12)');
-          rect.setAttribute('stroke', 'lime'); rect.setAttribute('stroke-width', '0.8');
+            const anchor = { x: snapToBaseScalar(pt.x), y: snapToBaseScalar(pt.y) };
+            // Choose a fixed on-screen size (px) so squares remain visible when zoomed out.
+            // Use a fixed on-screen size so endpoint squares are consistent across wires
+            // and zoom levels. Chosen value matches the current preferred appearance.
+            const desiredScreenPx = 9;
+            const scale = userScale(); // screen px per user unit
+            // Align the rectangle to integer screen pixels to avoid subpixel mis-centering.
+            const anchorScreenX = Math.round(anchor.x * scale);
+            const anchorScreenY = Math.round(anchor.y * scale);
+            const rxScreen = Math.round(anchorScreenX - desiredScreenPx / 2);
+            const ryScreen = Math.round(anchorScreenY - desiredScreenPx / 2);
+            const widthUser = Math.max(1, desiredScreenPx / Math.max(1e-6, scale));
+            const rx = rxScreen / Math.max(1e-6, scale);
+            const ry = ryScreen / Math.max(1e-6, scale);
+            const rect = document.createElementNS(ns, 'rect');
+            rect.setAttribute('data-endpoint', '1');
+            rect.setAttribute('x', String(rx)); rect.setAttribute('y', String(ry));
+            rect.setAttribute('width', String(widthUser)); rect.setAttribute('height', String(widthUser));
+            rect.setAttribute('fill', 'rgba(0,200,0,0.08)');
+            rect.setAttribute('stroke', 'lime'); rect.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
           rect.style.cursor = 'pointer';
           // store snapped anchor coordinates for handler
           (rect as any).endpoint = { x: anchor.x, y: anchor.y };
