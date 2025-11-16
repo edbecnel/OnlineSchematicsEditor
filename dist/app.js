@@ -18,7 +18,7 @@
         return { x, y };
     }
     // ====== Core State ======
-    const GRID = 24; // px
+    const GRID = 25; // px; 2*GRID = 50 px = exactly 10 snap units (500 mils)
     // Nanometer resolution constants (internal units)
     const NM_PER_MM = 1000000; // 1 mm == 1,000,000 nm
     const NM_PER_IN = 25400000; // 25.4 mm == 1 inch
@@ -71,6 +71,8 @@
     let gridMode = localStorage.getItem('grid.mode') || 'line';
     // Junction dots visibility toggle state (persisted)
     let showJunctionDots = (localStorage.getItem('junctionDots.visible') !== 'false');
+    // Tracking mode: when true, connection hints are enabled (persisted)
+    let trackingMode = (localStorage.getItem('tracking.mode') !== 'false');
     // UI button ref (may be used before DOM-ready in some cases; guard accordingly)
     let gridToggleBtnEl = null;
     // Track Shift key state globally so we can enforce orthogonal preview even
@@ -568,6 +570,7 @@
                     localStorage.setItem('junctionDots.visible', showJunctionDots ? 'true' : 'false');
                     updateJunctionDotsButton();
                     redraw();
+                    renderDrawing(); // Update in-progress wire display
                 }
                 junctionDotsBtn.addEventListener('click', toggleJunctionDots);
                 // initialize appearance
@@ -575,6 +578,28 @@
             }
         }
         catch (_) { }
+        // Keyboard shortcut: . (period)
+        window.addEventListener('keydown', (e) => {
+            if (e.altKey || e.ctrlKey || e.metaKey)
+                return;
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable))
+                return;
+            if (e.key === '.') {
+                e.preventDefault();
+                showJunctionDots = !showJunctionDots;
+                localStorage.setItem('junctionDots.visible', showJunctionDots ? 'true' : 'false');
+                const btn = document.getElementById('junctionDotsBtn');
+                if (btn) {
+                    if (showJunctionDots)
+                        btn.classList.add('active');
+                    else
+                        btn.classList.remove('active');
+                }
+                redraw();
+                renderDrawing(); // Update in-progress wire display
+            }
+        });
     })();
     // Wire up Ortho mode toggle button and shortcut (O)
     let updateOrthoButtonVisual = null;
@@ -651,9 +676,51 @@
                 e.preventDefault();
                 toggleCrosshairMode();
             }
+            if (e.key === '+' || e.key === '=') {
+                e.preventDefault();
+                toggleCrosshairMode();
+            }
         });
     })();
-    // ====== Component Drawing ======
+    // Wire up Tracking toggle button and shortcut (T)
+    (function attachTrackingToggle() {
+        const trackingBtn = document.getElementById('trackingToggleBtn');
+        function updateTrackingButton() {
+            if (!trackingBtn)
+                return;
+            if (trackingMode) {
+                trackingBtn.classList.add('active');
+            }
+            else {
+                trackingBtn.classList.remove('active');
+            }
+        }
+        function toggleTracking() {
+            trackingMode = !trackingMode;
+            localStorage.setItem('tracking.mode', trackingMode ? 'true' : 'false');
+            updateTrackingButton();
+            // Clear any active connection hint when disabling tracking
+            if (!trackingMode) {
+                connectionHint = null;
+                renderConnectionHint();
+            }
+        }
+        if (trackingBtn) {
+            trackingBtn.addEventListener('click', toggleTracking);
+            updateTrackingButton();
+        }
+        window.addEventListener('keydown', (e) => {
+            if (e.altKey || e.ctrlKey || e.metaKey)
+                return;
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable))
+                return;
+            if (e.key === 't' || e.key === 'T') {
+                e.preventDefault();
+                toggleTracking();
+            }
+        });
+    })(); // ====== Component Drawing ======
     function compPinPositions(c) {
         // two-pin components: pins at +/- 2*GRID along the component rotation axis
         const r = ((c.rot % 360) + 360) % 360;
@@ -944,9 +1011,39 @@
             drawDiodeInto(gg, c, (c.props && c.props.subtype) ? c.props.subtype : 'generic');
         }
         if (c.type === 'battery') {
-            const y = c.y, xLong = c.x - 10, xShort = c.x + 6;
-            line(xLong, y - 18, xLong, y + 18);
-            line(xShort, y - 12, xShort, y + 12);
+            // Battery symbol: negative terminal (long line) on left, positive terminal (short line) on right
+            // Pins are at x ± 2*GRID (x ± 48), so draw lines extending toward the pins
+            const y = c.y;
+            const pinOffset = 2 * GRID; // 48px
+            // Negative terminal (long line) - left side
+            const xNeg = c.x - 10;
+            line(xNeg, y - 18, xNeg, y + 18);
+            // Connection line from negative terminal to left pin
+            line(xNeg, y, c.x - pinOffset, y);
+            // Positive terminal (short line) - right side
+            const xPos = c.x + 10;
+            line(xPos, y - 12, xPos, y + 12);
+            // Connection line from positive terminal to right pin
+            line(xPos, y, c.x + pinOffset, y);
+            // Add polarity symbols - offset above the centerline for better visibility
+            const plusText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            plusText.setAttribute('x', String(xPos + 16));
+            plusText.setAttribute('y', String(y - 8));
+            plusText.setAttribute('text-anchor', 'start');
+            plusText.setAttribute('font-size', '16');
+            plusText.setAttribute('font-weight', 'bold');
+            plusText.setAttribute('fill', 'var(--component)');
+            plusText.textContent = '+';
+            gg.appendChild(plusText);
+            const minusText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            minusText.setAttribute('x', String(xNeg - 16));
+            minusText.setAttribute('y', String(y - 8));
+            minusText.setAttribute('text-anchor', 'end');
+            minusText.setAttribute('font-size', '16');
+            minusText.setAttribute('font-weight', 'bold');
+            minusText.setAttribute('fill', 'var(--component)');
+            minusText.textContent = '−';
+            gg.appendChild(minusText);
         }
         if (c.type === 'ac') {
             const circ = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -2105,139 +2202,141 @@
                     else
                         x = last.x;
                 }
-                // Connection hint logic: try to lock onto nearby wire endpoint X or Y axis
+                // Connection hint logic: try to lock onto nearby wire endpoint X or Y axis (only if tracking is enabled)
                 // Now uses ortho-constrained x,y if ortho is active
                 // Convert pixel tolerances to SVG user coordinates based on current zoom
                 const scale = svg.clientWidth / Math.max(1, viewW); // screen px per user unit
                 const snapTol = HINT_SNAP_TOLERANCE_PX / scale; // convert to SVG user units
                 const unlockThresh = HINT_UNLOCK_THRESHOLD_PX / scale; // convert to SVG user units
-                // Collect all wire endpoints as candidates
+                // Collect all wire endpoints as candidates (only if tracking mode is enabled)
                 const candidates = [];
-                // Get the first point of the wire being drawn (to exclude it from candidates)
-                const drawingStartPt = drawing.points.length > 0 ? drawing.points[0] : null;
-                // Helper function to check if a point matches the drawing start point
-                const isDrawingStart = (pt) => {
-                    return drawingStartPt && pt.x === drawingStartPt.x && pt.y === drawingStartPt.y;
-                };
-                let wireEndpointCount = 0;
-                wires.forEach(w => {
-                    if (w.points && w.points.length >= 2) {
-                        // Add first endpoint if it's not the drawing start point
-                        const firstPt = w.points[0];
-                        if (!isDrawingStart(firstPt)) {
-                            candidates.push(firstPt);
-                            wireEndpointCount++;
-                        }
-                        // Add last endpoint if it's not the drawing start point
-                        const lastPt = w.points[w.points.length - 1];
-                        if (!isDrawingStart(lastPt)) {
-                            candidates.push(lastPt);
-                            wireEndpointCount++;
-                        }
-                    }
-                });
-                // Also include component pins if they're not the drawing start point
-                let componentPinCount = 0;
-                components.forEach(c => {
-                    const pins = compPinPositions(c);
-                    pins.forEach(p => {
-                        if (!isDrawingStart(p)) {
-                            candidates.push({ x: p.x, y: p.y });
-                            componentPinCount++;
-                        }
-                    });
-                });
-                // Include intermediate points of the wire being drawn
-                // Skip last 2 points: 
-                //   - drawing.points[drawing.points.length - 1]: current segment start
-                //   - drawing.points[drawing.points.length - 2]: previous segment end (same point, forms corner)
-                // Include all other placed points before those
-                let wirePointCandidates = 0;
-                for (let i = 0; i < drawing.points.length - 2; i++) {
-                    candidates.push({ x: drawing.points[i].x, y: drawing.points[i].y });
-                    wirePointCandidates++;
-                }
-                // Check if we should unlock (moved too far from the hint target)
-                if (connectionHint) {
-                    // Check distance from current mouse to the original target point
-                    const distFromTarget = Math.sqrt(Math.pow(x - connectionHint.targetPt.x, 2) +
-                        Math.pow(y - connectionHint.targetPt.y, 2));
-                    if (distFromTarget > unlockThresh) {
-                        connectionHint = null; // unlock
-                    }
-                }
-                if (!connectionHint && candidates.length > 0) {
-                    // Find the nearest candidate in EITHER X or Y direction (whichever is closer)
-                    // Exclude candidates where the hint line would be colinear with current segment
-                    let bestCand = null;
-                    let bestAxisDist = Infinity;
-                    let bestIsHorizontalHint = true; // true = horizontal hint line (lock Y), false = vertical hint line (lock X)
-                    // Helper to check if hint line would be problematic
-                    const shouldExcludeCandidate = (cand, isHorizontalHint) => {
-                        // Check if the line from cursor to candidate is colinear with line from last to cursor
-                        // Using cross product: if (cursor - last) × (candidate - cursor) ≈ 0, they're colinear
-                        const segmentX = x - last.x;
-                        const segmentY = y - last.y;
-                        const hintX = cand.x - x;
-                        const hintY = cand.y - y;
-                        const crossProduct = Math.abs(segmentX * hintY - segmentY * hintX);
-                        // Exclude if colinear with current segment
-                        if (crossProduct < 0.5)
-                            return true;
-                        // Also exclude if the hint direction matches the current dragging direction
-                        // If dragging vertically (dx < dy) and hint is vertical, exclude
-                        // If dragging horizontally (dx >= dy) and hint is horizontal, exclude
-                        const isDraggingVertically = dy > dx;
-                        const hintIsVertical = !isHorizontalHint;
-                        if (isDraggingVertically && hintIsVertical) {
-                            return true; // Exclude vertical hints when dragging vertically
-                        }
-                        if (!isDraggingVertically && !hintIsVertical) {
-                            return true; // Exclude horizontal hints when dragging horizontally
-                        }
-                        return false;
+                if (trackingMode) {
+                    // Get the first point of the wire being drawn (to exclude it from candidates)
+                    const drawingStartPt = drawing.points.length > 0 ? drawing.points[0] : null;
+                    // Helper function to check if a point matches the drawing start point
+                    const isDrawingStart = (pt) => {
+                        return drawingStartPt && pt.x === drawingStartPt.x && pt.y === drawingStartPt.y;
                     };
-                    let checkCount = 0;
-                    candidates.forEach(cand => {
-                        // Check X-axis proximity (for vertical hint line - locks X, varies Y)
-                        const xDist = Math.abs(x - cand.x);
-                        if (xDist < snapTol && xDist < bestAxisDist && !shouldExcludeCandidate(cand, false)) {
-                            bestAxisDist = xDist;
-                            bestCand = cand;
-                            bestIsHorizontalHint = false; // vertical hint line
+                    let wireEndpointCount = 0;
+                    wires.forEach(w => {
+                        if (w.points && w.points.length >= 2) {
+                            // Add first endpoint if it's not the drawing start point
+                            const firstPt = w.points[0];
+                            if (!isDrawingStart(firstPt)) {
+                                candidates.push(firstPt);
+                                wireEndpointCount++;
+                            }
+                            // Add last endpoint if it's not the drawing start point
+                            const lastPt = w.points[w.points.length - 1];
+                            if (!isDrawingStart(lastPt)) {
+                                candidates.push(lastPt);
+                                wireEndpointCount++;
+                            }
                         }
-                        // Check Y-axis proximity (for horizontal hint line - locks Y, varies X)
-                        const yDist = Math.abs(y - cand.y);
-                        if (yDist < snapTol && yDist < bestAxisDist && !shouldExcludeCandidate(cand, true)) {
-                            bestAxisDist = yDist;
-                            bestCand = cand;
-                            bestIsHorizontalHint = true; // horizontal hint line
-                        }
-                        checkCount++;
                     });
-                    if (bestCand) {
-                        // Snap the cursor position to align orthogonally with the candidate
-                        // The cursor will move to align on one axis with the candidate
-                        let snappedX = x;
-                        let snappedY = y;
-                        if (bestIsHorizontalHint) {
-                            // Horizontal hint: snap Y to candidate's Y (cursor moves to align horizontally)
-                            snappedY = bestCand.y;
-                            // X remains at current position
-                        }
-                        else {
-                            // Vertical hint: snap X to candidate's X (cursor moves to align vertically)
-                            snappedX = bestCand.x;
-                            // Y remains at current position
-                        }
-                        connectionHint = {
-                            lockedPt: { x: snappedX, y: snappedY }, // Lock snapped position
-                            targetPt: bestCand, // The candidate point to show hint line to
-                            wasOrthoActive: orthoMode || isShift,
-                            lockAxis: bestIsHorizontalHint ? 'y' : 'x' // Which axis was snapped
-                        };
+                    // Also include component pins if they're not the drawing start point
+                    let componentPinCount = 0;
+                    components.forEach(c => {
+                        const pins = compPinPositions(c);
+                        pins.forEach(p => {
+                            if (!isDrawingStart(p)) {
+                                candidates.push({ x: p.x, y: p.y });
+                                componentPinCount++;
+                            }
+                        });
+                    });
+                    // Include intermediate points of the wire being drawn
+                    // Skip last 2 points: 
+                    //   - drawing.points[drawing.points.length - 1]: current segment start
+                    //   - drawing.points[drawing.points.length - 2]: previous segment end (same point, forms corner)
+                    // Include all other placed points before those
+                    let wirePointCandidates = 0;
+                    for (let i = 0; i < drawing.points.length - 2; i++) {
+                        candidates.push({ x: drawing.points[i].x, y: drawing.points[i].y });
+                        wirePointCandidates++;
                     }
-                }
+                    // Check if we should unlock (moved too far from the hint target)
+                    if (connectionHint) {
+                        // Check distance from current mouse to the original target point
+                        const distFromTarget = Math.sqrt(Math.pow(x - connectionHint.targetPt.x, 2) +
+                            Math.pow(y - connectionHint.targetPt.y, 2));
+                        if (distFromTarget > unlockThresh) {
+                            connectionHint = null; // unlock
+                        }
+                    }
+                    if (!connectionHint && candidates.length > 0) {
+                        // Find the nearest candidate in EITHER X or Y direction (whichever is closer)
+                        // Exclude candidates where the hint line would be colinear with current segment
+                        let bestCand = null;
+                        let bestAxisDist = Infinity;
+                        let bestIsHorizontalHint = true; // true = horizontal hint line (lock Y), false = vertical hint line (lock X)
+                        // Helper to check if hint line would be problematic
+                        const shouldExcludeCandidate = (cand, isHorizontalHint) => {
+                            // Check if the line from cursor to candidate is colinear with line from last to cursor
+                            // Using cross product: if (cursor - last) × (candidate - cursor) ≈ 0, they're colinear
+                            const segmentX = x - last.x;
+                            const segmentY = y - last.y;
+                            const hintX = cand.x - x;
+                            const hintY = cand.y - y;
+                            const crossProduct = Math.abs(segmentX * hintY - segmentY * hintX);
+                            // Exclude if colinear with current segment
+                            if (crossProduct < 0.5)
+                                return true;
+                            // Also exclude if the hint direction matches the current dragging direction
+                            // If dragging vertically (dx < dy) and hint is vertical, exclude
+                            // If dragging horizontally (dx >= dy) and hint is horizontal, exclude
+                            const isDraggingVertically = dy > dx;
+                            const hintIsVertical = !isHorizontalHint;
+                            if (isDraggingVertically && hintIsVertical) {
+                                return true; // Exclude vertical hints when dragging vertically
+                            }
+                            if (!isDraggingVertically && !hintIsVertical) {
+                                return true; // Exclude horizontal hints when dragging horizontally
+                            }
+                            return false;
+                        };
+                        let checkCount = 0;
+                        candidates.forEach(cand => {
+                            // Check X-axis proximity (for vertical hint line - locks X, varies Y)
+                            const xDist = Math.abs(x - cand.x);
+                            if (xDist < snapTol && xDist < bestAxisDist && !shouldExcludeCandidate(cand, false)) {
+                                bestAxisDist = xDist;
+                                bestCand = cand;
+                                bestIsHorizontalHint = false; // vertical hint line
+                            }
+                            // Check Y-axis proximity (for horizontal hint line - locks Y, varies X)
+                            const yDist = Math.abs(y - cand.y);
+                            if (yDist < snapTol && yDist < bestAxisDist && !shouldExcludeCandidate(cand, true)) {
+                                bestAxisDist = yDist;
+                                bestCand = cand;
+                                bestIsHorizontalHint = true; // horizontal hint line
+                            }
+                            checkCount++;
+                        });
+                        if (bestCand) {
+                            // Snap the cursor position to align orthogonally with the candidate
+                            // The cursor will move to align on one axis with the candidate
+                            let snappedX = x;
+                            let snappedY = y;
+                            if (bestIsHorizontalHint) {
+                                // Horizontal hint: snap Y to candidate's Y (cursor moves to align horizontally)
+                                snappedY = bestCand.y;
+                                // X remains at current position
+                            }
+                            else {
+                                // Vertical hint: snap X to candidate's X (cursor moves to align vertically)
+                                snappedX = bestCand.x;
+                                // Y remains at current position
+                            }
+                            connectionHint = {
+                                lockedPt: { x: snappedX, y: snappedY }, // Lock snapped position
+                                targetPt: bestCand, // The candidate point to show hint line to
+                                wasOrthoActive: orthoMode || isShift,
+                                lockAxis: bestIsHorizontalHint ? 'y' : 'x' // Which axis was snapped
+                            };
+                        }
+                    }
+                } // end if(trackingMode)
                 // Apply connection hint lock (but still respect ortho constraint)
                 if (connectionHint) {
                     // Keep cursor at the snapped position
@@ -2285,8 +2384,9 @@
             clearGhost();
         }
         // crosshair overlay while in wire mode (even if not actively drawing)
+        // Use raw mouse position (p) for crosshair, not snapped position (x, y)
         if (mode === 'wire') {
-            renderCrosshair(x, y);
+            renderCrosshair(p.x, p.y);
         }
         else {
             clearCrosshair();
@@ -4741,7 +4841,7 @@
     //   return svg;
     // }
     // px rendering helpers (keep visuals stable; 0.25 mm ≈ 1 px on canvas)
-    const PX_PER_MM = 4; // 1 mm → 4 px; 0.25 mm → 1 px
+    const PX_PER_MM = 100 / 25.4; // Exactly 100 px per inch, so 50 mils = 5 px exactly
     const mmToPx = (mm) => Math.max(1, Math.round(Math.max(0, mm) * PX_PER_MM));
     // Precedence: explicit wire.stroke → netclass → theme.
     // NOTE: width<=0 OR type==='default' means "don’t override lower-precedence value".
@@ -5457,5 +5557,24 @@
     // start at 1:1
     applyZoom();
     redraw();
+    // Ensure button states reflect initial values
+    updateGridToggleButton();
+    if (updateOrthoButtonVisual)
+        updateOrthoButtonVisual();
+    // Manually initialize junction dots and tracking buttons if they weren't caught by IIFEs
+    const jdBtn = document.getElementById('junctionDotsBtn');
+    if (jdBtn) {
+        if (showJunctionDots)
+            jdBtn.classList.add('active');
+        else
+            jdBtn.classList.remove('active');
+    }
+    const trBtn = document.getElementById('trackingToggleBtn');
+    if (trBtn) {
+        if (trackingMode)
+            trBtn.classList.add('active');
+        else
+            trBtn.classList.remove('active');
+    }
 })();
 //# sourceMappingURL=app.js.map
