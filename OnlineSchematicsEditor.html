@@ -73,16 +73,7 @@
     body.mode-pan.panning #svg{ cursor: grabbing; }
     /* Also show grabbing during mid-mouse pan even if not in Pan mode */
     body.panning #svg{ cursor: grabbing; }
-    /* Crosshair overlay - brighter than grid, dashed, and always on top */
-    .crosshair line{
-      stroke: var(--select);       /* high-contrast (orange) */
-      stroke-opacity: .3;
-      stroke-width: 3;             /* thicker than grid */
-      stroke-dasharray: 6 6;       /* clearer dashes */
-      stroke-linecap: round;
-      pointer-events: none;
-      filter: drop-shadow(0 0 2px rgba(121, 98, 58, 0.65));
-    }
+    /* Crosshair styles are now set inline via JavaScript based on mode */
     /* Marquee selection box (drawn in #overlay) */
     #overlay rect.marquee {
       fill: rgba(245, 158, 11, 0.12);   /* subtle fill */
@@ -134,7 +125,11 @@
       <button data-mode="wire" title="Wire (W)">Wire</button>
       <button data-mode="delete" title="Delete (Del)">Delete</button>
       <button data-mode="pan" title="Pan (P or MMB drag)">Pan</button>
-      <button data-mode="move" title="Move selected (M / Arrow keys)">Move</button>      
+      <button data-mode="move" title="Move selected (M / Arrow keys)">Move</button>
+      <button id="orthoToggleBtn" title="Ortho mode (O)">Ortho</button>
+      <button id="gridToggleBtn" title="Toggle Grid (G)">Grid</button>
+      <button id="crosshairToggleBtn" title="Toggle Crosshair Length (X)">+</button>
+      <button id="junctionDotsBtn" title="Toggle Junction Dots">.</button>
     </div>
     <div class="vsep"></div> 
   <div class="group" id="paletteRow1">
@@ -181,7 +176,6 @@
     <div class="group">
       <button id="saveBtn" class="ok" title="Save JSON (Ctrl+S)">Save</button>
       <button id="loadBtn" title="Load JSON">Load</button>
-      <button id="gridToggleBtn" title="Toggle Grid (G)">Grid</button>
       <input id="fileInput" type="file" accept="application/json" style="display:none" />
     </div>
     <div style="margin-left:auto; color:#9aa3b2">Grid: <span id="gridSizeKbd" class="kbd">24px</span> · Snap: <span id="snapKbd" class="kbd">on</span></div>
@@ -217,6 +211,7 @@
           </marker>
         </defs>
         <rect id="gridRect" x="0" y="0" width="1600" height="1000" fill="url(#gridBold)" />
+        <g id="dotGrid"></g>
         <g id="wires"></g>
         <g id="junctions"></g>
         <g id="components"></g>

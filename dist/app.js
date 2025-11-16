@@ -68,8 +68,9 @@
     const projTitle = $q('#projTitle'); // uses .value later
     const countsEl = $q('#counts');
     const overlayMode = $q('#modeLabel');
-    // Grid visibility toggle state (persisted)
-    let showGrid = (localStorage.getItem('grid.visible') !== 'false');
+    let gridMode = localStorage.getItem('grid.mode') || 'line';
+    // Junction dots visibility toggle state (persisted)
+    let showJunctionDots = (localStorage.getItem('junctionDots.visible') !== 'false');
     // UI button ref (may be used before DOM-ready in some cases; guard accordingly)
     let gridToggleBtnEl = null;
     // Track Shift key state globally so we can enforce orthogonal preview even
@@ -80,6 +81,16 @@
         globalShiftDown = true; });
     window.addEventListener('keyup', (e) => { if (e.key === 'Shift')
         globalShiftDown = false; });
+    // Ortho mode: when true, all wiring is forced orthogonal (persisted)
+    let orthoMode = (localStorage.getItem('ortho.mode') === 'true');
+    function saveOrthoMode() { localStorage.setItem('ortho.mode', orthoMode ? 'true' : 'false'); }
+    // Crosshair display mode: 'full' or 'short'
+    let crosshairMode = localStorage.getItem('crosshair.mode') || 'full';
+    let connectionHint = null;
+    const HINT_SNAP_TOLERANCE_PX = 5; // Direct pixel tolerance for snap detection
+    const HINT_UNLOCK_THRESHOLD_PX = 5; // Direct pixel threshold for unlocking - same as snap for consistent behavior
+    // Visual shift indicator for temporary ortho mode
+    let shiftOrthoVisualActive = false;
     let mode = 'select';
     let placeType = null;
     // Selection object: prefer `wire.id` for segment selections. `segIndex` is
@@ -237,17 +248,68 @@
                 snapK.textContent = 'on';
         }
         catch (err) { /* ignore */ }
-        // Ensure gridRect visibility matches `showGrid` state
+        // Update grid display based on gridMode
         try {
             const rEl = document.getElementById('gridRect');
             if (rEl) {
-                if (showGrid)
+                if (gridMode === 'line') {
                     rEl.setAttribute('fill', 'url(#gridBold)');
-                else
+                }
+                else {
                     rEl.setAttribute('fill', 'none');
+                }
             }
         }
         catch (_) { }
+        // Render dot grid with zoom-based spacing
+        const dotGridEl = document.getElementById('dotGrid');
+        if (dotGridEl && gridMode === 'dot') {
+            dotGridEl.replaceChildren();
+            // Calculate dot spacing based on zoom level
+            // At 25% zoom (zoom=0.25): 250 mils spacing (50x base 5 mils)
+            // At 800% zoom (zoom=8): 200 mils spacing (40x base 5 mils)
+            // Linear interpolation between these points
+            const zoom25 = 0.25, zoom800 = 8;
+            const spacing25Mils = 250, spacing800Mils = 200;
+            let dotSpacingMils;
+            if (zoom <= zoom25) {
+                dotSpacingMils = spacing25Mils;
+            }
+            else if (zoom >= zoom800) {
+                dotSpacingMils = spacing800Mils;
+            }
+            else {
+                // Linear interpolation
+                const t = (zoom - zoom25) / (zoom800 - zoom25);
+                dotSpacingMils = spacing25Mils + t * (spacing800Mils - spacing25Mils);
+            }
+            // Convert mils to user units
+            const dotSpacingNm = dotSpacingMils * NM_PER_MIL;
+            const dotSpacingUser = nmToPx(dotSpacingNm) / Math.max(1e-6, scale);
+            // Calculate dot radius (1 screen pixel)
+            const dotRadius = 1 / scale;
+            // Calculate visible bounds with padding
+            const startX = Math.floor(viewX / dotSpacingUser) * dotSpacingUser;
+            const endX = viewX + viewW + dotSpacingUser;
+            const startY = Math.floor(viewY / dotSpacingUser) * dotSpacingUser;
+            const endY = viewY + viewH + dotSpacingUser;
+            // Draw dots at grid intersections
+            for (let x = startX; x <= endX; x += dotSpacingUser) {
+                for (let y = startY; y <= endY; y += dotSpacingUser) {
+                    const dot = document.createElementNS(ns, 'circle');
+                    dot.setAttribute('cx', String(x));
+                    dot.setAttribute('cy', String(y));
+                    dot.setAttribute('r', String(dotRadius));
+                    dot.setAttribute('fill', 'var(--grid)');
+                    dot.setAttribute('pointer-events', 'none');
+                    dotGridEl.appendChild(dot);
+                }
+            }
+            dotGridEl.style.display = '';
+        }
+        else if (dotGridEl) {
+            dotGridEl.style.display = 'none';
+        }
     }
     function updateZoomUI() {
         const z = Math.round(zoom * 100);
@@ -261,30 +323,33 @@
             gridToggleBtnEl = document.getElementById('gridToggleBtn');
         if (!gridToggleBtnEl)
             return;
-        if (showGrid) {
-            gridToggleBtnEl.classList.remove('dim');
-            gridToggleBtnEl.classList.add('grid-on');
-            gridToggleBtnEl.classList.remove('grid-off');
-            gridToggleBtnEl.style.fontWeight = '';
+        if (gridMode === 'off') {
+            gridToggleBtnEl.classList.add('dim');
+            gridToggleBtnEl.textContent = 'Grid';
         }
         else {
-            gridToggleBtnEl.classList.add('dim');
-            gridToggleBtnEl.classList.add('grid-off');
-            gridToggleBtnEl.classList.remove('grid-on');
-            gridToggleBtnEl.style.fontWeight = '400';
+            gridToggleBtnEl.classList.remove('dim');
+            if (gridMode === 'line') {
+                gridToggleBtnEl.textContent = 'Grid: Lines';
+            }
+            else {
+                gridToggleBtnEl.textContent = 'Grid: Dots';
+            }
         }
     }
-    function toggleGrid(visible) {
-        showGrid = typeof visible === 'boolean' ? visible : !showGrid;
-        localStorage.setItem('grid.visible', showGrid ? 'true' : 'false');
-        // Apply immediately to the rect if present
-        const rEl = document.getElementById('gridRect');
-        if (rEl) {
-            if (showGrid)
-                rEl.setAttribute('fill', 'url(#gridBold)');
-            else
-                rEl.setAttribute('fill', 'none');
+    function toggleGrid() {
+        // Cycle through: line -> dot -> off -> line
+        if (gridMode === 'line') {
+            gridMode = 'dot';
         }
+        else if (gridMode === 'dot') {
+            gridMode = 'off';
+        }
+        else {
+            gridMode = 'line';
+        }
+        localStorage.setItem('grid.mode', gridMode);
+        redrawGrid();
         updateGridToggleButton();
     }
     let counters = { resistor: 1, capacitor: 1, inductor: 1, diode: 1, npn: 1, pnp: 1, ground: 1, battery: 1, ac: 1, wire: 1 };
@@ -416,11 +481,18 @@
         countsEl.textContent = `Components: ${components.length} · Wires: ${wires.length}`;
     }
     function setMode(m) {
+        // Finalize any active wire drawing before mode change
+        if (drawing.active && drawing.points.length > 0) {
+            finishWire();
+        }
         mode = m;
         overlayMode.textContent = m[0].toUpperCase() + m.slice(1);
         $qa('#modeGroup button').forEach(b => {
             b.classList.toggle('active', b.dataset.mode === m);
         });
+        // Ensure ortho button stays in sync when switching modes
+        if (updateOrthoButtonVisual)
+            updateOrthoButtonVisual();
         // reflect mode on body for cursor styles
         document.body.classList.remove('mode-select', 'mode-wire', 'mode-delete', 'mode-place', 'mode-pan', 'mode-move');
         document.body.classList.add(`mode-${m}`);
@@ -475,6 +547,109 @@
             if (e.key === 'g' || e.key === 'G') {
                 e.preventDefault();
                 toggleGrid();
+            }
+        });
+    })();
+    // Wire up Junction Dots toggle button
+    (function attachJunctionDotsToggle() {
+        try {
+            const junctionDotsBtn = document.getElementById('junctionDotsBtn');
+            if (junctionDotsBtn) {
+                function updateJunctionDotsButton() {
+                    if (showJunctionDots) {
+                        junctionDotsBtn.classList.add('active');
+                    }
+                    else {
+                        junctionDotsBtn.classList.remove('active');
+                    }
+                }
+                function toggleJunctionDots() {
+                    showJunctionDots = !showJunctionDots;
+                    localStorage.setItem('junctionDots.visible', showJunctionDots ? 'true' : 'false');
+                    updateJunctionDotsButton();
+                    redraw();
+                }
+                junctionDotsBtn.addEventListener('click', toggleJunctionDots);
+                // initialize appearance
+                updateJunctionDotsButton();
+            }
+        }
+        catch (_) { }
+    })();
+    // Wire up Ortho mode toggle button and shortcut (O)
+    let updateOrthoButtonVisual = null;
+    (function attachOrthoToggle() {
+        const orthoBtn = document.getElementById('orthoToggleBtn');
+        function updateOrthoButton() {
+            if (!orthoBtn)
+                return;
+            // Show active if ortho mode is on OR if shift visual is active
+            if (orthoMode || shiftOrthoVisualActive) {
+                orthoBtn.classList.add('active');
+            }
+            else {
+                orthoBtn.classList.remove('active');
+            }
+        }
+        updateOrthoButtonVisual = updateOrthoButton;
+        function toggleOrtho() {
+            orthoMode = !orthoMode;
+            saveOrthoMode();
+            updateOrthoButton();
+        }
+        if (orthoBtn) {
+            orthoBtn.addEventListener('click', () => { toggleOrtho(); });
+            updateOrthoButton();
+        }
+        window.addEventListener('keydown', (e) => {
+            if (e.altKey || e.ctrlKey || e.metaKey)
+                return;
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable))
+                return;
+            if (e.key === 'o' || e.key === 'O') {
+                e.preventDefault();
+                toggleOrtho();
+            }
+        });
+    })();
+    // Wire up Crosshair toggle button and shortcut (X)
+    (function attachCrosshairToggle() {
+        const crosshairBtn = document.getElementById('crosshairToggleBtn');
+        function updateCrosshairButton() {
+            if (!crosshairBtn)
+                return;
+            // Full mode: outline in crosshair color (darker gray #888)
+            // Short mode: outline in lighter gray
+            if (crosshairMode === 'full') {
+                crosshairBtn.style.outline = '2px solid #888';
+            }
+            else {
+                crosshairBtn.style.outline = '2px solid #555';
+            }
+        }
+        function toggleCrosshairMode() {
+            crosshairMode = crosshairMode === 'full' ? 'short' : 'full';
+            localStorage.setItem('crosshair.mode', crosshairMode);
+            updateCrosshairButton();
+            // Refresh crosshair display if in wire mode
+            if (mode === 'wire' && drawing.cursor) {
+                renderCrosshair(drawing.cursor.x, drawing.cursor.y);
+            }
+        }
+        if (crosshairBtn) {
+            crosshairBtn.addEventListener('click', toggleCrosshairMode);
+            updateCrosshairButton();
+        }
+        window.addEventListener('keydown', (e) => {
+            if (e.altKey || e.ctrlKey || e.metaKey)
+                return;
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable))
+                return;
+            if (e.key === 'x' || e.key === 'X') {
+                e.preventDefault();
+                toggleCrosshairMode();
             }
         });
     })();
@@ -976,6 +1151,27 @@
             dot.setAttribute('stroke-width', '1');
             gJunctions.appendChild(dot);
         }
+        // Draw junction dots at wire endpoints if enabled
+        if (showJunctionDots) {
+            const scale = svg.clientWidth / Math.max(1, viewW);
+            const dotRadius = 3 / scale; // 3 screen pixels
+            for (const w of wires) {
+                if (w.points.length < 2)
+                    continue;
+                // Draw dots at first and last points
+                for (const pt of [w.points[0], w.points[w.points.length - 1]]) {
+                    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    setAttr(dot, 'cx', pt.x);
+                    setAttr(dot, 'cy', pt.y);
+                    setAttr(dot, 'r', dotRadius);
+                    dot.setAttribute('fill', 'white');
+                    dot.setAttribute('stroke', 'black');
+                    dot.setAttribute('stroke-width', String(1 / scale)); // 1 screen pixel
+                    dot.setAttribute('pointer-events', 'none');
+                    gJunctions.appendChild(dot);
+                }
+            }
+        }
         updateSelectionOutline();
         updateCounts();
         // Endpoint selection squares (overlay). Visible while placing wires or components
@@ -1002,21 +1198,13 @@
                 const half = side / 2;
                 const ends = [w.points[0], w.points[w.points.length - 1]];
                 for (const [ei, pt] of ends.map((p, i) => [i, p])) {
-                    // Use base-grid-snapped anchor so clicks match anchor-based snapping elsewhere
-                    const anchor = { x: snapToBaseScalar(pt.x), y: snapToBaseScalar(pt.y) };
                     // Choose a fixed on-screen size (px) so squares remain visible when zoomed out.
-                    // Use a fixed on-screen size so endpoint squares are consistent across wires
-                    // and zoom levels. Chosen value matches the current preferred appearance.
                     const desiredScreenPx = 9;
                     const scale = userScale(); // screen px per user unit
-                    // Align the rectangle to integer screen pixels to avoid subpixel mis-centering.
-                    const anchorScreenX = Math.round(anchor.x * scale);
-                    const anchorScreenY = Math.round(anchor.y * scale);
-                    const rxScreen = Math.round(anchorScreenX - desiredScreenPx / 2);
-                    const ryScreen = Math.round(anchorScreenY - desiredScreenPx / 2);
-                    const widthUser = Math.max(1, desiredScreenPx / Math.max(1e-6, scale));
-                    const rx = rxScreen / Math.max(1e-6, scale);
-                    const ry = ryScreen / Math.max(1e-6, scale);
+                    const widthUser = desiredScreenPx / Math.max(1e-6, scale);
+                    // Center the square directly on the actual wire point in SVG coordinates
+                    const rx = pt.x - widthUser / 2;
+                    const ry = pt.y - widthUser / 2;
                     const rect = document.createElementNS(ns, 'rect');
                     rect.setAttribute('data-endpoint', '1');
                     rect.setAttribute('x', String(rx));
@@ -1028,6 +1216,7 @@
                     rect.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
                     rect.style.cursor = 'pointer';
                     // store snapped anchor coordinates for handler
+                    const anchor = { x: snapToBaseScalar(pt.x), y: snapToBaseScalar(pt.y) };
                     rect.endpoint = { x: anchor.x, y: anchor.y };
                     rect.wireId = w.id;
                     rect.endpointIndex = ei; // 0=start, 1=end
@@ -1063,20 +1252,10 @@
                                 drawing.cursor = { x: ep.x, y: ep.y };
                             }
                             else {
-                                // If Shift is held, constrain to orthogonal relative to first point
-                                const last = drawing.points && drawing.points.length > 0 ? drawing.points[drawing.points.length - 1] : null;
-                                let nx = ep.x, ny = ep.y;
-                                if (last && ((ev.shiftKey) || globalShiftDown)) {
-                                    // choose axis by larger delta from last point
-                                    const dx = Math.abs(nx - last.x);
-                                    const dy = Math.abs(ny - last.y);
-                                    if (dx >= dy)
-                                        ny = last.y;
-                                    else
-                                        nx = last.x;
-                                }
-                                drawing.points.push({ x: nx, y: ny });
-                                drawing.cursor = { x: nx, y: ny };
+                                // Use exact endpoint coordinates - don't apply ortho constraints
+                                // when clicking on an endpoint square, we want precise connection
+                                drawing.points.push({ x: ep.x, y: ep.y });
+                                drawing.cursor = { x: ep.x, y: ep.y };
                             }
                             renderDrawing();
                             redraw();
@@ -1819,17 +1998,50 @@
                 drawing.cursor = { x, y };
             }
             else {
-                // Respect Shift: constrain the new point to orthogonal relative to last point
-                let nx = x, ny = y;
-                const last = drawing.points && drawing.points.length > 0 ? drawing.points[drawing.points.length - 1] : null;
-                if (last && (e.shiftKey || globalShiftDown)) {
-                    const dx = Math.abs(nx - last.x), dy = Math.abs(ny - last.y);
-                    if (dx >= dy)
-                        ny = last.y;
-                    else
-                        nx = last.x;
+                // Check if we clicked on an endpoint square (during drawing)
+                const tgt = e.target;
+                // Check if the target or any parent has endpoint data
+                let endpointData = null;
+                // First check if target is a rect with endpoint data
+                if (tgt && tgt.tagName === 'rect' && tgt.endpoint) {
+                    endpointData = tgt.endpoint;
+                }
+                // Also check if target is within gDrawing or gOverlay and has endpoint rects nearby
+                if (!endpointData && tgt) {
+                    // Check all rect elements in overlay and drawing layers for endpoint data
+                    const allRects = [
+                        ...$qa('rect[data-endpoint]', gOverlay),
+                        ...$qa('rect', gDrawing)
+                    ];
+                    for (const rect of allRects) {
+                        if (rect.endpoint) {
+                            const ep = rect.endpoint;
+                            // Check if click is within this rect's bounds
+                            const rectBounds = rect.getBBox();
+                            const pt = svgPoint(e);
+                            if (pt.x >= rectBounds.x && pt.x <= rectBounds.x + rectBounds.width &&
+                                pt.y >= rectBounds.y && pt.y <= rectBounds.y + rectBounds.height) {
+                                endpointData = ep;
+                                break;
+                            }
+                        }
+                    }
+                }
+                let nx, ny;
+                if (endpointData) {
+                    // Use the exact anchor position stored on the endpoint square
+                    nx = endpointData.x;
+                    ny = endpointData.y;
+                }
+                else {
+                    // Use the cursor position which already respects ortho mode and connection hints
+                    // This ensures clicks place points where the visual preview shows them
+                    nx = drawing.cursor ? drawing.cursor.x : x;
+                    ny = drawing.cursor ? drawing.cursor.y : y;
                 }
                 drawing.points.push({ x: nx, y: ny });
+                // Clear connection hint after placing a point
+                connectionHint = null;
                 drawing.cursor = { x: nx, y: ny };
             }
             renderDrawing();
@@ -1869,21 +2081,202 @@
             updateMarqueeTo(svgPoint(e));
         }
         if (mode === 'wire' && drawing.active) {
-            // enforce orthogonal preview while Shift is down (or globally tracked)
+            // enforce orthogonal preview while Shift is down (or globally tracked) or when ortho mode is on
             const isShift = e.shiftKey || globalShiftDown;
-            if (isShift && drawing.points && drawing.points.length > 0) {
+            // Update visual indicator for shift-based temporary ortho (only if ortho mode is not already active)
+            if (!orthoMode && isShift && !shiftOrthoVisualActive) {
+                shiftOrthoVisualActive = true;
+                if (updateOrthoButtonVisual)
+                    updateOrthoButtonVisual();
+            }
+            else if (!orthoMode && !isShift && shiftOrthoVisualActive) {
+                shiftOrthoVisualActive = false;
+                if (updateOrthoButtonVisual)
+                    updateOrthoButtonVisual();
+            }
+            const forceOrtho = isShift || orthoMode;
+            if (drawing.points && drawing.points.length > 0) {
                 const last = drawing.points[drawing.points.length - 1];
                 const dx = Math.abs(x - last.x), dy = Math.abs(y - last.y);
-                if (dx >= dy)
-                    y = last.y;
-                else
-                    x = last.x;
+                // Apply standard ortho constraint FIRST (if no hint is active yet)
+                if (!connectionHint && forceOrtho) {
+                    if (dx >= dy)
+                        y = last.y;
+                    else
+                        x = last.x;
+                }
+                // Connection hint logic: try to lock onto nearby wire endpoint X or Y axis
+                // Now uses ortho-constrained x,y if ortho is active
+                // Convert pixel tolerances to SVG user coordinates based on current zoom
+                const scale = svg.clientWidth / Math.max(1, viewW); // screen px per user unit
+                const snapTol = HINT_SNAP_TOLERANCE_PX / scale; // convert to SVG user units
+                const unlockThresh = HINT_UNLOCK_THRESHOLD_PX / scale; // convert to SVG user units
+                // Collect all wire endpoints as candidates
+                const candidates = [];
+                // Get the first point of the wire being drawn (to exclude it from candidates)
+                const drawingStartPt = drawing.points.length > 0 ? drawing.points[0] : null;
+                // Helper function to check if a point matches the drawing start point
+                const isDrawingStart = (pt) => {
+                    return drawingStartPt && pt.x === drawingStartPt.x && pt.y === drawingStartPt.y;
+                };
+                let wireEndpointCount = 0;
+                wires.forEach(w => {
+                    if (w.points && w.points.length >= 2) {
+                        // Add first endpoint if it's not the drawing start point
+                        const firstPt = w.points[0];
+                        if (!isDrawingStart(firstPt)) {
+                            candidates.push(firstPt);
+                            wireEndpointCount++;
+                        }
+                        // Add last endpoint if it's not the drawing start point
+                        const lastPt = w.points[w.points.length - 1];
+                        if (!isDrawingStart(lastPt)) {
+                            candidates.push(lastPt);
+                            wireEndpointCount++;
+                        }
+                    }
+                });
+                // Also include component pins if they're not the drawing start point
+                let componentPinCount = 0;
+                components.forEach(c => {
+                    const pins = compPinPositions(c);
+                    pins.forEach(p => {
+                        if (!isDrawingStart(p)) {
+                            candidates.push({ x: p.x, y: p.y });
+                            componentPinCount++;
+                        }
+                    });
+                });
+                // Include intermediate points of the wire being drawn
+                // Skip last 2 points: 
+                //   - drawing.points[drawing.points.length - 1]: current segment start
+                //   - drawing.points[drawing.points.length - 2]: previous segment end (same point, forms corner)
+                // Include all other placed points before those
+                let wirePointCandidates = 0;
+                for (let i = 0; i < drawing.points.length - 2; i++) {
+                    candidates.push({ x: drawing.points[i].x, y: drawing.points[i].y });
+                    wirePointCandidates++;
+                }
+                // Check if we should unlock (moved too far from the hint target)
+                if (connectionHint) {
+                    // Check distance from current mouse to the original target point
+                    const distFromTarget = Math.sqrt(Math.pow(x - connectionHint.targetPt.x, 2) +
+                        Math.pow(y - connectionHint.targetPt.y, 2));
+                    if (distFromTarget > unlockThresh) {
+                        connectionHint = null; // unlock
+                    }
+                }
+                if (!connectionHint && candidates.length > 0) {
+                    // Find the nearest candidate in EITHER X or Y direction (whichever is closer)
+                    // Exclude candidates where the hint line would be colinear with current segment
+                    let bestCand = null;
+                    let bestAxisDist = Infinity;
+                    let bestIsHorizontalHint = true; // true = horizontal hint line (lock Y), false = vertical hint line (lock X)
+                    // Helper to check if hint line would be problematic
+                    const shouldExcludeCandidate = (cand, isHorizontalHint) => {
+                        // Check if the line from cursor to candidate is colinear with line from last to cursor
+                        // Using cross product: if (cursor - last) × (candidate - cursor) ≈ 0, they're colinear
+                        const segmentX = x - last.x;
+                        const segmentY = y - last.y;
+                        const hintX = cand.x - x;
+                        const hintY = cand.y - y;
+                        const crossProduct = Math.abs(segmentX * hintY - segmentY * hintX);
+                        // Exclude if colinear with current segment
+                        if (crossProduct < 0.5)
+                            return true;
+                        // Also exclude if the hint direction matches the current dragging direction
+                        // If dragging vertically (dx < dy) and hint is vertical, exclude
+                        // If dragging horizontally (dx >= dy) and hint is horizontal, exclude
+                        const isDraggingVertically = dy > dx;
+                        const hintIsVertical = !isHorizontalHint;
+                        if (isDraggingVertically && hintIsVertical) {
+                            return true; // Exclude vertical hints when dragging vertically
+                        }
+                        if (!isDraggingVertically && !hintIsVertical) {
+                            return true; // Exclude horizontal hints when dragging horizontally
+                        }
+                        return false;
+                    };
+                    let checkCount = 0;
+                    candidates.forEach(cand => {
+                        // Check X-axis proximity (for vertical hint line - locks X, varies Y)
+                        const xDist = Math.abs(x - cand.x);
+                        if (xDist < snapTol && xDist < bestAxisDist && !shouldExcludeCandidate(cand, false)) {
+                            bestAxisDist = xDist;
+                            bestCand = cand;
+                            bestIsHorizontalHint = false; // vertical hint line
+                        }
+                        // Check Y-axis proximity (for horizontal hint line - locks Y, varies X)
+                        const yDist = Math.abs(y - cand.y);
+                        if (yDist < snapTol && yDist < bestAxisDist && !shouldExcludeCandidate(cand, true)) {
+                            bestAxisDist = yDist;
+                            bestCand = cand;
+                            bestIsHorizontalHint = true; // horizontal hint line
+                        }
+                        checkCount++;
+                    });
+                    if (bestCand) {
+                        // Snap the cursor position to align orthogonally with the candidate
+                        // The cursor will move to align on one axis with the candidate
+                        let snappedX = x;
+                        let snappedY = y;
+                        if (bestIsHorizontalHint) {
+                            // Horizontal hint: snap Y to candidate's Y (cursor moves to align horizontally)
+                            snappedY = bestCand.y;
+                            // X remains at current position
+                        }
+                        else {
+                            // Vertical hint: snap X to candidate's X (cursor moves to align vertically)
+                            snappedX = bestCand.x;
+                            // Y remains at current position
+                        }
+                        connectionHint = {
+                            lockedPt: { x: snappedX, y: snappedY }, // Lock snapped position
+                            targetPt: bestCand, // The candidate point to show hint line to
+                            wasOrthoActive: orthoMode || isShift,
+                            lockAxis: bestIsHorizontalHint ? 'y' : 'x' // Which axis was snapped
+                        };
+                    }
+                }
+                // Apply connection hint lock (but still respect ortho constraint)
+                if (connectionHint) {
+                    // Keep cursor at the snapped position
+                    x = connectionHint.lockedPt.x;
+                    y = connectionHint.lockedPt.y;
+                    // Re-apply ortho constraint to ensure we stay orthogonal
+                    if (forceOrtho) {
+                        if (dx >= dy) {
+                            // Moving horizontally: Y must stay locked to last.y
+                            y = last.y;
+                        }
+                        else {
+                            // Moving vertically: X must stay locked to last.x
+                            x = last.x;
+                        }
+                    }
+                    // Temporarily enable ortho if not already active
+                    if (!connectionHint.wasOrthoActive && !shiftOrthoVisualActive) {
+                        shiftOrthoVisualActive = true;
+                        if (updateOrthoButtonVisual)
+                            updateOrthoButtonVisual();
+                    }
+                }
+                // Note: Standard ortho was already applied earlier (before hint detection)
             }
             drawing.cursor = { x, y };
             renderDrawing();
+            renderConnectionHint();
         }
         else {
             drawing.cursor = null;
+            connectionHint = null; // clear hint when not drawing
+            renderConnectionHint(); // clear visual hint
+            // Clear shift visual if active
+            if (shiftOrthoVisualActive) {
+                shiftOrthoVisualActive = false;
+                if (updateOrthoButtonVisual)
+                    updateOrthoButtonVisual();
+            }
         }
         if (mode === 'place' && placeType) {
             renderGhostAt({ x, y }, placeType);
@@ -1959,6 +2352,13 @@
                 drawing.active = false;
                 drawing.points = [];
                 gDrawing.replaceChildren();
+                connectionHint = null;
+                renderConnectionHint(); // clear hint visual
+                if (shiftOrthoVisualActive) {
+                    shiftOrthoVisualActive = false;
+                    if (updateOrthoButtonVisual)
+                        updateOrthoButtonVisual();
+                }
                 return;
             }
             // If any non-none mode is active (wire/delete/pan/move/select), pressing
@@ -2203,6 +2603,13 @@
         drawing.active = false;
         drawing.points = [];
         drawing.cursor = null;
+        connectionHint = null;
+        renderConnectionHint(); // clear hint visual
+        if (shiftOrthoVisualActive) {
+            shiftOrthoVisualActive = false;
+            if (updateOrthoButtonVisual)
+                updateOrthoButtonVisual();
+        }
         gDrawing.replaceChildren();
         clearCrosshair();
         redraw();
@@ -2211,7 +2618,23 @@
         gDrawing.replaceChildren();
         if (!drawing.active)
             return;
-        const pts = drawing.cursor ? [...drawing.points, drawing.cursor] : drawing.points;
+        let pts = drawing.cursor ? [...drawing.points, drawing.cursor] : drawing.points;
+        // Apply ortho constraint to cursor position in rendered polyline if ortho mode is active
+        // This prevents any non-orthogonal lines from flickering during rendering
+        if (drawing.cursor && drawing.points.length > 0 && (orthoMode || globalShiftDown)) {
+            const last = drawing.points[drawing.points.length - 1];
+            const cursor = drawing.cursor;
+            const dx = Math.abs(cursor.x - last.x);
+            const dy = Math.abs(cursor.y - last.y);
+            let constrainedCursor = { ...cursor };
+            if (dx >= dy) {
+                constrainedCursor.y = last.y; // horizontal
+            }
+            else {
+                constrainedCursor.x = last.x; // vertical
+            }
+            pts = [...drawing.points, constrainedCursor];
+        }
         const pl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
         const drawColor = resolveWireColor(currentWireColorMode);
         pl.setAttribute('fill', 'none');
@@ -2222,10 +2645,70 @@
         pl.setAttribute('marker-start', 'url(#dot)');
         pl.setAttribute('points', pts.map(p => `${p.x},${p.y}`).join(' '));
         gDrawing.appendChild(pl);
+        // Draw junction dots at each placed point (not the cursor)
+        const scale = userScale(); // screen px per user unit
+        const dotRadius = 3 / scale; // 3 screen pixels
+        for (let i = 0; i < drawing.points.length; i++) {
+            const pt = drawing.points[i];
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', String(pt.x));
+            circle.setAttribute('cy', String(pt.y));
+            circle.setAttribute('r', String(dotRadius));
+            circle.setAttribute('fill', 'white');
+            circle.setAttribute('stroke', 'black');
+            circle.setAttribute('stroke-width', String(1 / scale)); // 1 screen pixel
+            gDrawing.appendChild(circle);
+            // Also draw green endpoint squares at each placed point
+            const desiredScreenPx = 9;
+            const widthUser = desiredScreenPx / scale;
+            // Center the square directly on the actual wire point in SVG coordinates
+            const rx = pt.x - widthUser / 2;
+            const ry = pt.y - widthUser / 2;
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('x', String(rx));
+            rect.setAttribute('y', String(ry));
+            rect.setAttribute('width', String(widthUser));
+            rect.setAttribute('height', String(widthUser));
+            rect.setAttribute('fill', 'rgba(0,200,0,0.08)');
+            rect.setAttribute('stroke', 'lime');
+            rect.setAttribute('stroke-width', String(1 / scale));
+            rect.style.cursor = 'pointer';
+            // Store snapped anchor coordinates for click detection
+            const anchor = { x: snapToBaseScalar(pt.x), y: snapToBaseScalar(pt.y) };
+            rect.endpoint = { x: anchor.x, y: anchor.y };
+            gDrawing.appendChild(rect);
+        }
         // keep endpoint marker in sync with in-progress color
         const dot = document.querySelector('#dot circle');
         if (dot)
             dot.setAttribute('fill', drawColor);
+    }
+    // Render connection hint in overlay layer (above crosshair for visibility)
+    function renderConnectionHint() {
+        // Remove any existing hint
+        $qa('[data-hint]', gOverlay).forEach(el => el.remove());
+        if (connectionHint && drawing.active && drawing.points.length > 0) {
+            const hintLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            hintLine.setAttribute('data-hint', '1');
+            hintLine.setAttribute('stroke', '#00ff00'); // bright green
+            // Calculate stroke width that scales with zoom to stay visible
+            const scale = svg.clientWidth / Math.max(1, viewW);
+            const strokeWidth = 1 / scale; // 1 screen pixel
+            const dashLength = 10 / scale; // 10 screen pixels for dashes
+            const dashGap = 5 / scale; // 5 screen pixels for gaps
+            hintLine.setAttribute('stroke-width', String(strokeWidth));
+            hintLine.setAttribute('stroke-dasharray', `${dashLength},${dashGap}`);
+            hintLine.setAttribute('stroke-linecap', 'round');
+            hintLine.setAttribute('pointer-events', 'none');
+            hintLine.setAttribute('opacity', '0.8');
+            // Draw from the current cursor position to the target point
+            // The cursor has been snapped to align orthogonally with the target
+            hintLine.setAttribute('x1', String(drawing.cursor.x));
+            hintLine.setAttribute('y1', String(drawing.cursor.y));
+            hintLine.setAttribute('x2', String(connectionHint.targetPt.x));
+            hintLine.setAttribute('y2', String(connectionHint.targetPt.y));
+            gOverlay.appendChild(hintLine);
+        }
     }
     // ----- Crosshair overlay -----
     function clearCrosshair() {
@@ -2234,21 +2717,56 @@
     }
     function renderCrosshair(x, y) {
         clearCrosshair(); // remove previous crosshair lines, keep marquee intact
-        // span the *visible* viewBox, accounting for pan offsets
-        const xL = viewX, xR = viewX + viewW;
-        const yT = viewY, yB = viewY + viewH;
         const hline = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        hline.setAttribute('data-crosshair', '1');
-        setAttr(hline, 'x1', xL);
-        setAttr(hline, 'y1', y);
-        setAttr(hline, 'x2', xR);
-        setAttr(hline, 'y2', y);
         const vline = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        hline.setAttribute('data-crosshair', '1');
         vline.setAttribute('data-crosshair', '1');
-        setAttr(vline, 'x1', x);
-        setAttr(vline, 'y1', yT);
-        setAttr(vline, 'x2', x);
-        setAttr(vline, 'y2', yB);
+        if (crosshairMode === 'short') {
+            // Short crosshair: 40 pixels in each direction, light gray solid line
+            const halfLenPixels = 40;
+            const scale = svg.clientWidth / Math.max(1, viewW);
+            const halfLen = halfLenPixels / scale; // Convert to SVG user coordinates
+            const strokeWidth = 1 / scale; // 1 screen pixel
+            const xL = x - halfLen, xR = x + halfLen;
+            const yT = y - halfLen, yB = y + halfLen;
+            setAttr(hline, 'x1', xL);
+            setAttr(hline, 'y1', y);
+            setAttr(hline, 'x2', xR);
+            setAttr(hline, 'y2', y);
+            setAttr(vline, 'x1', x);
+            setAttr(vline, 'y1', yT);
+            setAttr(vline, 'x2', x);
+            setAttr(vline, 'y2', yB);
+            hline.style.stroke = '#999'; // light gray
+            vline.style.stroke = '#999';
+            hline.style.strokeWidth = String(strokeWidth);
+            vline.style.strokeWidth = String(strokeWidth);
+            hline.style.strokeDasharray = 'none'; // solid line
+            vline.style.strokeDasharray = 'none';
+            hline.style.pointerEvents = 'none';
+            vline.style.pointerEvents = 'none';
+        }
+        else {
+            // Full-screen crosshair: span the visible viewBox, darker gray, dashed
+            const xL = viewX, xR = viewX + viewW;
+            const yT = viewY, yB = viewY + viewH;
+            setAttr(hline, 'x1', xL);
+            setAttr(hline, 'y1', y);
+            setAttr(hline, 'x2', xR);
+            setAttr(hline, 'y2', y);
+            setAttr(vline, 'x1', x);
+            setAttr(vline, 'y1', yT);
+            setAttr(vline, 'x2', x);
+            setAttr(vline, 'y2', yB);
+            hline.style.stroke = '#666'; // darker gray for full-screen
+            vline.style.stroke = '#666';
+            hline.style.strokeWidth = '1';
+            vline.style.strokeWidth = '1';
+            hline.style.strokeDasharray = '4 4'; // dashed
+            vline.style.strokeDasharray = '4 4';
+            hline.style.pointerEvents = 'none';
+            vline.style.pointerEvents = 'none';
+        }
         gOverlay.appendChild(hline);
         gOverlay.appendChild(vline);
     }
