@@ -399,27 +399,26 @@ let marquee: {
     if(dotGridEl && gridMode === 'dot'){
       dotGridEl.replaceChildren();
       
-      // Calculate dot spacing based on zoom level
-      // At 25% zoom (zoom=0.25): 250 mils spacing (50x base 5 mils)
-      // At 800% zoom (zoom=8): 200 mils spacing (40x base 5 mils)
-      // Linear interpolation between these points
-      const zoom25 = 0.25, zoom800 = 8;
-      const spacing25Mils = 250, spacing800Mils = 200;
+      // Calculate dot spacing to align with 50 mil snap grid
+      // 50 mils = 5 user units in our coordinate system (100 px/inch DPI)
+      // At low zoom: use 250 mils (25 user units) for visibility
+      // At high zoom (10x+): use 50 mils (5 user units) to match snap grid
       
-      let dotSpacingMils: number;
-      if(zoom <= zoom25){
-        dotSpacingMils = spacing25Mils;
-      } else if(zoom >= zoom800){
-        dotSpacingMils = spacing800Mils;
+      const zoomMin = 0.25, zoom1x = 10;
+      let snapMultiplier: number;
+      
+      if(zoom <= zoomMin){
+        snapMultiplier = 5; // 250 mils at low zoom
+      } else if(zoom >= zoom1x){
+        snapMultiplier = 1; // 50 mils from 10x zoom onward
       } else {
-        // Linear interpolation
-        const t = (zoom - zoom25) / (zoom800 - zoom25);
-        dotSpacingMils = spacing25Mils + t * (spacing800Mils - spacing25Mils);
+        // Interpolate from 5x to 1x
+        const t = (zoom - zoomMin) / (zoom1x - zoomMin);
+        snapMultiplier = 5 - t * 4; // 5 down to 1
       }
       
-      // Convert mils to user units
-      const dotSpacingNm = dotSpacingMils * NM_PER_MIL;
-      const dotSpacingUser = nmToPx(dotSpacingNm) / Math.max(1e-6, scale);
+      // Dot spacing in user units (50 mils = 5 user units)
+      const dotSpacingUser = nmToPx(SNAP_NM) * snapMultiplier;
       
       // Calculate dot radius (1 screen pixel)
       const dotRadius = 1 / scale;
@@ -639,10 +638,8 @@ let marquee: {
   let CURRENT_SNAP_USER_UNITS: number | null = null;
 
   const snap = (v: number): number => {
-    // Always snap to the implicit base 50-mil grid in user units. Visual minor grid
-    // spacing (`CURRENT_SNAP_USER_UNITS`) remains zoom-dependent for rendering only.
-    const scale = svg.clientWidth / Math.max(1, viewW); // screen px per user unit
-    const snapUnits = baseSnapUser(); // already rounded and >=1
+    // Always snap to the implicit base 50-mil grid in user units (5 user units = 50 mils)
+    const snapUnits = baseSnapUser(); // Returns 5 for 50 mil spacing
     return Math.round(v / snapUnits) * snapUnits;
   };
   const uid = (prefix: CounterKey): string => `${prefix}${counters[prefix]++}`;
@@ -1872,8 +1869,9 @@ let marquee: {
 
   // base snap in SVG user units corresponding to SNAP_NM (50 mils)
   function baseSnapUser(){
-    const scale = userScale();
-    return Math.max(1, Math.round(nmToPx(SNAP_NM) / Math.max(1e-6, scale)));
+    // 50 mils is always 5 user units in our coordinate system (100 px/inch DPI)
+    // This is independent of zoom - the viewBox scaling handles the visual zoom
+    return nmToPx(SNAP_NM); // Returns 5 user units for 50 mils
   }
 
   // Snap a scalar value to the base 50-mil grid in user units
@@ -2465,7 +2463,7 @@ let marquee: {
     e.preventDefault();
     const scale = (e.deltaY < 0) ? 1.1 : (1/1.1);
     const oldZoom = zoom;
-    const newZoom = clamp(oldZoom * scale, 0.25, 8);
+    const newZoom = clamp(oldZoom * scale, 0.25, 10);
     if (newZoom === oldZoom) return;
     // focal point in svg coords
     const fp = svgPoint(e);
@@ -3427,7 +3425,7 @@ let marquee: {
   }
 
   // Zoom controls
-  document.getElementById('zoomInBtn').addEventListener('click', ()=>{ zoom = Math.min(8, zoom*1.25); applyZoom(); });
+  document.getElementById('zoomInBtn').addEventListener('click', ()=>{ zoom = Math.min(10, zoom*1.25); applyZoom(); });
   document.getElementById('zoomOutBtn').addEventListener('click', ()=>{ zoom = Math.max(0.25, zoom/1.25); applyZoom(); });
   document.getElementById('zoomResetBtn').addEventListener('click', ()=>{ zoom = 1; applyZoom(); viewX=0; viewY=0; applyZoom(); });
   document.getElementById('zoomPct')!.addEventListener('change', (e) => {
@@ -3435,7 +3433,7 @@ let marquee: {
     const raw = (input?.value || '').trim();
     const n = raw.endsWith('%') ? parseFloat(raw) / 100 : parseFloat(raw);
     if (!isFinite(n) || n <= 0) { updateZoomUI(); return; }
-    zoom = clamp(n, 0.25, 8); applyZoom();
+    zoom = clamp(n, 0.25, 10); applyZoom();
   });
 
   function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
