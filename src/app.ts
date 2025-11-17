@@ -3562,12 +3562,6 @@ let marquee: {
     capUse.textContent = 'Net Class';
     const selNetClass = document.createElement('select');
     
-    // Add "None" option for custom properties
-    const noneOpt = document.createElement('option');
-    noneOpt.value = '__none__';
-    noneOpt.textContent = 'None (custom properties)';
-    selNetClass.appendChild(noneOpt);
-    
     // Add all available net classes
     Array.from(nets).sort().forEach(netName => {
       const o = document.createElement('option');
@@ -3577,10 +3571,24 @@ let marquee: {
     });
     
     // Set current value
-    selNetClass.value = WIRE_DEFAULTS.useNetclass ? activeNetClass : '__none__';
+    selNetClass.value = activeNetClass;
     
     rowUse.append(capUse, selNetClass);
     box.appendChild(rowUse);
+
+    // Use custom properties checkbox
+    const rowCustom = document.createElement('label');
+    rowCustom.style.display = 'flex';
+    rowCustom.style.alignItems = 'center';
+    rowCustom.style.gap = '6px';
+    rowCustom.style.marginTop = '4px';
+    const chkCustom = document.createElement('input');
+    chkCustom.type = 'checkbox';
+    chkCustom.checked = !WIRE_DEFAULTS.useNetclass;
+    const lblCustom = document.createElement('span');
+    lblCustom.textContent = 'Use custom properties';
+    rowCustom.append(chkCustom, lblCustom);
+    box.appendChild(rowCustom);
 
     // Width (mm)
     const rowW = document.createElement('label');
@@ -3652,13 +3660,14 @@ let marquee: {
         }
         b.addEventListener('click', (ev)=>{
           // Switch to custom color immediately
+          chkCustom.checked = true;
           WIRE_DEFAULTS.useNetclass = false;
           const rgba = cssToRGBA01(String(col)); rgba.a = parseFloat(inpA.value) || 1;
           WIRE_DEFAULTS.stroke.color = rgba;
-          selNetClass.value = '__none__';
           mirrorDefaultsIntoLegacyColorMode();
           saveWireDefaults();
           syncWireToolbar();
+          setEnabledStates();
           // update inputs + preview
           inpColor.value = String(col as string);
           refreshPreview();
@@ -3726,21 +3735,39 @@ let marquee: {
     }
 
     function setEnabledStates(){
-      const on = (selNetClass.value === '__none__');
-      inpW.disabled = !on;
-      selS.disabled = !on;
-      inpColor.disabled = !on;
-      inpA.disabled = !on;
+      const useCustom = chkCustom.checked;
+      inpW.disabled = !useCustom;
+      selS.disabled = !useCustom;
+      inpColor.disabled = !useCustom;
+      inpA.disabled = !useCustom;
     }
 
     // Wire up events
     selNetClass.onchange = () => {
-      if(selNetClass.value === '__none__'){
-        WIRE_DEFAULTS.useNetclass = false;
-      } else {
-        WIRE_DEFAULTS.useNetclass = true;
-        activeNetClass = selNetClass.value;
-        renderNetList();
+      activeNetClass = selNetClass.value;
+      renderNetList();
+      if (!chkCustom.checked) {
+        // If using net class properties, update display
+        mirrorDefaultsIntoLegacyColorMode();
+        saveWireDefaults();
+        syncWireToolbar();
+        setEnabledStates();
+        syncAllFieldsToEffective();
+        refreshPreview();
+      }
+    };
+
+    chkCustom.onchange = () => {
+      WIRE_DEFAULTS.useNetclass = !chkCustom.checked;
+      if (chkCustom.checked) {
+        // Switching to custom: populate with current net class values
+        const nc = NET_CLASSES[activeNetClass] || NET_CLASSES.default;
+        WIRE_DEFAULTS.stroke = { 
+          width: nc.wire.width, 
+          type: nc.wire.type, 
+          color: { ...nc.wire.color } 
+        };
+        (WIRE_DEFAULTS.stroke as any).widthNm = Math.round(nc.wire.width * NM_PER_MM);
       }
       mirrorDefaultsIntoLegacyColorMode();
       saveWireDefaults();
@@ -3760,14 +3787,14 @@ let marquee: {
       // update defaults using mm for backward compatibility, but keep widthNm for internal precision
       WIRE_DEFAULTS.stroke.width = mmVal;
       (WIRE_DEFAULTS.stroke as any).widthNm = parsed.nm;
-      // If a positive width is typed, treat it as explicit/custom immediately
-      if (mmVal > 0 && WIRE_DEFAULTS.useNetclass) {
+      // If a positive width is typed, enable custom properties mode
+      if (mmVal > 0 && !chkCustom.checked) {
+        chkCustom.checked = true;
         WIRE_DEFAULTS.useNetclass = false;
         if (WIRE_DEFAULTS.stroke.type === 'default') {
           WIRE_DEFAULTS.stroke.type = 'solid';
           selS.value = 'solid';
         }
-        selNetClass.value = '__none__';
         setEnabledStates();
       }
       mirrorDefaultsIntoLegacyColorMode();
@@ -3806,8 +3833,7 @@ let marquee: {
       const val = selS.value as StrokeType;
 
       if (val === 'default') {
-        // Now: only defer the LINE STYLE to the netclass. Do not change the checkbox,
-        // width, or color. Width==0 still means "use netclass width" and is independent.
+        // Only defer the LINE STYLE to the netclass
         WIRE_DEFAULTS.stroke.type = 'default';
       } else {
         WIRE_DEFAULTS.stroke.type = val;
@@ -3815,8 +3841,7 @@ let marquee: {
           WIRE_DEFAULTS.stroke.width = 0.25; // give it a sane visible width
         }
       }
-      // Reflect dropdown + toolbar + preview instantly
-      selNetClass.value = WIRE_DEFAULTS.useNetclass ? activeNetClass : '__none__';
+      // Reflect toolbar + preview instantly
       mirrorDefaultsIntoLegacyColorMode();
       saveWireDefaults();
       syncWireToolbar();
@@ -4176,12 +4201,6 @@ let marquee: {
       const netLbl = document.createElement('label'); netLbl.textContent='Net Class'; netLbl.style.width='90px';
       const netSel = document.createElement('select');
       
-      // Add "None" option for custom properties
-      const noneOpt = document.createElement('option');
-      noneOpt.value = '__none__';
-      noneOpt.textContent = 'None (custom properties)';
-      netSel.appendChild(noneOpt);
-      
       // Populate with all available nets
       Array.from(nets).sort().forEach(netName => {
         const o = document.createElement('option');
@@ -4194,58 +4213,78 @@ let marquee: {
       netRow.appendChild(netSel);
       wrap.appendChild(netRow);
 
-      // Set net dropdown initial value based on wire's current state
-      const isUsingNC = () => { ensureStroke(w); return (w.stroke!.type === 'default' && w.stroke!.width <= 0); };
-      netSel.value = isUsingNC() ? (w.netId || activeNetClass) : '__none__';
+      // Set net dropdown initial value
+      netSel.value = w.netId || activeNetClass;
+
+      // Use custom properties checkbox
+      const customRow = document.createElement('div'); customRow.className='row';
+      const customLbl = document.createElement('label'); customLbl.style.display='flex'; customLbl.style.alignItems='center'; customLbl.style.gap='6px';
+      const chkCustom = document.createElement('input');
+      chkCustom.type = 'checkbox';
+      const hasCustomProps = () => { 
+        ensureStroke(w); 
+        return w.stroke!.width > 0 || (w.stroke!.type !== 'default' && w.stroke!.type !== undefined);
+      };
+      chkCustom.checked = hasCustomProps();
+      const lblCustomText = document.createElement('span');
+      lblCustomText.textContent = 'Use custom properties';
+      customLbl.append(chkCustom, lblCustomText);
+      customRow.appendChild(customLbl);
+      wrap.appendChild(customRow);
       
       // ---- Wire Stroke (KiCad-style) ----
       (function(){
         ensureStroke(w);
         const holder = document.createElement('div');
         
-        // Net selection handler - updates wire to use net class or custom properties (per-segment only)
+        // Net selection handler - updates wire's net class assignment
         netSel.onchange = () => {
           ensureStroke(w);
-          // Update active net class if a net class is selected
-          if(netSel.value !== '__none__'){
-            activeNetClass = netSel.value;
-            renderNetList();
-          }
+          activeNetClass = netSel.value;
+          renderNetList();
+          w.netId = netSel.value;
           
-          // Apply changes only to this specific wire segment
-          if (netSel.value !== '__none__') {
-            // Delegate styling to netclass/theme (width=0, type='default' signals use netclass)
+          if (!chkCustom.checked) {
+            // If not using custom properties, update to use net class visuals
             const netClass = NET_CLASSES[netSel.value];
             const patch: Partial<Stroke> = { width: 0, type: 'default' };
-            ensureStroke(w);
             w.stroke = { ...(w.stroke as Stroke), ...patch };
-            delete (w.stroke as any).widthNm; // Clear precision width so netclass width is used
+            delete (w.stroke as any).widthNm;
             w.color = rgba01ToCss(netClass.wire.color);
-            w.netId = netSel.value;
-            updateWireDOM(w); 
+            updateWireDOM(w);
             redrawCanvasOnly();
-            selection = { kind: 'wire', id: w.id, segIndex: null };
-          } else {
-            // Switch to custom properties: use the raw net class properties as starting point (not rendered/converted)
-            const nc = netClassForWire(w);
-            const rawColor = nc.wire.color; // Get raw color without black/white conversions
-            const eff = effectiveStroke(w, nc, THEME); // Still use effective for width/type
-            const patch: Partial<Stroke> = {
-              width: Math.max(0.05, eff.width || 0.25),
-              type: (eff.type === 'default' ? 'solid' : eff.type) || 'solid',
-              color: rawColor
-            };
-            ensureStroke(w);
-            w.stroke = { ...(w.stroke as Stroke), ...patch };
-            (w.stroke as any).widthNm = Math.round(patch.width! * NM_PER_MM); // Set precision width
-            w.color = rgba01ToCss(rawColor);
-            w.netId = null; // Clear netId for custom properties
-            updateWireDOM(w); 
-            redrawCanvasOnly();
-            selection = { kind: 'wire', id: w.id, segIndex: null };
           }
           
-          // Keep the controls and preview in sync without forcing a full rebuild.
+          selection = { kind: 'wire', id: w.id, segIndex: null };
+          syncWidth(); syncStyle(); syncColor(); syncPreview();
+        };
+
+        // Custom properties checkbox handler
+        chkCustom.onchange = () => {
+          ensureStroke(w);
+          if (chkCustom.checked) {
+            // Switching to custom: populate with current net class values
+            const nc = NET_CLASSES[w.netId || activeNetClass] || NET_CLASSES.default;
+            const rawColor = nc.wire.color;
+            const patch: Partial<Stroke> = {
+              width: Math.max(0.05, nc.wire.width || 0.25),
+              type: (nc.wire.type === 'default' ? 'solid' : nc.wire.type) || 'solid',
+              color: rawColor
+            };
+            w.stroke = { ...(w.stroke as Stroke), ...patch };
+            (w.stroke as any).widthNm = Math.round(patch.width! * NM_PER_MM);
+            w.color = rgba01ToCss(rawColor);
+          } else {
+            // Switching to net class: use defaults
+            const netClass = NET_CLASSES[w.netId || activeNetClass];
+            const patch: Partial<Stroke> = { width: 0, type: 'default' };
+            w.stroke = { ...(w.stroke as Stroke), ...patch };
+            delete (w.stroke as any).widthNm;
+            w.color = rgba01ToCss(netClass.wire.color);
+          }
+          updateWireDOM(w);
+          redrawCanvasOnly();
+          selection = { kind: 'wire', id: w.id, segIndex: null };
           syncWidth(); syncStyle(); syncColor(); syncPreview();
         };
 
@@ -4257,7 +4296,7 @@ let marquee: {
           const eff = effectiveStroke(w, netClassForWire(w), THEME);
           const effNm = Math.round((eff.width || 0) * NM_PER_MM);
           wIn.value = formatDimForDisplay(effNm);
-          wIn.disabled = (netSel.value !== '__none__');
+          wIn.disabled = !chkCustom.checked;
         };
         // Live, non-destructive width updates while typing so the inspector DOM
         // isn't rebuilt on every keystroke. The final onchange will perform any
@@ -4315,7 +4354,11 @@ let marquee: {
         ['default','solid','dash','dot','dash_dot','dash_dot_dot'].forEach(v=>{
           const o=document.createElement('option'); o.value=v; o.textContent=v.replace(/_/g,'·'); sSel.appendChild(o);
         });
-        const syncStyle = ()=>{ const eff = effectiveStroke(w, netClassForWire(w), THEME); sSel.value = (netSel.value !== '__none__' ? 'default' : w.stroke!.type); sSel.disabled = (netSel.value !== '__none__'); };
+        const syncStyle = ()=>{ 
+          const eff = effectiveStroke(w, netClassForWire(w), THEME); 
+          sSel.value = (!chkCustom.checked ? 'default' : w.stroke!.type); 
+          sSel.disabled = !chkCustom.checked; 
+        };
         sSel.onchange = () => {
           ensureStroke(w);
           const val = (sSel.value || 'solid') as StrokeType;
@@ -4363,9 +4406,9 @@ let marquee: {
           // Use raw stored color, not effective stroke (which may convert black/white for visibility)
           ensureStroke(w);
           const rawColor = w.stroke!.color;
-          // If using netclass, show netclass color instead
-          if (netSel.value !== '__none__') {
-            const nc = NET_CLASSES[netSel.value];
+          // If not using custom properties, show netclass color instead
+          if (!chkCustom.checked) {
+            const nc = NET_CLASSES[w.netId || activeNetClass];
             const rgbCss = `rgba(${Math.round(nc.wire.color.r*255)},${Math.round(nc.wire.color.g*255)},${Math.round(nc.wire.color.b*255)},${nc.wire.color.a})`;
             const hex = colorToHex(rgbCss);
             cIn.value = hex;
@@ -4376,9 +4419,8 @@ let marquee: {
             cIn.value = hex;
             aIn.value = String(Math.max(0, Math.min(1, rawColor.a)));
           }
-          const disabled = (netSel.value !== '__none__');
-          cIn.disabled = disabled;
-          aIn.disabled = disabled;
+          cIn.disabled = !chkCustom.checked;
+          aIn.disabled = !chkCustom.checked;
         };
 
         function onColorCommit() {

@@ -271,30 +271,35 @@
     <ul>
       <li><b>Global Wire Stroke:</b> Click the <b>Wire</b> button in the toolbar
         <ul>
-          <li>Select a net class from the dropdown to use for all new wires</li>
-          <li>Select "None (custom properties)" to manually set width, style, and color</li>
+          <li>Select a net class from the dropdown for new wires</li>
+          <li>Check "Use custom properties" to manually set width, style, and color</li>
+          <li>Uncheck to use the selected net class's properties</li>
         </ul>
       </li>
       <li><b>Per-Wire Assignment:</b> Select a wire segment in the Inspector
         <ul>
-          <li>Choose a net class to apply that class's properties</li>
-          <li>Each segment can use a different net class independently</li>
+          <li>Choose a net class to assign the wire to that net (for connectivity)</li>
+          <li>Check "Use custom properties" to override visual properties</li>
+          <li>Wire belongs to the net class but can have custom appearance</li>
+          <li>Each segment can have different net class and custom properties</li>
         </ul>
       </li>
       <li><b>Active Net Class:</b> Click any net name in the Project panel to set it as active
         <ul>
           <li>Active net is shown in bold with a blue indicator (●)</li>
-          <li>New wires placed with net class mode use the active net class</li>
+          <li>New wires use the active net class by default</li>
         </ul>
       </li>
     </ul>
 
     <h4>Net Class vs Custom Properties</h4>
     <ul>
-      <li><b>Net Class Mode:</b> Wire inherits width, style, and color from the selected net class</li>
-      <li><b>Custom Mode:</b> Wire uses explicitly set properties that don't change with net class edits</li>
-      <li>Editing a net class updates all wires using that class automatically</li>
-      <li>Wires with custom properties are unaffected by net class changes</li>
+      <li><b>Net Class Properties:</b> Wire inherits width, style, and color from its assigned net class</li>
+      <li><b>Custom Properties:</b> Wire uses explicitly set properties independent of net class</li>
+      <li><b>Combined Mode:</b> Wire belongs to a net class (for connectivity) but has custom visual properties</li>
+      <li>Editing a net class updates all wires using that class's properties</li>
+      <li>Wires with custom properties are visually unaffected by net class edits</li>
+      <li>Switching from custom to net class properties preserves net class values as starting point</li>
     </ul>
 
     <h3>Junction Dots</h3>
