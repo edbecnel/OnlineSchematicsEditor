@@ -3108,8 +3108,8 @@
                 const segmentPts = [subPts[i], subPts[i + 1]];
                 // clone stroke so each segment can be edited independently
                 const segStroke = stroke ? { ...stroke, color: { ...stroke.color } } : undefined;
-                // Use activeNetClass when using netclass defaults, otherwise 'default'
-                const netId = WIRE_DEFAULTS.useNetclass ? activeNetClass : 'default';
+                // Always assign to activeNetClass (net assignment independent of custom properties)
+                const netId = activeNetClass;
                 wires.push({ id: uid('wire'), points: segmentPts, color: rgba01ToCss(segStroke ? segStroke.color : cssToRGBA01(curCol)), stroke: segStroke, netId });
             }
         }
@@ -3846,7 +3846,7 @@
                     selS.value = 'solid';
                 }
             }
-            selNetClass.value = WIRE_DEFAULTS.useNetclass ? activeNetClass : '__none__';
+            // Net class dropdown value is preserved
             mirrorDefaultsIntoLegacyColorMode();
             saveWireDefaults();
             syncWireToolbar();
