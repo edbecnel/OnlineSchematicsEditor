@@ -249,10 +249,49 @@
     </ul>
 
     <h3>Net Classes</h3>
+    <p>Net classes define wire appearance (width, line style, color) for groups of wires. Each net class can have custom properties that are applied to all wires using that class.</p>
+    
+    <h4>Creating Net Classes</h4>
     <ul>
-      <li>Define trace width and style for groups of nets</li>
-      <li>Useful for power nets vs. signal nets</li>
-      <li>Create net classes in the Project panel</li>
+      <li>In the <b>Project</b> panel, click <b>Add Net</b></li>
+      <li>Enter a name (e.g., "Power", "Signal", "Ground")</li>
+      <li>Click the <b>✎ edit</b> button to configure properties:
+        <ul>
+          <li>Wire Width (in current units)</li>
+          <li>Line Style (solid, dash, dot, etc.)</li>
+          <li>Wire Color with opacity</li>
+        </ul>
+      </li>
+    </ul>
+
+    <h4>Using Net Classes</h4>
+    <ul>
+      <li><b>Global Wire Stroke:</b> Click the <b>Wire</b> button in the toolbar
+        <ul>
+          <li>Select a net class from the dropdown to use for all new wires</li>
+          <li>Select "None (custom properties)" to manually set width, style, and color</li>
+        </ul>
+      </li>
+      <li><b>Per-Wire Assignment:</b> Select a wire segment in the Inspector
+        <ul>
+          <li>Choose a net class to apply that class's properties</li>
+          <li>Each segment can use a different net class independently</li>
+        </ul>
+      </li>
+      <li><b>Active Net Class:</b> Click any net name in the Project panel to set it as active
+        <ul>
+          <li>Active net is shown in bold with a blue indicator (●)</li>
+          <li>New wires placed with net class mode use the active net class</li>
+        </ul>
+      </li>
+    </ul>
+
+    <h4>Net Class vs Custom Properties</h4>
+    <ul>
+      <li><b>Net Class Mode:</b> Wire inherits width, style, and color from the selected net class</li>
+      <li><b>Custom Mode:</b> Wire uses explicitly set properties that don't change with net class edits</li>
+      <li>Editing a net class updates all wires using that class automatically</li>
+      <li>Wires with custom properties are unaffected by net class changes</li>
     </ul>
 
     <h3>Junction Dots</h3>

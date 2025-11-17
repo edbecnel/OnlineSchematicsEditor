@@ -489,6 +489,10 @@ let marquee: {
   // Core model arrays (global)
   let components: Component[] = [];
   let wires: Wire[] = [];
+  
+  // Nets collection: user-defined nets for manual assignment
+  let nets: Set<string> = new Set(['default']);
+  let activeNetClass: string = 'default';
 
   // Palette state: diode subtype selection
   let diodeSubtype: DiodeSubtype = 'generic';
@@ -509,7 +513,16 @@ let marquee: {
     }
   };
   function netClassForWire(w: Wire): NetClass {
-    return NET_CLASSES[w.netId || 'default'] || NET_CLASSES.default;
+    // Use wire's assigned netId if present
+    if(w.netId){
+      return NET_CLASSES[w.netId] || NET_CLASSES.default;
+    }
+    // If wire is using netclass defaults (width=0, type=default) but no netId, use active net class
+    if(w.stroke && w.stroke.width <= 0 && w.stroke.type === 'default'){
+      return NET_CLASSES[activeNetClass] || NET_CLASSES.default;
+    }
+    // Fallback to default
+    return NET_CLASSES.default;
   }
 
   type WireColorMode = 'custom' | 'auto' | 'white' | 'black' | 'red' | 'green' | 'blue' | 'yellow' | 'magenta' | 'cyan';
@@ -647,6 +660,396 @@ let marquee: {
 
   function updateCounts(){
     countsEl.textContent = `Components: ${components.length} · Wires: ${wires.length}`;
+  }
+
+  function renderNetList(){
+    const netListEl = document.getElementById('netList');
+    if(!netListEl) return;
+    
+    // Collect all nets currently in use by wires
+    const usedNets = new Set<string>();
+    wires.forEach(w => { if(w.netId) usedNets.add(w.netId); });
+    
+    // Merge with user-defined nets
+    usedNets.forEach(n => nets.add(n));
+    
+    if(nets.size === 0){
+      netListEl.textContent = 'No nets defined';
+      return;
+    }
+    
+    const netArray = Array.from(nets).sort();
+    netListEl.textContent = '';
+    
+    const ul = document.createElement('ul');
+    ul.style.margin = '0.5rem 0';
+    ul.style.padding = '0 0 0 1.2rem';
+    ul.style.listStyle = 'none';
+    
+    netArray.forEach(netName => {
+      const li = document.createElement('li');
+      li.style.marginBottom = '0.3rem';
+      li.style.display = 'flex';
+      li.style.alignItems = 'center';
+      li.style.gap = '0.5rem';
+      
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = netName;
+      nameSpan.style.flex = '1';
+      nameSpan.style.cursor = 'pointer';
+      nameSpan.title = 'Click to set as active net class';
+      
+      // Show active indicator
+      if(netName === activeNetClass){
+        nameSpan.style.fontWeight = 'bold';
+        nameSpan.style.color = 'var(--accent)';
+        const indicator = document.createElement('span');
+        indicator.textContent = ' ●';
+        indicator.style.fontSize = '0.7rem';
+        nameSpan.appendChild(indicator);
+      }
+      
+      // Click to set as active net class
+      nameSpan.onclick = () => {
+        activeNetClass = netName;
+        renderNetList();
+      };
+      
+      // Edit button for all nets
+      const editBtn = document.createElement('button');
+      editBtn.textContent = '✎';
+      editBtn.style.padding = '0.1rem 0.4rem';
+      editBtn.style.fontSize = '1rem';
+      editBtn.style.lineHeight = '1';
+      editBtn.style.cursor = 'pointer';
+      editBtn.title = 'Edit net properties';
+      editBtn.onclick = () => {
+        showNetPropertiesDialog(netName);
+      };
+      
+      li.appendChild(nameSpan);
+      li.appendChild(editBtn);
+      
+      // Delete button (except for 'default')
+      if(netName !== 'default'){
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '×';
+        delBtn.style.padding = '0.1rem 0.4rem';
+        delBtn.style.fontSize = '1.2rem';
+        delBtn.style.lineHeight = '1';
+        delBtn.style.cursor = 'pointer';
+        delBtn.title = 'Delete net';
+        delBtn.onclick = () => {
+          if(confirm(`Delete net "${netName}"? Wires using this net will be assigned to "default".`)){
+            nets.delete(netName);
+            delete NET_CLASSES[netName];
+            // Reassign any wires using this net to default
+            wires.forEach(w => { if(w.netId === netName) w.netId = 'default'; });
+            renderNetList();
+            redraw();
+          }
+        };
+        li.appendChild(delBtn);
+      }
+      
+      ul.appendChild(li);
+    });
+    
+    netListEl.appendChild(ul);
+  }
+  
+  function addNet(){
+    const name = prompt('Enter net name:');
+    if(!name) return;
+    const trimmed = name.trim();
+    if(!trimmed) return;
+    if(nets.has(trimmed)){
+      alert(`Net "${trimmed}" already exists.`);
+      return;
+    }
+    // Create net class with default properties from THEME
+    NET_CLASSES[trimmed] = {
+      id: trimmed,
+      name: trimmed,
+      wire: { ...THEME.wire },
+      junction: { ...THEME.junction }
+    };
+    nets.add(trimmed);
+    renderNetList();
+    // Show properties dialog for new net
+    showNetPropertiesDialog(trimmed);
+  }
+  
+  function showNetPropertiesDialog(netName: string){
+    const netClass = NET_CLASSES[netName];
+    if(!netClass) return;
+    
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.style.position = 'fixed';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100%';
+    overlay.style.height = '100%';
+    overlay.style.backgroundColor = 'rgba(0,0,0,0.6)';
+    overlay.style.zIndex = '1000';
+    overlay.style.display = 'flex';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    
+    // Create dialog
+    const dialog = document.createElement('div');
+    dialog.style.background = 'var(--panel)';
+    dialog.style.border = '1px solid #273042';
+    dialog.style.borderRadius = '12px';
+    dialog.style.padding = '1.5rem';
+    dialog.style.minWidth = '400px';
+    dialog.style.maxWidth = '500px';
+    dialog.style.boxShadow = '0 8px 32px rgba(0,0,0,0.4)';
+    
+    // Title
+    const title = document.createElement('h2');
+    title.textContent = `Net Properties: ${netName}`;
+    title.style.marginTop = '0';
+    title.style.marginBottom = '1rem';
+    dialog.appendChild(title);
+    
+    // Width control
+    const widthRow = document.createElement('div');
+    widthRow.className = 'row';
+    widthRow.style.marginBottom = '1rem';
+    const widthLabel = document.createElement('label');
+    widthLabel.textContent = `Wire Width (${globalUnits})`;
+    widthLabel.style.display = 'block';
+    widthLabel.style.marginBottom = '0.3rem';
+    const widthInput = document.createElement('input');
+    widthInput.type = 'text';
+    const widthNm = Math.round((netClass.wire.width || 0) * NM_PER_MM);
+    widthInput.value = formatDimForDisplay(widthNm);
+    widthRow.appendChild(widthLabel);
+    widthRow.appendChild(widthInput);
+    dialog.appendChild(widthRow);
+    
+    // Line style control
+    const styleRow = document.createElement('div');
+    styleRow.className = 'row';
+    styleRow.style.marginBottom = '1rem';
+    const styleLabel = document.createElement('label');
+    styleLabel.textContent = 'Line Style';
+    styleLabel.style.display = 'block';
+    styleLabel.style.marginBottom = '0.3rem';
+    const styleSelect = document.createElement('select');
+    ['default','solid','dash','dot','dash_dot','dash_dot_dot'].forEach(v=>{
+      const o=document.createElement('option'); 
+      o.value=v; 
+      o.textContent=v.replace(/_/g,'·'); 
+      styleSelect.appendChild(o);
+    });
+    styleSelect.value = netClass.wire.type;
+    styleRow.appendChild(styleLabel);
+    styleRow.appendChild(styleSelect);
+    dialog.appendChild(styleRow);
+    
+    // Color control
+    const colorRow = document.createElement('div');
+    colorRow.className = 'row';
+    colorRow.style.marginBottom = '1rem';
+    const colorLabel = document.createElement('label');
+    colorLabel.textContent = 'Wire Color';
+    colorLabel.style.display = 'block';
+    colorLabel.style.marginBottom = '0.3rem';
+    
+    const colorInputsRow = document.createElement('div');
+    colorInputsRow.style.display = 'flex';
+    colorInputsRow.style.gap = '0.5rem';
+    colorInputsRow.style.alignItems = 'center';
+    
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.title = 'Pick color';
+    const rgbCss = `rgba(${Math.round(netClass.wire.color.r*255)},${Math.round(netClass.wire.color.g*255)},${Math.round(netClass.wire.color.b*255)},${netClass.wire.color.a})`;
+    colorInput.value = colorToHex(rgbCss);
+    
+    const alphaInput = document.createElement('input');
+    alphaInput.type = 'range';
+    alphaInput.min = '0';
+    alphaInput.max = '1';
+    alphaInput.step = '0.05';
+    alphaInput.style.flex = '1';
+    alphaInput.value = String(netClass.wire.color.a);
+    alphaInput.title = 'Opacity';
+    
+    const alphaLabel = document.createElement('span');
+    alphaLabel.textContent = `${Math.round(netClass.wire.color.a * 100)}%`;
+    alphaLabel.style.minWidth = '3ch';
+    alphaLabel.style.fontSize = '0.9rem';
+    alphaLabel.style.color = 'var(--muted)';
+    
+    alphaInput.oninput = () => {
+      alphaLabel.textContent = `${Math.round(parseFloat(alphaInput.value) * 100)}%`;
+    };
+    
+    // Color swatch toggle button
+    const swatchToggle = document.createElement('button');
+    swatchToggle.type = 'button';
+    swatchToggle.title = 'Show color swatches';
+    swatchToggle.style.marginLeft = '6px';
+    swatchToggle.style.width = '22px';
+    swatchToggle.style.height = '22px';
+    swatchToggle.style.borderRadius = '4px';
+    swatchToggle.style.display = 'inline-flex';
+    swatchToggle.style.alignItems = 'center';
+    swatchToggle.style.justifyContent = 'center';
+    swatchToggle.style.padding = '0';
+    swatchToggle.style.fontSize = '12px';
+    swatchToggle.innerHTML = '<svg width="12" height="8" viewBox="0 0 12 8" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1 1l5 5 5-5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    
+    colorInputsRow.appendChild(colorInput);
+    colorInputsRow.appendChild(alphaInput);
+    colorInputsRow.appendChild(alphaLabel);
+    colorInputsRow.appendChild(swatchToggle);
+    
+    colorRow.appendChild(colorLabel);
+    colorRow.appendChild(colorInputsRow);
+    dialog.appendChild(colorRow);
+    
+    // Color swatch palette popover
+    const swatches = [
+      ['black','#000000'],
+      ['red','#FF0000'], ['green','#00FF00'], ['blue','#0000FF'],
+      ['cyan','#00FFFF'], ['magenta','#FF00FF'], ['yellow','#FFFF00']
+    ];
+    const popover = document.createElement('div');
+    popover.style.position = 'absolute';
+    popover.style.display = 'none';
+    popover.style.zIndex = '10001';
+    popover.style.background = 'var(--panel)';
+    popover.style.padding = '8px';
+    popover.style.borderRadius = '6px';
+    popover.style.border = '1px solid #273042';
+    popover.style.boxShadow = '0 6px 18px rgba(0,0,0,0.3)';
+    const pal = document.createElement('div');
+    pal.style.display = 'grid';
+    pal.style.gridTemplateColumns = `repeat(${swatches.length}, 18px)`;
+    pal.style.gap = '8px';
+    swatches.forEach(([name, col])=>{
+      const b = document.createElement('button');
+      b.title = String(name).toUpperCase();
+      b.type = 'button';
+      if(col === '#000000'){
+        b.style.background = 'linear-gradient(to bottom right, #000000 0%, #000000 49%, #ffffff 51%, #ffffff 100%)';
+        b.style.border = '1px solid #666666';
+        b.title = 'BLACK/WHITE';
+      } else {
+        b.style.background = String(col);
+        b.style.border = '1px solid rgba(0,0,0,0.12)';
+      }
+      b.style.width = '18px';
+      b.style.height = '18px';
+      b.style.borderRadius = '4px';
+      b.style.padding = '0';
+      b.style.cursor = 'pointer';
+      b.onclick = (e) => {
+        e.stopPropagation();
+        colorInput.value = String(col);
+        alphaInput.value = '1';
+        alphaLabel.textContent = '100%';
+        popover.style.display = 'none';
+      };
+      pal.appendChild(b);
+    });
+    popover.appendChild(pal);
+    dialog.appendChild(popover);
+    
+    const showSwatchPopover = () => {
+      const rect = swatchToggle.getBoundingClientRect();
+      popover.style.left = `${rect.left}px`;
+      popover.style.top = `${rect.bottom + 6}px`;
+      popover.style.display = 'block';
+    };
+    const hideSwatchPopover = () => {
+      popover.style.display = 'none';
+    };
+    
+    swatchToggle.onclick = (e) => {
+      e.stopPropagation();
+      if(popover.style.display === 'block'){
+        hideSwatchPopover();
+      } else {
+        showSwatchPopover();
+      }
+    };
+    
+    // Buttons
+    const buttonRow = document.createElement('div');
+    buttonRow.style.display = 'flex';
+    buttonRow.style.gap = '0.5rem';
+    buttonRow.style.justifyContent = 'flex-end';
+    buttonRow.style.marginTop = '1.5rem';
+    
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.onclick = () => {
+      document.body.removeChild(overlay);
+    };
+    
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Save';
+    saveBtn.className = 'ok';
+    saveBtn.onclick = () => {
+      // Parse width
+      const parsed = parseDimInput(widthInput.value || '0');
+      const nm = parsed ? parsed.nm : 0;
+      const valMm = nm / NM_PER_MM;
+      
+      // Parse color
+      const hex = colorInput.value || '#ffffff';
+      const m = hex.replace('#','');
+      const r = parseInt(m.slice(0,2),16);
+      const g = parseInt(m.slice(2,4),16);
+      const b = parseInt(m.slice(4,6),16);
+      const a = Math.max(0, Math.min(1, parseFloat(alphaInput.value) || 1));
+      
+      // Update net class
+      netClass.wire.width = valMm;
+      netClass.wire.type = styleSelect.value as StrokeType;
+      netClass.wire.color = { r: r/255, g: g/255, b: b/255, a };
+      
+      // Update any wires using this net
+      wires.forEach(w => {
+        if(w.netId === netName && w.stroke && w.stroke.type === 'default'){
+          // If wire is using netclass defaults, redraw to pick up changes
+          w.color = rgba01ToCss(netClass.wire.color);
+        }
+      });
+      
+      document.body.removeChild(overlay);
+      renderNetList();
+      redraw();
+    };
+    
+    buttonRow.appendChild(cancelBtn);
+    buttonRow.appendChild(saveBtn);
+    dialog.appendChild(buttonRow);
+    
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    
+    // Close on overlay click
+    overlay.onclick = (e) => {
+      if(e.target === overlay){
+        document.body.removeChild(overlay);
+      }
+    };
+    
+    // Close on Escape key
+    const escHandler = (e: KeyboardEvent) => {
+      if(e.key === 'Escape' && document.body.contains(overlay)){
+        document.body.removeChild(overlay);
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
   }
 
   function setMode(m: Mode){
@@ -1400,6 +1803,7 @@ let marquee: {
     }
     updateSelectionOutline();    
     updateCounts();
+    renderNetList();
 
     // Endpoint selection squares (overlay). Visible while placing wires or components
     // Remove any previous endpoint markers in the overlay
@@ -2693,7 +3097,9 @@ let marquee: {
         const segmentPts = [ subPts[i], subPts[i+1] ];
         // clone stroke so each segment can be edited independently
         const segStroke = stroke ? { ...stroke, color: { ...stroke.color } } : undefined;
-        wires.push({ id: uid('wire'), points: segmentPts, color: rgba01ToCss(segStroke ? segStroke.color : cssToRGBA01(curCol)), stroke: segStroke, netId: 'default' });
+        // Use activeNetClass when using netclass defaults, otherwise 'default'
+        const netId = WIRE_DEFAULTS.useNetclass ? activeNetClass : 'default';
+        wires.push({ id: uid('wire'), points: segmentPts, color: rgba01ToCss(segStroke ? segStroke.color : cssToRGBA01(curCol)), stroke: segStroke, netId });
       }
     }
   }
@@ -3053,6 +3459,7 @@ let marquee: {
 
   document.getElementById('rotateBtn').addEventListener('click', rotateSelected);
   document.getElementById('clearBtn').addEventListener('click', clearAll);
+  document.getElementById('addNetBtn')!.addEventListener('click', addNet);
 
 
   // Wire stroke defaults (global for NEW wires) — popover with KiCad-like fields
@@ -3147,17 +3554,32 @@ let marquee: {
     h.style.fontWeight = '600';
     box.appendChild(h);
 
-    // Use netclass defaults
+    // Net class selection
     const rowUse = document.createElement('label');
-    rowUse.style.display = 'flex';
-    rowUse.style.alignItems = 'center';
-    rowUse.style.gap = '8px';
-    const chkUse = document.createElement('input');
-    chkUse.type = 'checkbox';
-    chkUse.checked = WIRE_DEFAULTS.useNetclass;
-    const capUse = document.createElement('span');
-    capUse.textContent = 'Use netclass defaults';
-    rowUse.append(chkUse, capUse);
+    rowUse.style.display = 'grid';
+    rowUse.style.gridTemplateColumns = '1fr';
+    const capUse = document.createElement('div');
+    capUse.textContent = 'Net Class';
+    const selNetClass = document.createElement('select');
+    
+    // Add "None" option for custom properties
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '__none__';
+    noneOpt.textContent = 'None (custom properties)';
+    selNetClass.appendChild(noneOpt);
+    
+    // Add all available net classes
+    Array.from(nets).sort().forEach(netName => {
+      const o = document.createElement('option');
+      o.value = netName;
+      o.textContent = netName;
+      selNetClass.appendChild(o);
+    });
+    
+    // Set current value
+    selNetClass.value = WIRE_DEFAULTS.useNetclass ? activeNetClass : '__none__';
+    
+    rowUse.append(capUse, selNetClass);
     box.appendChild(rowUse);
 
     // Width (mm)
@@ -3233,7 +3655,7 @@ let marquee: {
           WIRE_DEFAULTS.useNetclass = false;
           const rgba = cssToRGBA01(String(col)); rgba.a = parseFloat(inpA.value) || 1;
           WIRE_DEFAULTS.stroke.color = rgba;
-          chkUse.checked = false;
+          selNetClass.value = '__none__';
           mirrorDefaultsIntoLegacyColorMode();
           saveWireDefaults();
           syncWireToolbar();
@@ -3270,7 +3692,8 @@ let marquee: {
       // Not using netclass defaults: resolve only the LINE STYLE if it is 'default'.
       const st = { ...WIRE_DEFAULTS.stroke };
       if (st.type === 'default') {
-        const nc = NET_CLASSES.default.wire;
+        const netClass = NET_CLASSES[activeNetClass] || NET_CLASSES.default;
+        const nc = netClass.wire;
         st.type = (nc.type && nc.type !== 'default') ? nc.type : 'solid';
       }
       return st;      
@@ -3283,7 +3706,9 @@ let marquee: {
     function syncAllFieldsToEffective(){
       let st: Stroke;
       if (WIRE_DEFAULTS.useNetclass) {
-        const nc = NET_CLASSES.default.wire;
+        // Use the active net class properties for visual feedback
+        const netClass = NET_CLASSES[activeNetClass] || NET_CLASSES.default;
+        const nc = netClass.wire;
         st = { width: nc.width, type: nc.type, color: nc.color };
       } else {
         st = WIRE_DEFAULTS.stroke;
@@ -3301,7 +3726,7 @@ let marquee: {
     }
 
     function setEnabledStates(){
-      const on = !WIRE_DEFAULTS.useNetclass;
+      const on = (selNetClass.value === '__none__');
       inpW.disabled = !on;
       selS.disabled = !on;
       inpColor.disabled = !on;
@@ -3309,8 +3734,14 @@ let marquee: {
     }
 
     // Wire up events
-    chkUse.onchange = () => {
-      WIRE_DEFAULTS.useNetclass = chkUse.checked;
+    selNetClass.onchange = () => {
+      if(selNetClass.value === '__none__'){
+        WIRE_DEFAULTS.useNetclass = false;
+      } else {
+        WIRE_DEFAULTS.useNetclass = true;
+        activeNetClass = selNetClass.value;
+        renderNetList();
+      }
       mirrorDefaultsIntoLegacyColorMode();
       saveWireDefaults();
       syncWireToolbar();
@@ -3336,7 +3767,7 @@ let marquee: {
           WIRE_DEFAULTS.stroke.type = 'solid';
           selS.value = 'solid';
         }
-        chkUse.checked = false;
+        selNetClass.value = '__none__';
         setEnabledStates();
       }
       mirrorDefaultsIntoLegacyColorMode();
@@ -3362,7 +3793,7 @@ let marquee: {
           selS.value = 'solid';
         }
       }
-      chkUse.checked = WIRE_DEFAULTS.useNetclass;
+      selNetClass.value = WIRE_DEFAULTS.useNetclass ? activeNetClass : '__none__';
       mirrorDefaultsIntoLegacyColorMode();
       saveWireDefaults();
       syncWireToolbar();
@@ -3384,8 +3815,8 @@ let marquee: {
           WIRE_DEFAULTS.stroke.width = 0.25; // give it a sane visible width
         }
       }
-      // Reflect checkbox + toolbar + preview instantly
-      chkUse.checked = WIRE_DEFAULTS.useNetclass;
+      // Reflect dropdown + toolbar + preview instantly
+      selNetClass.value = WIRE_DEFAULTS.useNetclass ? activeNetClass : '__none__';
       mirrorDefaultsIntoLegacyColorMode();
       saveWireDefaults();
       syncWireToolbar();
@@ -3526,6 +3957,9 @@ let marquee: {
     gDrawing.replaceChildren();
     // Reset ID counters
     counters = { resistor:1, capacitor:1, inductor:1, diode:1, npn:1, pnp:1, ground:1, battery:1, ac:1, wire:1 };
+    // Reset nets to default only
+    nets = new Set(['default']);
+    renderNetList();
     redraw();
   }
 
@@ -3737,68 +4171,78 @@ let marquee: {
         wrap.appendChild(rowPair('Wire End',   text(`${formatDimForDisplay(pxToNm(B.x))}, ${formatDimForDisplay(pxToNm(B.y))}`, true)));
       }
 
+      // ---- Net Assignment (includes Net Class selection) ----
+      const netRow = document.createElement('div'); netRow.className='row';
+      const netLbl = document.createElement('label'); netLbl.textContent='Net Class'; netLbl.style.width='90px';
+      const netSel = document.createElement('select');
+      
+      // Add "None" option for custom properties
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '__none__';
+      noneOpt.textContent = 'None (custom properties)';
+      netSel.appendChild(noneOpt);
+      
+      // Populate with all available nets
+      Array.from(nets).sort().forEach(netName => {
+        const o = document.createElement('option');
+        o.value = netName;
+        o.textContent = netName;
+        netSel.appendChild(o);
+      });
+      
+      netRow.appendChild(netLbl);
+      netRow.appendChild(netSel);
+      wrap.appendChild(netRow);
+
+      // Set net dropdown initial value based on wire's current state
+      const isUsingNC = () => { ensureStroke(w); return (w.stroke!.type === 'default' && w.stroke!.width <= 0); };
+      netSel.value = isUsingNC() ? (w.netId || activeNetClass) : '__none__';
+      
       // ---- Wire Stroke (KiCad-style) ----
       (function(){
         ensureStroke(w);
         const holder = document.createElement('div');
-
-        // Use netclass defaults toggle
-        const useNCRow = document.createElement('div'); useNCRow.className='row';
-        const useNCLabel = document.createElement('label'); useNCLabel.textContent = 'Use netclass defaults';
-        useNCLabel.style.width = '90px';
-        const useNC = document.createElement('input'); useNC.type='checkbox';
-        const isUsingNC = () => { ensureStroke(w); return (w.stroke!.type === 'default' && w.stroke!.width <= 0); };
-        useNC.checked = isUsingNC();
-        useNC.onchange = () => {
+        
+        // Net selection handler - updates wire to use net class or custom properties (per-segment only)
+        netSel.onchange = () => {
           ensureStroke(w);
-          // Selected wire is the target segment itself (per-segment wires).
-          const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
-              if (useNC.checked) {
-                // Delegate styling to netclass/theme
-                const patch: Partial<Stroke> = { width: 0, type: 'default' };
-                // If a specific segment is selected, isolate it and apply only to that segment
-                // The selected `wire` represents the segment; operate on it directly.
-                if (w.points && w.points.length === 2) {
-                  ensureStroke(w);
-                  w.stroke = { ...(w.stroke as Stroke), ...patch };
-                  w.color = rgba01ToCss((w.stroke as Stroke).color);
-                  updateWireDOM(w); redrawCanvasOnly();
-                  selection = { kind: 'wire', id: w.id, segIndex: null };
-                } else if (swp) {
-                  restrokeSwpSegments(swp, patch);
-                  if (mid) reselectNearestAt(mid); else redraw();
-                } else {
-                  w.stroke = { ...(w.stroke as Stroke), ...patch };
-                  updateWireDOM(w); redrawCanvasOnly();
-                }
-              } else {
-                // Start from the current effective stroke so the user gets editable defaults
-                const eff = strokeOfWire(w); // your effective stroke getter used for preview
-                const patch: Partial<Stroke> = {
-                  width: Math.max(0.05, eff.width || 0.25),
-                  type: (eff.type === 'default' ? 'solid' : eff.type) || 'solid',
-                  color: eff.color
-                };
-                if (w.points && w.points.length === 2) {
-                  ensureStroke(w);
-                  w.stroke = { ...(w.stroke as Stroke), ...patch };
-                  w.color = rgba01ToCss((w.stroke as Stroke).color);
-                  updateWireDOM(w); redrawCanvasOnly();
-                  selection = { kind: 'wire', id: w.id, segIndex: null };
-                } else if (swp) {
-                  restrokeSwpSegments(swp, patch);
-                  if (mid) reselectNearestAt(mid); else redraw();
-                } else {
-                  w.stroke = { ...(w.stroke as Stroke), ...patch };
-                  w.color = rgba01ToCss((w.stroke as Stroke).color);
-                  updateWireDOM(w); redrawCanvasOnly();
-                }
-              }
+          // Update active net class if a net class is selected
+          if(netSel.value !== '__none__'){
+            activeNetClass = netSel.value;
+            renderNetList();
+          }
+          
+          // Apply changes only to this specific wire segment
+          if (netSel.value !== '__none__') {
+            // Delegate styling to netclass/theme
+            const patch: Partial<Stroke> = { width: 0, type: 'default' };
+            ensureStroke(w);
+            w.stroke = { ...(w.stroke as Stroke), ...patch };
+            w.color = rgba01ToCss((w.stroke as Stroke).color);
+            w.netId = netSel.value;
+            updateWireDOM(w); 
+            redrawCanvasOnly();
+            selection = { kind: 'wire', id: w.id, segIndex: null };
+          } else {
+            // Start from the current effective stroke so the user gets editable defaults
+            const eff = strokeOfWire(w);
+            const patch: Partial<Stroke> = {
+              width: Math.max(0.05, eff.width || 0.25),
+              type: (eff.type === 'default' ? 'solid' : eff.type) || 'solid',
+              color: eff.color
+            };
+            ensureStroke(w);
+            w.stroke = { ...(w.stroke as Stroke), ...patch };
+            w.color = rgba01ToCss((w.stroke as Stroke).color);
+            w.netId = null; // Clear netId for custom properties
+            updateWireDOM(w); 
+            redrawCanvasOnly();
+            selection = { kind: 'wire', id: w.id, segIndex: null };
+          }
+          
           // Keep the controls and preview in sync without forcing a full rebuild.
           syncWidth(); syncStyle(); syncColor(); syncPreview();
         };
-        useNCRow.appendChild(useNCLabel); useNCRow.appendChild(useNC);
-        holder.appendChild(useNCRow);
 
         // Width (in selected units)
         const widthRow = document.createElement('div'); widthRow.className='row';
@@ -3808,7 +4252,7 @@ let marquee: {
           const eff = effectiveStroke(w, netClassForWire(w), THEME);
           const effNm = Math.round((eff.width || 0) * NM_PER_MM);
           wIn.value = formatDimForDisplay(effNm);
-          wIn.disabled = isUsingNC();
+          wIn.disabled = (netSel.value !== '__none__');
         };
         // Live, non-destructive width updates while typing so the inspector DOM
         // isn't rebuilt on every keystroke. The final onchange will perform any
@@ -3866,7 +4310,7 @@ let marquee: {
         ['default','solid','dash','dot','dash_dot','dash_dot_dot'].forEach(v=>{
           const o=document.createElement('option'); o.value=v; o.textContent=v.replace(/_/g,'·'); sSel.appendChild(o);
         });
-        const syncStyle = ()=>{ const eff = effectiveStroke(w, netClassForWire(w), THEME); sSel.value = (isUsingNC() ? 'default' : w.stroke!.type); sSel.disabled = isUsingNC(); };
+        const syncStyle = ()=>{ const eff = effectiveStroke(w, netClassForWire(w), THEME); sSel.value = (netSel.value !== '__none__' ? 'default' : w.stroke!.type); sSel.disabled = (netSel.value !== '__none__'); };
         sSel.onchange = () => {
           ensureStroke(w);
           const val = (sSel.value || 'solid') as StrokeType;
@@ -3917,7 +4361,7 @@ let marquee: {
           const hex = colorToHex(rgbCss);
           cIn.value = hex;
           aIn.value = String(Math.max(0, Math.min(1, eff.color.a)));
-          const disabled = isUsingNC();
+          const disabled = (netSel.value !== '__none__');
           cIn.disabled = disabled;
           aIn.disabled = disabled;
         };
@@ -4867,7 +5311,14 @@ let marquee: {
       grid: GRID,
       components,
       wires: wiresOut,
-      junctions
+      junctions,
+      nets: Array.from(nets),
+      activeNetClass,
+      netClasses: Object.fromEntries(
+        Object.entries(NET_CLASSES)
+          .filter(([id]) => id !== 'default')
+          .map(([id, nc]) => [id, nc])
+      )
     };
     const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
     const a = document.createElement('a');
@@ -4881,6 +5332,31 @@ let marquee: {
     components = data.components||[];
     wires = (data.wires||[]);
     projTitle.value = data.title||'';
+    
+    // Restore nets (add default if not present)
+    nets = new Set(data.nets || ['default']);
+    if(!nets.has('default')) nets.add('default');
+    
+    // Restore active net class
+    if(data.activeNetClass && typeof data.activeNetClass === 'string'){
+      activeNetClass = data.activeNetClass;
+    } else {
+      activeNetClass = 'default';
+    }
+    
+    // Restore net classes (custom net properties)
+    if(data.netClasses && typeof data.netClasses === 'object'){
+      Object.entries(data.netClasses).forEach(([id, nc]: [string, any]) => {
+        if(nc && typeof nc === 'object'){
+          NET_CLASSES[id] = {
+            id: nc.id || id,
+            name: nc.name || id,
+            wire: nc.wire || { ...THEME.wire },
+            junction: nc.junction || { ...THEME.junction }
+          };
+        }
+      });
+    }
 
     // Backfill stroke from legacy color (and ensure presence for v2)
     wires.forEach((w:any)=>{
@@ -4906,7 +5382,9 @@ let marquee: {
     for(const c of components){ const k=c.type; const num=parseInt((c.label||'').replace(/^[A-Z]+/,'').trim())||0; used[k]=Math.max(used[k], num); }
     for(const w of wires){ const n=parseInt((w.id||'').replace(/^wire/,''))||0; used.wire=Math.max(used.wire,n); }
     Object.keys(counters).forEach(k=> counters[k] = used[k]+1 );
-    selection={kind:null, id:null, segIndex:null}; redraw();
+    selection={kind:null, id:null, segIndex:null}; 
+    renderNetList();
+    redraw();
   }
 
   // ====== Topology: nodes, edges, SWPs ======
