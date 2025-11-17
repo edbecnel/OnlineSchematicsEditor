@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Online Schematics Editor — Help & Documentation</title>
+<style>
+  :root{ color-scheme: light dark; }
+  body{
+    margin:0;
+    font:14px/1.45 "Segoe UI", Roboto, Arial, sans-serif;
+    color:#111;
+    background:#f7f8fb;
+  }
+  /* Center the content column, keep text left-aligned */
+  .container{
+    max-width: 900px;          /* controls how "wide" the help page can get */
+    margin: 36px auto;         /* centers the column */
+    padding: 0 24px;           /* keeps it off the edges on small screens */
+    background:#fff;
+    border:1px solid #e5e8f0;
+    border-radius:16px;
+    box-shadow: 0 10px 26px rgba(0,0,0,0.06);
+    text-align: left;          /* ensure left-justified text */
+  }
+  h1{ font-size:28px; margin:20px 16px 6px; }
+  h2{ font-size:20px; margin:18px 16px 6px; color:#2b3a67; }
+  h3{ font-size:16px; margin:12px 16px 4px; color:#384766; }
+  p, ul, ol{ margin: 8px 16px; }
+  ul, ol{ padding-left: 22px; }
+  .tip{ font-size:13px; color:#555; margin: 6px 16px 14px; }
+  .note{ font-size:12px; color:#666; margin: 12px 16px 18px; }
+  .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+  .kbd{ 
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    padding: 2px 6px;
+    background: #f0f0f0;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  @media (prefers-color-scheme: dark){
+    body{ background:#0b0f18; color:#e6e6e6; }
+    .container{
+      background:#0d1220; border-color:#1f2636; box-shadow:none;
+    }
+    h2{ color:#b7c1ff; }
+    h3{ color:#c5cbe9; }
+    .tip{ color:#9da6b8; }
+    .note{ color:#8a93a8; }
+    .kbd{ background: #1e2430; border-color: #3a4a68; }
+  }
+</style>
+</head>
+<body>
+  <main class="container">
+    <h1>Online Schematics Editor — Help &amp; Documentation</h1>
+
+    <h2>Overview</h2>
+    <p>The Online Schematics Editor is a web-based tool for creating electrical circuit schematics. It features wire routing, component placement, net management, and KiCad export capabilities.</p>
+
+    <h2>Getting Started</h2>
+    <h3>Interface Layout</h3>
+    <ul>
+      <li><b>Left Panel (Inspector):</b> Shows properties of the selected component or wire for editing</li>
+      <li><b>Center Canvas:</b> Main drawing area with zoom and pan controls</li>
+      <li><b>Right Panel (Project):</b> Net list, theme settings, units, and export options</li>
+      <li><b>Top Toolbar:</b> Mode buttons, component palette, and file operations</li>
+    </ul>
+
+    <h2>Modes</h2>
+    <p>Click a mode button in the toolbar or use keyboard shortcuts to switch between modes:</p>
+    <ul>
+      <li><b>Select (V):</b> Click components or wires to select and edit their properties</li>
+      <li><b>Wire (W):</b> Draw wires between components to create connections</li>
+      <li><b>Delete (X):</b> Click components or wires to remove them</li>
+      <li><b>Place (1-9):</b> Place components on the canvas</li>
+      <li><b>Pan (P):</b> Drag to pan around the canvas</li>
+      <li><b>Move (M):</b> Drag components to reposition them</li>
+    </ul>
+
+    <h2>Drawing Wires</h2>
+    <h3>Basic Wire Drawing</h3>
+    <ol>
+      <li>Click the <b>Wire</b> button or press <span class="kbd">W</span></li>
+      <li>Click on the canvas or a component pin to start</li>
+      <li>Move the mouse to preview the wire path</li>
+      <li>Click to place each wire segment</li>
+      <li>Right-click, press <span class="kbd">Enter</span>, or double-click to finish</li>
+    </ol>
+
+    <h3>Orthogonal Mode</h3>
+    <ul>
+      <li>Hold <span class="kbd">Shift</span> while drawing to force horizontal/vertical segments</li>
+      <li>Click the <b>Ortho</b> button to enable orthogonal mode permanently</li>
+      <li>Useful for creating neat, aligned schematics</li>
+    </ul>
+
+    <h3>Connection Hints</h3>
+    <ul>
+      <li>When drawing near wire endpoints, connection hints appear as colored guide lines</li>
+      <li>These help align new wires with existing ones</li>
+      <li>Click the <b>Tracking</b> button to toggle connection hints on/off</li>
+    </ul>
+
+    <h3>Wire Colors</h3>
+    <ul>
+      <li>Click the <b>Wire Color</b> button to choose colors for new wires</li>
+      <li>Options: Auto, Black/White, Red, Green, Blue, Yellow, Magenta, Cyan</li>
+      <li><b>Auto:</b> Wires inherit color from their assigned net</li>
+      <li><b>Black/White:</b> Renders as white in dark theme, black in light theme</li>
+    </ul>
+
+    <h2>Placing Components</h2>
+    <h3>Component Types</h3>
+    <ul>
+      <li><b>Resistor (1):</b> Two-terminal resistor</li>
+      <li><b>Capacitor (2):</b> Two-terminal capacitor</li>
+      <li><b>Inductor (3):</b> Two-terminal inductor</li>
+      <li><b>Diode (4):</b> Two-terminal diode with multiple subtypes</li>
+      <li><b>NPN (5):</b> NPN bipolar transistor (3 pins)</li>
+      <li><b>PNP (6):</b> PNP bipolar transistor (3 pins)</li>
+      <li><b>Ground (7):</b> Ground symbol</li>
+      <li><b>Battery (8):</b> DC voltage source</li>
+      <li><b>AC (9):</b> AC voltage source</li>
+    </ul>
+
+    <h3>Placement Process</h3>
+    <ol>
+      <li>Click a component button or press its number key</li>
+      <li>A ghost outline follows your cursor</li>
+      <li>Press <span class="kbd">R</span> to rotate 90° clockwise</li>
+      <li>Click to place the component</li>
+      <li>Two-pin components auto-align to nearby wires</li>
+    </ol>
+
+    <h3>Diode Subtypes</h3>
+    <p>When Diode is selected, a dropdown appears with these options:</p>
+    <ul>
+      <li>Generic (standard diode)</li>
+      <li>Schottky</li>
+      <li>Zener</li>
+      <li>LED (Light-emitting)</li>
+      <li>Photo diode</li>
+      <li>Tunnel diode</li>
+      <li>Varactor / Varicap</li>
+      <li>Laser diode</li>
+    </ul>
+
+    <h2>Editing Components &amp; Wires</h2>
+    <h3>Selecting</h3>
+    <ul>
+      <li>Click <b>Select</b> mode or press <span class="kbd">V</span></li>
+      <li>Click a component or wire to select it</li>
+      <li>The Inspector panel shows editable properties</li>
+      <li>Press <span class="kbd">Esc</span> to deselect</li>
+    </ul>
+
+    <h3>Component Properties</h3>
+    <ul>
+      <li><b>Label:</b> Reference designator (e.g., R1, C2, U3)</li>
+      <li><b>Value:</b> Component value (e.g., 10kΩ, 100nF)</li>
+      <li><b>Footprint:</b> PCB footprint reference</li>
+      <li><b>Rotation:</b> 0°, 90°, 180°, or 270°</li>
+      <li><b>Net assignments:</b> Manual net assignments for each pin</li>
+    </ul>
+
+    <h3>Wire Properties</h3>
+    <ul>
+      <li><b>Color mode:</b> Auto or explicit color choice</li>
+      <li><b>Net assignment:</b> Which net this wire belongs to</li>
+      <li><b>Width:</b> Visual line width in mm</li>
+      <li><b>Style:</b> Solid or dashed</li>
+    </ul>
+
+    <h2>Grid &amp; Snapping</h2>
+    <h3>Grid Display</h3>
+    <ul>
+      <li>Click the <b>Grid</b> button to cycle: Lines → Dots → Off</li>
+      <li>Grid helps align components and wires</li>
+      <li>Visual only; does not affect snapping</li>
+    </ul>
+
+    <h3>Snap Grid</h3>
+    <ul>
+      <li><b>Snap spacing:</b> 50 mils (1.27 mm) at all zoom levels</li>
+      <li>All components and wires snap to this grid</li>
+      <li>Ensures proper electrical connections</li>
+      <li>Dots align exactly with snap positions at 1000% zoom</li>
+    </ul>
+
+    <h3>Coordinate Display</h3>
+    <ul>
+      <li>When drawing wires or placing components, current cursor position appears in lower left</li>
+      <li>Shows snapped coordinates in your chosen units</li>
+      <li>Format: <code>x, y units</code></li>
+    </ul>
+
+    <h2>Zoom &amp; Navigation</h2>
+    <h3>Zoom Controls</h3>
+    <ul>
+      <li><b>Mouse wheel:</b> Zoom in/out centered on cursor</li>
+      <li><b>+ button:</b> Zoom in</li>
+      <li><b>− button:</b> Zoom out</li>
+      <li><b>100% button:</b> Reset zoom and pan to default</li>
+      <li><b>Zoom range:</b> 25% to 1000%</li>
+    </ul>
+
+    <h3>Panning</h3>
+    <ul>
+      <li>Click <b>Pan</b> mode or press <span class="kbd">P</span>, then drag</li>
+      <li><b>Middle mouse button:</b> Click and drag to pan in any mode</li>
+    </ul>
+
+    <h2>Theme &amp; Units</h2>
+    <h3>Dark/Light Theme</h3>
+    <ul>
+      <li>Click the sun/moon icon in the toolbar to toggle</li>
+      <li><b>Dark theme:</b> Low-contrast colors ideal for extended use</li>
+      <li><b>Light theme:</b> High-contrast for printing or bright environments</li>
+      <li>Black wires automatically switch to white in dark theme</li>
+    </ul>
+
+    <h3>Units</h3>
+    <p>Choose your preferred measurement units in the Project panel:</p>
+    <ul>
+      <li><b>mm:</b> Millimeters</li>
+      <li><b>in:</b> Inches</li>
+      <li><b>mils:</b> Thousandths of an inch (1 mil = 0.001")</li>
+    </ul>
+    <p class="tip"><i>Note:</i> Units affect display and input only; internal coordinates use 100 px/inch.</p>
+
+    <h2>Nets &amp; Connectivity</h2>
+    <h3>What are Nets?</h3>
+    <p>A <b>net</b> is a group of electrically connected wires and component pins. Nets are essential for circuit analysis and PCB layout.</p>
+
+    <h3>Auto Net Detection</h3>
+    <ul>
+      <li>Wires touching component pins automatically form nets</li>
+      <li>Wires with junctions (dots) are part of the same net</li>
+      <li>Default net names: N1, N2, N3, etc.</li>
+    </ul>
+
+    <h3>Manual Net Assignment</h3>
+    <ul>
+      <li>Select a wire and choose a net from the dropdown</li>
+      <li>Create new nets with custom names (e.g., VCC, GND, DATA)</li>
+      <li>Assign component pins to nets in the Inspector</li>
+    </ul>
+
+    <h3>Net Classes</h3>
+    <ul>
+      <li>Define trace width and style for groups of nets</li>
+      <li>Useful for power nets vs. signal nets</li>
+      <li>Create net classes in the Project panel</li>
+    </ul>
+
+    <h3>Junction Dots</h3>
+    <ul>
+      <li>Appear automatically where three or more wire segments meet</li>
+      <li>Indicate electrical connection</li>
+      <li>Toggle visibility with the <b>Junctions</b> button</li>
+    </ul>
+
+    <h2>File Operations</h2>
+    <h3>Save</h3>
+    <ul>
+      <li>Click <b>Save</b> or press <span class="kbd">Ctrl+S</span></li>
+      <li>Downloads a JSON file with complete schematic data</li>
+      <li>Includes components, wires, nets, and all properties</li>
+    </ul>
+
+    <h3>Load</h3>
+    <ul>
+      <li>Click <b>Load</b> to open a file picker</li>
+      <li>Select a previously saved JSON file</li>
+      <li>Schematic is restored completely</li>
+    </ul>
+
+    <h3>Clear</h3>
+    <ul>
+      <li>Click <b>Clear</b> or press <span class="kbd">Ctrl+K</span></li>
+      <li>Removes all components and wires</li>
+      <li>Resets nets and project settings</li>
+      <li><b>Warning:</b> This action cannot be undone</li>
+    </ul>
+
+    <h2>KiCad Export</h2>
+    <p>Export your schematic for use in KiCad EDA:</p>
+    <ol>
+      <li>Complete your schematic with proper labels and values</li>
+      <li>Assign nets to all connections</li>
+      <li>Open the Project panel and click <b>Export KiCad</b></li>
+      <li>Downloads a <code>.kicad_sch</code> file</li>
+      <li>Open in KiCad 6.0 or later</li>
+    </ol>
+    <p class="note"><i>Note:</i> Ensure all components have footprint assignments for successful PCB import.</p>
+
+    <h2>Keyboard Shortcuts</h2>
+    <h3>Modes</h3>
+    <ul>
+      <li><span class="kbd">V</span> — Select mode</li>
+      <li><span class="kbd">W</span> — Wire mode</li>
+      <li><span class="kbd">X</span> — Delete mode</li>
+      <li><span class="kbd">P</span> — Pan mode</li>
+      <li><span class="kbd">M</span> — Move mode</li>
+      <li><span class="kbd">1-9</span> — Place component</li>
+    </ul>
+
+    <h3>Actions</h3>
+    <ul>
+      <li><span class="kbd">R</span> — Rotate selected component 90° clockwise</li>
+      <li><span class="kbd">Esc</span> — Cancel drawing / Deselect / Exit mode</li>
+      <li><span class="kbd">Enter</span> — Finish wire drawing</li>
+      <li><span class="kbd">Delete</span> — Delete selected component or wire</li>
+      <li><span class="kbd">Shift</span> — Hold while wiring for orthogonal mode</li>
+    </ul>
+
+    <h3>File Operations</h3>
+    <ul>
+      <li><span class="kbd">Ctrl+S</span> — Save schematic</li>
+      <li><span class="kbd">Ctrl+K</span> — Clear schematic</li>
+    </ul>
+
+    <h2>Tips &amp; Best Practices</h2>
+    <ul>
+      <li><b>Start with components:</b> Place all components before wiring</li>
+      <li><b>Use labels:</b> Assign reference designators (R1, C1, etc.) to all components</li>
+      <li><b>Name important nets:</b> Use meaningful names like VCC, GND, CLK for clarity</li>
+      <li><b>Zoom in for precision:</b> Use 1000% zoom to verify snap alignment</li>
+      <li><b>Ortho mode for neatness:</b> Enable orthogonal wiring for cleaner schematics</li>
+      <li><b>Check connectivity:</b> Review the net list before export</li>
+      <li><b>Save frequently:</b> Use Ctrl+S to save your work regularly</li>
+      <li><b>Use wire colors:</b> Color-code power, ground, and signal wires for readability</li>
+    </ul>
+
+    <h2>Troubleshooting</h2>
+    <h3>Wires Won't Connect</h3>
+    <ul>
+      <li>Ensure wire endpoints touch component pins exactly</li>
+      <li>Zoom to 1000% to verify snap alignment</li>
+      <li>Check that junction dots appear at connections</li>
+    </ul>
+
+    <h3>Components Won't Rotate</h3>
+    <ul>
+      <li>Press <span class="kbd">R</span> only in Place mode or when component is selected</li>
+      <li>Use the rotation dropdown in Inspector for precise angles</li>
+    </ul>
+
+    <h3>Missing Panels</h3>
+    <ul>
+      <li>Click the ◀ or ▶ toggle buttons to expand collapsed panels</li>
+      <li>Panels can be resized by dragging the divider lines</li>
+    </ul>
+
+    <h3>Export Issues</h3>
+    <ul>
+      <li>Ensure all components have valid labels and footprints</li>
+      <li>Verify all nets are properly assigned</li>
+      <li>Check browser console for error messages</li>
+    </ul>
+
+    <p class="note"><i>For additional help or to report issues, please visit the project repository.</i></p>
+  </main>
+</body>
+</html>
