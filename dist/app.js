@@ -68,6 +68,7 @@
     const projTitle = $q('#projTitle'); // uses .value later
     const countsEl = $q('#counts');
     const overlayMode = $q('#modeLabel');
+    const coordDisplay = $q('#coordDisplay');
     let gridMode = localStorage.getItem('grid.mode') || 'line';
     // Junction dots visibility toggle state (persisted)
     let showJunctionDots = (localStorage.getItem('junctionDots.visible') !== 'false');
@@ -2449,6 +2450,13 @@
         else {
             clearGhost();
         }
+        // Update coordinate display when placing wire or components
+        if (mode === 'wire' || mode === 'place') {
+            updateCoordinateDisplay(x, y);
+        }
+        else {
+            hideCoordinateDisplay();
+        }
         // crosshair overlay while in wire mode (even if not actively drawing)
         // Use raw mouse position (p) for crosshair, not snapped position (x, y)
         if (mode === 'wire') {
@@ -2935,6 +2943,33 @@
         }
         gOverlay.appendChild(hline);
         gOverlay.appendChild(vline);
+    }
+    // ----- Coordinate display -----
+    function updateCoordinateDisplay(x, y) {
+        if (!coordDisplay)
+            return;
+        // Convert user units (pixels) to nanometers, then to current units
+        const xNm = pxToNm(x);
+        const yNm = pxToNm(y);
+        const xVal = nmToUnit(xNm, globalUnits);
+        const yVal = nmToUnit(yNm, globalUnits);
+        // Format with appropriate precision based on units
+        let precision = 2;
+        if (globalUnits === 'mils')
+            precision = 0;
+        if (globalUnits === 'mm')
+            precision = 2;
+        if (globalUnits === 'in')
+            precision = 4;
+        const xStr = xVal.toFixed(precision);
+        const yStr = yVal.toFixed(precision);
+        coordDisplay.textContent = `${xStr}, ${yStr} ${globalUnits}`;
+        coordDisplay.style.display = '';
+    }
+    function hideCoordinateDisplay() {
+        if (!coordDisplay)
+            return;
+        coordDisplay.style.display = 'none';
     }
     // ----- Placement ghost -----
     let ghostEl = null;

@@ -79,7 +79,7 @@
     [data-theme="light"] .kbd{background:#e5e7eb; border:1px solid #9ca3af; color:#333333;}
     #editorWrap{position:relative;}
     #svg{width:100%; height:calc(100vh - 64px); display:block; background:var(--bg);}
-    .overlayTip{position:absolute; left:10px; bottom:10px; background:rgba(14,18,25,.75); border:1px solid #273042; padding:.35rem .5rem; border-radius:8px; font-size:.85rem}
+    .overlayTip{position:absolute; left:10px; bottom:55px; background:rgba(14,18,25,.75); border:1px solid #273042; padding:.35rem .5rem; border-radius:8px; font-size:.85rem}
     /* Hover cues for hit-testing feedback */
     .wire-stroke{transition:stroke .08s ease, filter .08s ease}
     .wire-stroke.hover{stroke:var(--select); filter:drop-shadow(0 0 2px rgba(245,158,11,.6))}
@@ -262,6 +262,7 @@
         <g id="overlay" class="crosshair"></g>
       </svg>
       <div class="overlayTip" id="overlayTip">Mode: <b id="modeLabel">Select</b></div>
+      <div class="overlayTip" id="coordDisplay" style="left: 10px; bottom: 90px; display: none;"></div>
     </div>
   </main>
     <div class="resizer" data-resizer="right"></div>

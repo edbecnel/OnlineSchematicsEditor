@@ -88,6 +88,7 @@ const inspectorNone = $q<HTMLElement>('#inspectorNone');
 const projTitle = $q<HTMLInputElement>('#projTitle'); // uses .value later
 const countsEl = $q<HTMLElement>('#counts');
 const overlayMode = $q<HTMLElement>('#modeLabel');
+const coordDisplay = $q<HTMLElement>('#coordDisplay');
 
 // Grid mode: 'line' (line grid), 'dot' (dot grid), 'off' (no grid) - persisted
 type GridMode = 'line' | 'dot' | 'off';
@@ -2436,6 +2437,14 @@ let marquee: {
     } else {
       clearGhost();
     }
+    
+    // Update coordinate display when placing wire or components
+    if(mode === 'wire' || mode === 'place'){
+      updateCoordinateDisplay(x, y);
+    } else {
+      hideCoordinateDisplay();
+    }
+    
     // crosshair overlay while in wire mode (even if not actively drawing)
     // Use raw mouse position (p) for crosshair, not snapped position (x, y)
     if(mode==='wire'){ renderCrosshair(p.x, p.y); } else { clearCrosshair(); }    
@@ -2884,7 +2893,33 @@ let marquee: {
     }
     
     gOverlay.appendChild(hline); gOverlay.appendChild(vline);
-  }  
+  }
+
+  // ----- Coordinate display -----
+  function updateCoordinateDisplay(x: number, y: number){
+    if(!coordDisplay) return;
+    // Convert user units (pixels) to nanometers, then to current units
+    const xNm = pxToNm(x);
+    const yNm = pxToNm(y);
+    const xVal = nmToUnit(xNm, globalUnits);
+    const yVal = nmToUnit(yNm, globalUnits);
+    
+    // Format with appropriate precision based on units
+    let precision = 2;
+    if(globalUnits === 'mils') precision = 0;
+    if(globalUnits === 'mm') precision = 2;
+    if(globalUnits === 'in') precision = 4;
+    
+    const xStr = xVal.toFixed(precision);
+    const yStr = yVal.toFixed(precision);
+    coordDisplay.textContent = `${xStr}, ${yStr} ${globalUnits}`;
+    coordDisplay.style.display = '';
+  }
+  
+  function hideCoordinateDisplay(){
+    if(!coordDisplay) return;
+    coordDisplay.style.display = 'none';
+  }
 
   // ----- Placement ghost -----
   let ghostEl: SVGGElement | null = null;
