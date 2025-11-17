@@ -4214,26 +4214,31 @@ let marquee: {
           
           // Apply changes only to this specific wire segment
           if (netSel.value !== '__none__') {
-            // Delegate styling to netclass/theme
+            // Delegate styling to netclass/theme (width=0, type='default' signals use netclass)
+            const netClass = NET_CLASSES[netSel.value];
             const patch: Partial<Stroke> = { width: 0, type: 'default' };
             ensureStroke(w);
             w.stroke = { ...(w.stroke as Stroke), ...patch };
-            w.color = rgba01ToCss((w.stroke as Stroke).color);
+            delete (w.stroke as any).widthNm; // Clear precision width so netclass width is used
+            w.color = rgba01ToCss(netClass.wire.color);
             w.netId = netSel.value;
             updateWireDOM(w); 
             redrawCanvasOnly();
             selection = { kind: 'wire', id: w.id, segIndex: null };
           } else {
-            // Start from the current effective stroke so the user gets editable defaults
-            const eff = strokeOfWire(w);
+            // Switch to custom properties: use the raw net class properties as starting point (not rendered/converted)
+            const nc = netClassForWire(w);
+            const rawColor = nc.wire.color; // Get raw color without black/white conversions
+            const eff = effectiveStroke(w, nc, THEME); // Still use effective for width/type
             const patch: Partial<Stroke> = {
               width: Math.max(0.05, eff.width || 0.25),
               type: (eff.type === 'default' ? 'solid' : eff.type) || 'solid',
-              color: eff.color
+              color: rawColor
             };
             ensureStroke(w);
             w.stroke = { ...(w.stroke as Stroke), ...patch };
-            w.color = rgba01ToCss((w.stroke as Stroke).color);
+            (w.stroke as any).widthNm = Math.round(patch.width! * NM_PER_MM); // Set precision width
+            w.color = rgba01ToCss(rawColor);
             w.netId = null; // Clear netId for custom properties
             updateWireDOM(w); 
             redrawCanvasOnly();
@@ -4355,12 +4360,22 @@ let marquee: {
         aIn.style.maxWidth = '140px';
 
         const syncColor = () => {
-          const eff = effectiveStroke(w, netClassForWire(w), THEME);
-          // convert current effective RGBA(0..1) → #RRGGBB for the color input
-          const rgbCss = `rgba(${Math.round(eff.color.r*255)},${Math.round(eff.color.g*255)},${Math.round(eff.color.b*255)},${eff.color.a})`;
-          const hex = colorToHex(rgbCss);
-          cIn.value = hex;
-          aIn.value = String(Math.max(0, Math.min(1, eff.color.a)));
+          // Use raw stored color, not effective stroke (which may convert black/white for visibility)
+          ensureStroke(w);
+          const rawColor = w.stroke!.color;
+          // If using netclass, show netclass color instead
+          if (netSel.value !== '__none__') {
+            const nc = NET_CLASSES[netSel.value];
+            const rgbCss = `rgba(${Math.round(nc.wire.color.r*255)},${Math.round(nc.wire.color.g*255)},${Math.round(nc.wire.color.b*255)},${nc.wire.color.a})`;
+            const hex = colorToHex(rgbCss);
+            cIn.value = hex;
+            aIn.value = String(Math.max(0, Math.min(1, nc.wire.color.a)));
+          } else {
+            const rgbCss = `rgba(${Math.round(rawColor.r*255)},${Math.round(rawColor.g*255)},${Math.round(rawColor.b*255)},${rawColor.a})`;
+            const hex = colorToHex(rgbCss);
+            cIn.value = hex;
+            aIn.value = String(Math.max(0, Math.min(1, rawColor.a)));
+          }
           const disabled = (netSel.value !== '__none__');
           cIn.disabled = disabled;
           aIn.disabled = disabled;
@@ -4568,7 +4583,12 @@ let marquee: {
         pSvg.appendChild(pLine);
         function syncPreview(){
           const eff = effectiveStroke(w, netClassForWire(w), THEME);
-          pLine.setAttribute('stroke', rgba01ToCss(eff.color));
+          // For the preview swatch, use the raw stored color (before black/white conversions)
+          ensureStroke(w);
+          const rawColor = (netSel.value !== '__none__') 
+            ? NET_CLASSES[netSel.value].wire.color 
+            : w.stroke!.color;
+          pLine.setAttribute('stroke', rgba01ToCss(rawColor));
           pLine.setAttribute('stroke-width', String(mmToPx(eff.width)));
           const d = dashArrayFor(eff.type);
           if(d) pLine.setAttribute('stroke-dasharray', d); else pLine.removeAttribute('stroke-dasharray');
@@ -5218,6 +5238,20 @@ let marquee: {
       if(L < 0.5){
         // Dark mode: render black as white
         result.color = { r: 1, g: 1, b: 1, a: result.color.a };
+      }
+    }
+    
+    // Special handling: if wire color is white (r≈1, g≈1, b≈1), render as black in light mode
+    const isWhite = result.color.r > 0.99 && result.color.g > 0.99 && result.color.b > 0.99;
+    if(isWhite){
+      const bg = getComputedStyle(document.body).backgroundColor;
+      const rgb = bg.match(/\d+/g)?.map(Number) || [255, 255, 255];
+      const [r, g, b] = rgb;
+      const srgb = [r / 255, g / 255, b / 255].map(v => (v <= 0.03928) ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      const L = 0.2126*srgb[0] + 0.7152*srgb[1] + 0.0722*srgb[2];
+      if(L >= 0.5){
+        // Light mode: render white as black
+        result.color = { r: 0, g: 0, b: 0, a: result.color.a };
       }
     }
     
