@@ -10,12 +10,19 @@
   <style>
     :root{
       --bg:#0f1115; --panel:#161a22; --ink:#e6e6e6; --muted:#a5adbb; --accent:#61dafb; --danger:#ff6b6b; --ok:#4ade80;
-      --grid:#2a2f3a; --grid-bold:#3a4150; --wire:#c7f284; --select:#f59e0b; --pin:#93c5fd; --component:#e2e8f0; --ghost:#64748b;
+      --grid:#2a2f3a; --grid-bold:#3a4150; --wire:#ffffff; --select:#f59e0b; --pin:#93c5fd; --component:#e2e8f0; --ghost:#64748b;
+    }
+    /* Light theme */
+    [data-theme="light"]{
+      --bg:#F0F0F0; --panel:#ffffff; --ink:#333333; --muted:#666666; --accent:#0ea5e9; --danger:#dc2626; --ok:#16a34a;
+      --grid:#d1d5db; --grid-bold:#9ca3af; --wire:#000000; --select:#f59e0b; --pin:#3b82f6; --component:#1f2937; --ghost:#6b7280;
     }
     html, body {height:100%;}
     body{margin:0; font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color:var(--ink); background:var(--bg);}
-    .app{display:grid; grid-template-columns: 320px 1fr 320px; grid-template-rows:auto 1fr; height:100%;}
-  header{grid-column: 1/4; display:flex; align-items:center; gap:.25rem; padding:.5rem .75rem; background:var(--panel); border-bottom:1px solid #22262f; position:sticky; top:0; z-index:3}
+    .app{display:flex; flex-direction:column; height:100%;}
+    .app-body{display:flex; flex:1; overflow:hidden;}
+  header{display:flex; align-items:center; gap:.25rem; padding:.5rem .75rem; background:var(--panel); border-bottom:1px solid #22262f; z-index:3}
+    [data-theme="light"] header{border-bottom:1px solid #d1d5db;}
     /* Keep everything on one row (no wrap); we'll popup sub-types absolutely */
     header{ flex-wrap: nowrap; align-items: center; }
   /* Thin vertical separator between mode buttons and components */
@@ -30,21 +37,46 @@
     }
     #paletteRow2 select{ width:auto; white-space:nowrap; }
   header .group{display:flex; gap:.15rem; align-items:center; background:#0e1219; padding:.22rem; border-radius:10px; border:1px solid #1e2430; position:relative}
+    [data-theme="light"] header .group{background:#e5e7eb; border:1px solid #d1d5db;}
     button{appearance:none; background:#0e1219; border:1px solid #273042; color:var(--ink); padding:.45rem .6rem; border-radius:8px; cursor:pointer; font-size:.92rem}
+    [data-theme="light"] button{background:#f9fafb; border:1px solid #d1d5db;}
     button:hover{border-color:#3a4a68}
+    [data-theme="light"] button:hover{border-color:#9ca3af;}
     button.active{outline:2px solid var(--accent);}
     button.danger{border-color:#623; color:#ffb3c7}
     button.ok{border-color:#1b3; color:#bff7d0}
-    #left, #right{background:var(--panel); border-right:1px solid #22262f;}
-    #right{border-right:none; border-left:1px solid #22262f}
-    #left, #right{padding:.75rem; overflow:auto}
+    /* Resizable panels */
+    .panel{background:var(--panel); display:flex; flex-direction:column; overflow:hidden; position:relative; transition:width 0.2s ease;}
+    .panel.collapsed{overflow:hidden; min-width:40px !important; flex-shrink:0;}
+    .panel-header{display:flex; align-items:center; justify-content:space-between; padding:.5rem .75rem; background:var(--panel); border-bottom:1px solid #22262f; overflow:hidden;}
+    [data-theme="light"] .panel-header{border-bottom:1px solid #d1d5db;}
+    .panel.collapsed .panel-header{border-bottom:none; flex-direction:column; gap:.2rem; padding:.3rem .3rem; align-items:center;}
+    .panel-header h2{margin:0; font-size:1.05rem; color:#cbd5e1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+    .panel.collapsed .panel-header h2{font-size:1.2rem; font-weight:bold;}
+    .panel-toggle{background:none; border:1px solid #273042; color:var(--muted); padding:.25rem .4rem; border-radius:6px; cursor:pointer; font-size:.75rem; min-width:24px; flex-shrink:0;}
+    .panel-toggle:hover{border-color:#3a4a68; color:var(--ink);}
+    .panel-content{flex:1; padding:.75rem; overflow:auto;}
+    .panel.collapsed .panel-content{display:none; visibility:hidden; opacity:0;}
+    #left{border-right:1px solid #22262f; width:320px; max-width:600px;}
+    [data-theme="light"] #left{border-right:1px solid #d1d5db;}
+    #left:not(.collapsed){min-width:200px;}
+    #right{border-left:1px solid #22262f; width:320px; max-width:600px;}
+    [data-theme="light"] #right{border-left:1px solid #d1d5db;}
+    #right:not(.collapsed){min-width:200px;}
+    .resizer{width:6px; background:transparent; cursor:col-resize; flex-shrink:0; position:relative; z-index:10;}
+    .resizer:hover{background:rgba(97, 218, 251, 0.2);}
+    .resizer.resizing{background:rgba(97, 218, 251, 0.4);}
+    #center{flex:1; display:flex; flex-direction:column; min-width:400px;}
     h2{margin:.25rem 0 .5rem; font-size:1.05rem; color:#cbd5e1}
+    [data-theme="light"] h2{color:#333333;}
     .row{display:flex; gap:.5rem; align-items:center; margin:.4rem 0}
     label{color:var(--muted); font-size:.9rem}
     input[type="text"], select, input[type="number"]{width:100%; background:#0e1219; color:var(--ink); border:1px solid #273042; border-radius:8px; padding:.4rem .5rem}
+    [data-theme="light"] input[type="text"], [data-theme="light"] select, [data-theme="light"] input[type="number"]{background:#ffffff; color:#333333; border:1px solid #666666;}
     input[type="file"]{width:100%}
     .hint{color:#9aa3b2; font-size:.85rem;}
     .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; padding:.05rem .35rem; background:#0b0f16; border:1px solid #273042; border-radius:6px}
+    [data-theme="light"] .kbd{background:#e5e7eb; border:1px solid #9ca3af; color:#333333;}
     #editorWrap{position:relative;}
     #svg{width:100%; height:calc(100vh - 64px); display:block; background:var(--bg);}
     .overlayTip{position:absolute; left:10px; bottom:10px; background:rgba(14,18,25,.75); border:1px solid #273042; padding:.35rem .5rem; border-radius:8px; font-size:.85rem}
@@ -97,13 +129,15 @@
     #wireColorGroup{ position:relative; }
     .palette{
       position:absolute; top:100%; left:0; margin-top:6px;
-      background:#0e1219; border:1px solid #273042; padding:6px;
+      background:var(--panel); border:1px solid #273042; padding:6px;
       border-radius:8px; display:grid; grid-template-columns: repeat(7, 20px);
       gap:6px; z-index:7;
     }
+    [data-theme="light"] .palette{background:var(--panel); border:1px solid #d1d5db;}
     .palette .swatch-btn{
       width:20px; height:20px; border:1px solid #273042; border-radius:4px; cursor:pointer;
     }
+    [data-theme="light"] .palette .swatch-btn{border:1px solid #d1d5db;}
     .palette .swatch-btn.selected{ outline:2px solid var(--accent); }
     #wireColorBtn .swatch{ width:16px; height:16px; }
     /* Inspector wire-color holder must be relative for its palette */
@@ -119,7 +153,7 @@
 </head>
 <body>
 <div class="app">
-  <header>
+  <header id="mainHeader">
     <div class="group" id="modeGroup">
       <button data-mode="select" class="active" title="Select/Move (V)">Select</button>
       <button data-mode="wire" title="Wire (W)">Wire</button>
@@ -131,6 +165,7 @@
       <button id="crosshairToggleBtn" title="Toggle Crosshair Length (X)">+</button>
       <button id="junctionDotsBtn" title="Toggle Junction Dots">.</button>
       <button id="trackingToggleBtn" title="Toggle Tracking (T)">- -</button>
+      <button id="themeToggleBtn" title="Toggle Dark/Light Theme">☀</button>
     </div>
     <div class="vsep"></div> 
   <div class="group" id="paletteRow1">
@@ -181,21 +216,28 @@
     </div>
     <div style="margin-left:auto; color:#9aa3b2">Grid: <span id="gridSizeKbd" class="kbd">24px</span> · Snap: <span id="snapKbd" class="kbd">on</span></div>
   </header>
-  <aside id="left">
-    <h2>Inspector </h2>
-    <div id="inspectorNone" class="hint">Select a component or wire to edit its properties.</div>
-    <div id="inspector"></div>
-    <hr style="border-color:#22262f; margin:1rem 0" />
-    <h2>Tips</h2>
-    <ul class="hint" style="line-height:1.5">
-      <li><span class="kbd">V</span> Select/Move · <span class="kbd">W</span> Wire · <span class="kbd">Del</span> Delete</li>
-      <li>Click grid to place selected part. Drag to move. <span class="kbd">R</span> rotates a part.</li>
-      <li>Wiring: click start → click turns → double‑click or <span class="kbd">Enter</span> to finish. <span class="kbd">Esc</span> to cancel.</li>
-      <li>Select: click-drag on empty space to draw a marquee window. Release to select (by default, the nearest <em>wire segment</em> in the box). Hold <span class="kbd">Shift</span> while dragging to prefer <em>components</em> instead. Click empty space to clear.</li>
-      <li>Delete: click a wire <em>segment</em> or component to remove.</li>
-    </ul>
-  </aside>
-  <main id="center">
+  <div class="app-body">
+    <aside id="left" class="panel">
+      <div class="panel-header">
+        <h2>Inspector</h2>
+        <button class="panel-toggle" data-panel="left" title="Collapse/Expand">◀</button>
+      </div>
+      <div class="panel-content">
+        <div id="inspectorNone" class="hint">Select a component or wire to edit its properties.</div>
+        <div id="inspector"></div>
+        <hr style="border-color:#22262f; margin:1rem 0" />
+        <h2>Tips</h2>
+        <ul class="hint" style="line-height:1.5">
+          <li><span class="kbd">V</span> Select/Move · <span class="kbd">W</span> Wire · <span class="kbd">Del</span> Delete</li>
+          <li>Click grid to place selected part. Drag to move. <span class="kbd">R</span> rotates a part.</li>
+          <li>Wiring: click start → click turns → double‑click or <span class="kbd">Enter</span> to finish. <span class="kbd">Esc</span> to cancel.</li>
+          <li>Select: click-drag on empty space to draw a marquee window. Release to select (by default, the nearest <em>wire segment</em> in the box). Hold <span class="kbd">Shift</span> while dragging to prefer <em>components</em> instead. Click empty space to clear.</li>
+          <li>Delete: click a wire <em>segment</em> or component to remove.</li>
+        </ul>
+      </div>
+    </aside>
+    <div class="resizer" data-resizer="left"></div>
+    <main id="center">
     <div id="editorWrap">
       <svg id="svg" viewBox="0 0 1600 1000" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -222,15 +264,22 @@
       <div class="overlayTip" id="overlayTip">Mode: <b id="modeLabel">Select</b></div>
     </div>
   </main>
-  <aside id="right">
-    <h2>Project</h2>
-    <div class="row"><label>Title</label></div>
-    <div class="row"><input id="projTitle" type="text" placeholder="Untitled schematic" /></div>
-    <div class="row hint">Saved into JSON</div>
-    <hr style="border-color:#22262f; margin:1rem 0" />
-    <h2>Counts</h2>
-    <div class="hint" id="counts">—</div>
-  </aside>
+    <div class="resizer" data-resizer="right"></div>
+    <aside id="right" class="panel">
+      <div class="panel-header">
+        <h2>Project</h2>
+        <button class="panel-toggle" data-panel="right" title="Collapse/Expand">▶</button>
+      </div>
+      <div class="panel-content">
+        <div class="row"><label>Title</label></div>
+        <div class="row"><input id="projTitle" type="text" placeholder="Untitled schematic" /></div>
+        <div class="row hint">Saved into JSON</div>
+        <hr style="border-color:#22262f; margin:1rem 0" />
+        <h2>Counts</h2>
+        <div class="hint" id="counts">—</div>
+      </div>
+    </aside>
+  </div>
 </div>
 
 <!-- NEW: works from file:// (classic) and http(s) (module) -->

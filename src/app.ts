@@ -512,12 +512,14 @@ let marquee: {
     return NET_CLASSES[w.netId || 'default'] || NET_CLASSES.default;
   }
 
-  type WireColorMode = 'custom' | 'auto' | 'red' | 'green' | 'blue' | 'yellow' | 'magenta' | 'cyan';
+  type WireColorMode = 'custom' | 'auto' | 'white' | 'black' | 'red' | 'green' | 'blue' | 'yellow' | 'magenta' | 'cyan';
   let currentWireColorMode: WireColorMode = 'auto';
 
   function resolveWireColor(mode: WireColorMode): string {
     const map: Record<Exclude<WireColorMode, 'auto'>, string> = {
       custom: 'custom',
+      white: '#ffffff',
+      black: '#000000',
       red: 'red',
       green: 'lime',
       blue: 'deepskyblue',
@@ -535,6 +537,21 @@ let marquee: {
       const L = 0.2126*srgb[0] + 0.7152*srgb[1] + 0.0722*srgb[2];
       return (L < 0.5) ? '#ffffff' : '#000000';
     }
+    
+    // Black → render as white in dark mode, but keep black internally
+    if (mode === 'black') {
+      const bg = getComputedStyle(document.body).backgroundColor;
+      const rgb = bg.match(/\d+/g)?.map(Number) || [0, 0, 0];
+      const [r, g, b] = rgb;
+      const srgb = [r / 255, g / 255, b / 255].map(v => (v <= 0.03928) ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      const L = 0.2126*srgb[0] + 0.7152*srgb[1] + 0.0722*srgb[2];
+      return (L < 0.5) ? '#ffffff' : '#000000';
+    }
+    
+    // White → always render as white
+    if (mode === 'white') {
+      return '#ffffff';
+    }
 
     // Custom → mirror the toolbar's explicit stroke color
     if (mode === 'custom') {
@@ -551,6 +568,7 @@ let marquee: {
   // Options used in both toolbar and Inspector (names -> resolved stroke colors)
   const WIRE_COLOR_OPTIONS: Array<[WireColorMode, string]> = [
     ['auto','Auto (Black/White)'],
+    ['black','Black/White'],
     ['red','Red'], ['green','Green'], ['blue','Blue'],
     ['yellow','Yellow'], ['magenta','Magenta'], ['cyan','Cyan']
   ];
@@ -571,6 +589,8 @@ let marquee: {
   function wireColorNameFromValue(v){
     const val = (v||'').toLowerCase();
     // map actual stroke values back to option keys when possible
+    if(val==='#ffffff' || val==='ffffff' || val==='white') return 'white';
+    if(val==='#000000' || val==='000000' || val==='black') return 'black';
     if(val==='red') return 'red';
     if(val==='lime') return 'green';
     if(val==='deepskyblue') return 'blue';
@@ -585,10 +605,25 @@ let marquee: {
     // fallback
     return 'auto';
   }
+  
+  // Helper to create a split black/white swatch
+  function createSplitSwatch(el: HTMLElement){
+    if(!el) return;
+    el.style.background = 'linear-gradient(to bottom right, #000000 0%, #000000 49%, #ffffff 51%, #ffffff 100%)';
+    el.style.border = '1px solid #666666';
+  }
+  
   const setSwatch = (el, color)=>{ 
-    if(!el) return; 
-    el.style.background = color; 
-    el.style.backgroundColor = color; 
+    if(!el) return;
+    // Special handling for black/white: show split diagonal swatch
+    const hexColor = colorToHex(color).toUpperCase();
+    if(hexColor === '#000000' || hexColor === '#FFFFFF'){
+      createSplitSwatch(el);
+    } else {
+      el.style.background = color; 
+      el.style.backgroundColor = color;
+      el.style.border = '';
+    }
   }; 
 
   // ====== Unit options for Value fields ======
@@ -838,6 +873,47 @@ let marquee: {
         e.preventDefault(); toggleTracking();
       }
     });
+  })();
+
+  // Wire up Theme toggle button
+  (function attachThemeToggle(){
+    const themeBtn = document.getElementById('themeToggleBtn') as HTMLButtonElement | null;
+    const htmlEl = document.documentElement;
+    
+    // Load saved theme or default to dark
+    let currentTheme = localStorage.getItem('theme') || 'dark';
+    
+    function applyTheme(theme: string){
+      if(theme === 'light'){
+        htmlEl.setAttribute('data-theme', 'light');
+      } else {
+        htmlEl.removeAttribute('data-theme');
+      }
+      currentTheme = theme;
+      localStorage.setItem('theme', theme);
+      
+      // Update button icon
+      if(themeBtn){
+        themeBtn.textContent = theme === 'light' ? '🌙' : '☀';
+      }
+      
+      // Always redraw when theme changes - any black wires need to flip to white/black
+      // Also update the in-progress drawing if active
+      redraw();
+      renderDrawing();
+    }
+    
+    function toggleTheme(){
+      const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      applyTheme(newTheme);
+    }
+    
+    // Apply saved theme on load
+    applyTheme(currentTheme);
+    
+    if(themeBtn){
+      themeBtn.addEventListener('click', toggleTheme);
+    }
   })();  // ====== Component Drawing ======
   function compPinPositions(c){
     // two-pin components: pins at +/- 2*GRID along the component rotation axis
@@ -2988,7 +3064,13 @@ let marquee: {
     if (WIRE_DEFAULTS.useNetclass) {
       currentWireColorMode = 'auto';
     } else {
-      currentWireColorMode = 'custom';
+      // Check if the color is black - if so, set mode to 'black' for theme-aware rendering
+      const c = WIRE_DEFAULTS.stroke.color;
+      if (c.r < 0.01 && c.g < 0.01 && c.b < 0.01) {
+        currentWireColorMode = 'black';
+      } else {
+        currentWireColorMode = 'custom';
+      }
     }
   }
 
@@ -3096,15 +3178,23 @@ let marquee: {
     // Standard color swatches (toolbar menu)
     (function(){
       const swatches = [
+        ['black','#000000'],
         ['red','#FF0000'], ['green','#00FF00'], ['blue','#0000FF'],
-        ['cyan','#00FFFF'], ['magenta','#FF00FF'], ['yellow','#FFFF00'], ['orange','#FFA500']
+        ['cyan','#00FFFF'], ['magenta','#FF00FF'], ['yellow','#FFFF00']
       ];
       const pal = document.createElement('div'); pal.className = 'palette';
       pal.style.gridTemplateColumns = `repeat(${swatches.length}, 20px)`;
       swatches.forEach(([k,col])=>{
         const b = document.createElement('button'); b.className = 'swatch-btn';
         b.title = (k as string).toUpperCase();
-        b.style.background = String(col);
+        // Special handling for black: create split diagonal swatch
+        if(col === '#000000'){
+          b.style.background = 'linear-gradient(to bottom right, #000000 0%, #000000 49%, #ffffff 51%, #ffffff 100%)';
+          b.style.border = '1px solid #666666';
+          b.title = 'BLACK/WHITE';
+        } else {
+          b.style.background = String(col);
+        }
         b.addEventListener('click', (ev)=>{
           // Switch to custom color immediately
           WIRE_DEFAULTS.useNetclass = false;
@@ -3891,8 +3981,9 @@ let marquee: {
         // Small swatch palette for the inspector color picker — hidden by default.
         (function(){
           const swatches = [
+            ['black','#000000'],
             ['red','#FF0000'], ['green','#00FF00'], ['blue','#0000FF'],
-            ['cyan','#00FFFF'], ['magenta','#FF00FF'], ['yellow','#FFFF00'], ['orange','#FFA500']
+            ['cyan','#00FFFF'], ['magenta','#FF00FF'], ['yellow','#FFFF00']
           ];
           const palWrap = document.createElement('div');
             // Build a floating swatch popover that appears under the color input (not inline in the inspector)
@@ -3901,7 +3992,7 @@ let marquee: {
             popover.style.position = 'absolute';
             popover.style.display = 'none';
             popover.style.zIndex = '9999';
-            popover.style.background = 'white';
+            popover.style.background = 'var(--panel)';
             popover.style.padding = '8px';
             popover.style.borderRadius = '6px';
             popover.style.boxShadow = '0 6px 18px rgba(0,0,0,0.12)';
@@ -3915,7 +4006,14 @@ let marquee: {
             swatches.forEach(([k,col])=>{
               const b = document.createElement('button'); b.className = 'swatch-btn';
               b.title = (k as string).toUpperCase();
-              b.style.background = String(col);
+              // Special handling for black: create split diagonal swatch
+              if(col === '#000000'){
+                b.style.background = 'linear-gradient(to bottom right, #000000 0%, #000000 49%, #ffffff 51%, #ffffff 100%)';
+                b.style.border = '1px solid #666666';
+                b.title = 'BLACK/WHITE';
+              } else {
+                b.style.background = String(col);
+              }
               b.style.width = '18px'; b.style.height = '18px'; b.style.borderRadius = '4px';
               b.style.border = '1px solid rgba(0,0,0,0.12)';
               b.style.padding = '0';
@@ -4630,7 +4728,23 @@ let marquee: {
     const sWire = w.stroke;
     const sNC   = nc.wire;
     const sTH   = th.wire;
-    return from(from(sTH, sNC), sWire);
+    const result = from(from(sTH, sNC), sWire);
+    
+    // Special handling: if wire color is black (r≈0, g≈0, b≈0), render as white in dark mode
+    const isBlack = result.color.r < 0.01 && result.color.g < 0.01 && result.color.b < 0.01;
+    if(isBlack){
+      const bg = getComputedStyle(document.body).backgroundColor;
+      const rgb = bg.match(/\d+/g)?.map(Number) || [0, 0, 0];
+      const [r, g, b] = rgb;
+      const srgb = [r / 255, g / 255, b / 255].map(v => (v <= 0.03928) ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      const L = 0.2126*srgb[0] + 0.7152*srgb[1] + 0.0722*srgb[2];
+      if(L < 0.5){
+        // Dark mode: render black as white
+        result.color = { r: 1, g: 1, b: 1, a: result.color.a };
+      }
+    }
+    
+    return result;
   }
 
   // NEW: stroke used for **newly placed wires** from the global Wire control.
@@ -5224,8 +5338,7 @@ function swpForWireSegment(wireId: string, segIndex?: number): SWP | null {
   }
   
   // ====== Boot ======
-  // start at 1:1
-  applyZoom();
+  // start at 1:1 (defer applyZoom until after panels are initialized)
   redraw();
   
   // Ensure button states reflect initial values
@@ -5243,4 +5356,172 @@ function swpForWireSegment(wireId: string, segIndex?: number): SWP | null {
     if(trackingMode) trBtn.classList.add('active');
     else trBtn.classList.remove('active');
   }
+  
+  // ====== Resizable and Collapsible Panels ======
+  (function initPanels(){
+    const leftPanel = document.getElementById('left') as HTMLElement;
+    const rightPanel = document.getElementById('right') as HTMLElement;
+    const leftResizer = document.querySelector('[data-resizer="left"]') as HTMLElement;
+    const rightResizer = document.querySelector('[data-resizer="right"]') as HTMLElement;
+    
+    // Store expanded widths
+    const panelState = {
+      left: { width: 320, collapsed: false },
+      right: { width: 320, collapsed: false }
+    };
+    
+    // Load saved state from localStorage
+    try {
+      const saved = localStorage.getItem('panel.state');
+      if(saved){
+        const parsed = JSON.parse(saved);
+        if(parsed.left) panelState.left = parsed.left;
+        if(parsed.right) panelState.right = parsed.right;
+      }
+    } catch(_){}
+    
+    function saveState(){
+      localStorage.setItem('panel.state', JSON.stringify(panelState));
+    }
+    
+    // Get minimal collapsed width - just wide enough for button and single letter
+    function getCollapsedWidth(): number {
+      return 40; // Minimal width for single letter + button
+    }
+    
+    // Apply saved state on load
+    if(leftPanel){
+      const leftHeader = leftPanel.querySelector('.panel-header h2') as HTMLElement;
+      if(panelState.left.collapsed){
+        leftPanel.classList.add('collapsed');
+        leftPanel.style.width = getCollapsedWidth() + 'px';
+        if(leftHeader) leftHeader.textContent = 'I';
+      } else {
+        leftPanel.style.width = panelState.left.width + 'px';
+        if(leftHeader) leftHeader.textContent = 'Inspector';
+      }
+    }
+    if(rightPanel){
+      const rightHeader = rightPanel.querySelector('.panel-header h2') as HTMLElement;
+      if(panelState.right.collapsed){
+        rightPanel.classList.add('collapsed');
+        rightPanel.style.width = getCollapsedWidth() + 'px';
+        if(rightHeader) rightHeader.textContent = 'P';
+      } else {
+        rightPanel.style.width = panelState.right.width + 'px';
+        if(rightHeader) rightHeader.textContent = 'Project';
+      }
+    }
+    
+    // Update button indicators based on state
+    const leftToggle = document.querySelector('[data-panel="left"]') as HTMLElement;
+    const rightToggle = document.querySelector('[data-panel="right"]') as HTMLElement;
+    if(leftToggle) leftToggle.textContent = panelState.left.collapsed ? '▶' : '◀';
+    if(rightToggle) rightToggle.textContent = panelState.right.collapsed ? '◀' : '▶';
+    
+    // Apply zoom after initial panel state to ensure correct canvas size
+    // Wait for CSS transition to complete (200ms) before measuring
+    setTimeout(() => {
+      svg.getBoundingClientRect();
+      applyZoom();
+    }, 250);
+    
+    // Panel collapse/expand toggle
+    document.querySelectorAll('.panel-toggle').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const target = (e.target as HTMLElement).getAttribute('data-panel');
+        if(!target) return;
+        
+        const panel = document.getElementById(target);
+        if(!panel) return;
+        
+        const isLeft = target === 'left';
+        const state = isLeft ? panelState.left : panelState.right;
+        const header = panel.querySelector('.panel-header h2') as HTMLElement;
+        const fullText = isLeft ? 'Inspector' : 'Project';
+        const letterText = isLeft ? 'I' : 'P';
+        
+        if(state.collapsed){
+          // Expand
+          panel.classList.remove('collapsed');
+          panel.style.width = state.width + 'px';
+          state.collapsed = false;
+          if(header) header.textContent = fullText;
+          (btn as HTMLElement).textContent = isLeft ? '◀' : '▶';
+        } else {
+          // Collapse
+          const collapsedWidth = getCollapsedWidth();
+          panel.classList.add('collapsed');
+          panel.style.width = collapsedWidth + 'px';
+          state.collapsed = true;
+          if(header) header.textContent = letterText;
+          (btn as HTMLElement).textContent = isLeft ? '▶' : '◀';
+        }
+        
+        saveState();
+        // Wait for CSS transition to complete before recalculating viewBox
+        setTimeout(() => {
+          svg.getBoundingClientRect();
+          applyZoom(); // Recalculate SVG viewBox after resize
+        }, 250);
+      });
+    });
+    
+    // Resizer drag functionality
+    function initResizer(resizer: HTMLElement, panel: HTMLElement, isLeft: boolean){
+      let startX = 0;
+      let startWidth = 0;
+      
+      function onMouseDown(e: MouseEvent){
+        if(e.button !== 0) return;
+        e.preventDefault();
+        
+        const state = isLeft ? panelState.left : panelState.right;
+        if(state.collapsed) return; // Don't resize when collapsed
+        
+        startX = e.clientX;
+        startWidth = panel.offsetWidth;
+        
+        resizer.classList.add('resizing');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      }
+      
+      function onMouseMove(e: MouseEvent){
+        const delta = isLeft ? (e.clientX - startX) : (startX - e.clientX);
+        let newWidth = startWidth + delta;
+        
+        // Enforce min/max constraints
+        const minW = parseInt(getComputedStyle(panel).minWidth) || 200;
+        const maxW = parseInt(getComputedStyle(panel).maxWidth) || 600;
+        newWidth = Math.max(minW, Math.min(maxW, newWidth));
+        
+        panel.style.width = newWidth + 'px';
+        // Force a layout reflow before recalculating viewBox
+        svg.getBoundingClientRect();
+        applyZoom(); // Recalculate SVG viewBox during resize
+      }
+      
+      function onMouseUp(){
+        resizer.classList.remove('resizing');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        
+        const state = isLeft ? panelState.left : panelState.right;
+        state.width = panel.offsetWidth;
+        saveState();
+        
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      }
+      
+      resizer.addEventListener('mousedown', onMouseDown);
+    }
+    
+    if(leftResizer && leftPanel) initResizer(leftResizer, leftPanel, true);
+    if(rightResizer && rightPanel) initResizer(rightResizer, rightPanel, false);
+  })();
 })();
