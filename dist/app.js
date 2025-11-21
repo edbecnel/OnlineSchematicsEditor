@@ -285,6 +285,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
             // Dot spacing in user units (50 mils = 5 user units)
             const dotSpacingUser = nmToPx(SNAP_NM) * snapMultiplier;
+            // Save dot spacing for snap() function to use when in 'grid' snap mode
+            CURRENT_SNAP_USER_UNITS = dotSpacingUser;
             // Calculate dot radius (1 screen pixel)
             const dotRadius = 1 / scale;
             // Calculate visible bounds with padding
