@@ -3255,23 +3255,25 @@ let marquee: {
       hline.style.opacity = '0.4';  // semi-transparent so hints show through
       vline.style.opacity = '0.4';
     } else {
-      // Full-screen crosshair: span the visible viewBox, darker gray, dashed
+      // Full-screen crosshair: span the visible viewBox, same styling as short
+      const scale = svg.clientWidth / Math.max(1, viewW);
+      const strokeWidth = 1 / scale; // 1 screen pixel (same as short)
       const xL = viewX, xR = viewX + viewW;
       const yT = viewY, yB = viewY + viewH;
       setAttr(hline, 'x1', xL); setAttr(hline, 'y1', y);
       setAttr(hline, 'x2', xR); setAttr(hline, 'y2', y);
       setAttr(vline, 'x1', x); setAttr(vline, 'y1', yT);
       setAttr(vline, 'x2', x); setAttr(vline, 'y2', yB);
-      hline.style.stroke = '#666';  // darker gray for full-screen
-      vline.style.stroke = '#666';
-      hline.style.strokeWidth = '1';
-      vline.style.strokeWidth = '1';
-      hline.style.strokeDasharray = '4 4';  // dashed
-      vline.style.strokeDasharray = '4 4';
+      hline.style.stroke = '#999';  // light gray (same as short)
+      vline.style.stroke = '#999';
+      hline.style.strokeWidth = String(strokeWidth);
+      vline.style.strokeWidth = String(strokeWidth);
+      hline.style.strokeDasharray = 'none';  // solid line (same as short)
+      vline.style.strokeDasharray = 'none';
       hline.style.pointerEvents = 'none';
       vline.style.pointerEvents = 'none';
-      hline.style.opacity = '0.3';  // semi-transparent so hints show through
-      vline.style.opacity = '0.3';
+      hline.style.opacity = '0.4';  // semi-transparent so hints show through (same as short)
+      vline.style.opacity = '0.4';
     }
     
     gOverlay.appendChild(hline); gOverlay.appendChild(vline);
