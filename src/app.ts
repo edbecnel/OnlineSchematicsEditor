@@ -3945,6 +3945,7 @@ let marquee: {
 
   // Pan helpers
   var isPanning = false, panStartSvg = null, panStartView = null, panPointerId = null;
+  var panAnimationFrame = null;
   function beginPan(e){
     isPanning = true;
     document.body.classList.add('panning');
@@ -3961,7 +3962,21 @@ let marquee: {
     const dy = p.y - panStartSvg.y;
     viewX = panStartView.x - dx;
     viewY = panStartView.y - dy;
-    applyZoom();  // updates grid to fill viewport
+    
+    // Use requestAnimationFrame to throttle updates and prevent flickering
+    if (panAnimationFrame === null) {
+      panAnimationFrame = requestAnimationFrame(() => {
+        panAnimationFrame = null;
+        // Only update viewBox during panning for smooth performance
+        const vw = Math.max(1, svg.clientWidth);
+        const vh = Math.max(1, svg.clientHeight);
+        const aspect = vw / vh;
+        viewW = BASE_W / zoom;
+        viewH = viewW / aspect;
+        svg.setAttribute('viewBox', `${viewX} ${viewY} ${viewW} ${viewH}`);
+        redrawGrid();
+      });
+    }
   }
   function endPan(){
     if(!isPanning) return;
@@ -3969,6 +3984,12 @@ let marquee: {
     document.body.classList.remove('panning');
     if(panPointerId!=null) svg.releasePointerCapture?.(panPointerId);
     panPointerId = null;
+    // Final update after panning completes
+    if (panAnimationFrame !== null) {
+      cancelAnimationFrame(panAnimationFrame);
+      panAnimationFrame = null;
+    }
+    applyZoom(); // Full redraw at the end
   }  
 
   function clearAll(){
