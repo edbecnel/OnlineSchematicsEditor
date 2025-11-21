@@ -463,6 +463,7 @@ let marquee: {
     
     // Clear redo stack on new action
     redoStack = [];
+    updateUndoRedoButtons();
   }
 
   function undo() {
@@ -474,6 +475,7 @@ let marquee: {
     // Restore previous state
     const prevState = undoStack.pop()!;
     restoreState(prevState);
+    updateUndoRedoButtons();
   }
 
   function redo() {
@@ -485,6 +487,14 @@ let marquee: {
     // Restore next state
     const nextState = redoStack.pop()!;
     restoreState(nextState);
+    updateUndoRedoButtons();
+  }
+
+  function updateUndoRedoButtons() {
+    const undoBtn = document.getElementById('undoBtn') as HTMLButtonElement | null;
+    const redoBtn = document.getElementById('redoBtn') as HTMLButtonElement | null;
+    if (undoBtn) undoBtn.disabled = undoStack.length === 0;
+    if (redoBtn) redoBtn.disabled = redoStack.length === 0;
   }
 
   // Palette state: diode subtype selection
@@ -3551,6 +3561,10 @@ let marquee: {
   document.getElementById('rotateBtn').addEventListener('click', rotateSelected);
   document.getElementById('clearBtn').addEventListener('click', clearAll);
   document.getElementById('addNetBtn')!.addEventListener('click', addNet);
+  
+  // Undo/Redo button handlers
+  document.getElementById('undoBtn')?.addEventListener('click', undo);
+  document.getElementById('redoBtn')?.addEventListener('click', redo);
 
 
 // ================================================================================

@@ -43,9 +43,14 @@
     [data-theme="light"] button{background:#f9fafb; border:1px solid #d1d5db;}
     button:hover{border-color:#3a4a68}
     [data-theme="light"] button:hover{border-color:#9ca3af;}
+    button:disabled{opacity:0.4; cursor:not-allowed; border-color:#1e2430;}
+    button:disabled:hover{border-color:#1e2430;}
+    [data-theme="light"] button:disabled{opacity:0.4; border-color:#d1d5db;}
+    [data-theme="light"] button:disabled:hover{border-color:#d1d5db;}
     button.active{outline:2px solid var(--accent);}
     button.danger{border-color:#623; color:#ffb3c7}
     button.ok{border-color:#1b3; color:#bff7d0}
+    button svg{display:block;}
     /* Resizable panels */
     .panel{background:var(--panel); display:flex; flex-direction:column; overflow:hidden; position:relative; transition:width 0.2s ease; min-height:0;}
     .panel.collapsed{overflow:hidden; min-width:40px !important; flex-shrink:0;}
@@ -208,6 +213,20 @@
       <button data-mode="delete" title="Delete (Del)">Delete</button>
       <button data-mode="pan" title="Pan (P or MMB drag)">Pan</button>
       <button data-mode="move" title="Move selected (M / Arrow keys)">Move</button>
+    </div>
+    <div class="group">
+      <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 7 L3 3 L7 3" />
+          <path d="M3 3 Q3 3, 5 5 Q7 7, 10 7 Q13 7, 13 10 Q13 13, 10 13" />
+        </svg>
+      </button>
+      <button id="redoBtn" title="Redo (Ctrl+Y)" disabled>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13 7 L13 3 L9 3" />
+          <path d="M13 3 Q13 3, 11 5 Q9 7, 6 7 Q3 7, 3 10 Q3 13, 6 13" />
+        </svg>
+      </button>
     </div>
     <div class="vsep"></div> 
   <div class="group" id="paletteRow1">
