@@ -88,6 +88,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     let connectionHint = null;
     // Visual shift indicator for temporary ortho mode
     let shiftOrthoVisualActive = false;
+    // Visual indicator when endpoint square overrides ortho mode
+    let endpointOverrideActive = false;
     // ================================================================================
     // ================================================================================
     // ====== 3. STATE MANAGEMENT ======
@@ -989,12 +991,19 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         function updateOrthoButton() {
             if (!orthoBtn)
                 return;
+            // Show dimmed/inactive if endpoint square is overriding ortho
+            if (endpointOverrideActive) {
+                orthoBtn.classList.remove('active');
+                orthoBtn.style.opacity = '0.4';
+            }
             // Show active if ortho mode is on OR if shift visual is active
-            if (orthoMode || shiftOrthoVisualActive) {
+            else if (orthoMode || shiftOrthoVisualActive) {
                 orthoBtn.classList.add('active');
+                orthoBtn.style.opacity = '';
             }
             else {
                 orthoBtn.classList.remove('active');
+                orthoBtn.style.opacity = '';
             }
         }
         updateOrthoButtonVisual = updateOrthoButton;
@@ -1808,22 +1817,15 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                                 drawing.cursor = { x: ep.x, y: ep.y };
                             }
                             else {
-                                // Use exact endpoint coordinates, but respect ortho mode constraint
-                                let finalX = ep.x, finalY = ep.y;
-                                if (orthoMode || globalShiftDown) {
-                                    const prev = drawing.points[drawing.points.length - 1];
-                                    const dx = Math.abs(ep.x - prev.x);
-                                    const dy = Math.abs(ep.y - prev.y);
-                                    // Lock to closer axis
-                                    if (dx > dy) {
-                                        finalY = prev.y;
-                                    }
-                                    else {
-                                        finalX = prev.x;
-                                    }
+                                // Use exact endpoint coordinates - no ortho constraint when clicking connection squares
+                                drawing.points.push({ x: ep.x, y: ep.y });
+                                drawing.cursor = { x: ep.x, y: ep.y };
+                                // Clear the override indicator that was set on hover
+                                if (endpointOverrideActive) {
+                                    endpointOverrideActive = false;
+                                    if (updateOrthoButtonVisual)
+                                        updateOrthoButtonVisual();
                                 }
-                                drawing.points.push({ x: finalX, y: finalY });
-                                drawing.cursor = { x: finalX, y: finalY };
                             }
                             renderDrawing();
                             redraw();
@@ -2248,8 +2250,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             if (!w.points || w.points.length < 2)
                 continue;
             const a = w.points[0], b = w.points[w.points.length - 1];
-            out.push({ x: snapToBaseScalar(a.x), y: snapToBaseScalar(a.y) });
-            out.push({ x: snapToBaseScalar(b.x), y: snapToBaseScalar(b.y) });
+            // Use actual coordinates, not snapped, to match endpoint square storage
+            out.push({ x: a.x, y: a.y });
+            out.push({ x: b.x, y: b.y });
         }
         return out;
     }
@@ -2568,21 +2571,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }
                 let nx, ny;
                 if (endpointData) {
-                    // Use the exact anchor position stored on the endpoint square, but respect ortho mode
+                    // Use the exact anchor position stored on the endpoint square - no ortho constraint
                     nx = endpointData.x;
                     ny = endpointData.y;
-                    if (orthoMode || globalShiftDown) {
-                        const prev = drawing.points[drawing.points.length - 1];
-                        const dx = Math.abs(nx - prev.x);
-                        const dy = Math.abs(ny - prev.y);
-                        // Lock to closer axis
-                        if (dx > dy) {
-                            ny = prev.y;
-                        }
-                        else {
-                            nx = prev.x;
-                        }
-                    }
                 }
                 else {
                     // Use the cursor position which already respects ortho mode and connection hints
@@ -2630,6 +2621,33 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         if (marquee.active) {
             marquee.shiftPreferComponents = !!(e.shiftKey || globalShiftDown);
             updateMarqueeTo(svgPoint(e));
+        }
+        // Check if hovering over an endpoint square that would create a non-orthogonal line
+        if (mode === 'wire' && drawing.active && drawing.points.length > 0) {
+            const tgt = e.target;
+            if (tgt && tgt.tagName === 'rect' && tgt.endpoint) {
+                const ep = tgt.endpoint;
+                const prev = drawing.points[drawing.points.length - 1];
+                const dx = Math.abs(ep.x - prev.x);
+                const dy = Math.abs(ep.y - prev.y);
+                const isNonOrtho = (orthoMode || globalShiftDown) && dx > 0.01 && dy > 0.01;
+                if (isNonOrtho && !endpointOverrideActive) {
+                    endpointOverrideActive = true;
+                    if (updateOrthoButtonVisual)
+                        updateOrthoButtonVisual();
+                }
+                else if (!isNonOrtho && endpointOverrideActive) {
+                    endpointOverrideActive = false;
+                    if (updateOrthoButtonVisual)
+                        updateOrthoButtonVisual();
+                }
+            }
+            else if (endpointOverrideActive) {
+                // Not hovering over endpoint anymore, clear the override
+                endpointOverrideActive = false;
+                if (updateOrthoButtonVisual)
+                    updateOrthoButtonVisual();
+            }
         }
         if (mode === 'wire' && drawing.active) {
             // enforce orthogonal preview while Shift is down (or globally tracked) or when ortho mode is on
@@ -2700,12 +2718,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         });
                     });
                     // Include intermediate points of the wire being drawn
-                    // Skip last 2 points: 
-                    //   - drawing.points[drawing.points.length - 1]: current segment start
-                    //   - drawing.points[drawing.points.length - 2]: previous segment end (same point, forms corner)
-                    // Include all other placed points before those
+                    // Skip only the last point (current segment start - we're drawing FROM it)
+                    // Include all other placed points (including the second-to-last point)
                     let wirePointCandidates = 0;
-                    for (let i = 0; i < drawing.points.length - 2; i++) {
+                    for (let i = 0; i < drawing.points.length - 1; i++) {
                         candidates.push({ x: drawing.points[i].x, y: drawing.points[i].y });
                         wirePointCandidates++;
                     }
@@ -3236,9 +3252,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             rect.setAttribute('stroke', 'lime');
             rect.setAttribute('stroke-width', String(1 / scale));
             rect.style.cursor = 'pointer';
-            // Store snapped anchor coordinates for click detection
-            const anchor = { x: snapToBaseScalar(pt.x), y: snapToBaseScalar(pt.y) };
-            rect.endpoint = { x: anchor.x, y: anchor.y };
+            // Store actual coordinates (not snapped) so connections align precisely
+            rect.endpoint = { x: pt.x, y: pt.y };
             gDrawing.appendChild(rect);
         }
         // keep endpoint marker in sync with in-progress color

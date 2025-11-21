@@ -95,8 +95,9 @@
     <h3>Orthogonal Mode</h3>
     <ul>
       <li>Hold <span class="kbd">Shift</span> while drawing to force horizontal/vertical segments</li>
-      <li>Click the <b>Ortho</b> button to enable orthogonal mode permanently</li>
+      <li>Click the <b>Ortho</b> button or press <span class="kbd">O</span> to enable orthogonal mode permanently</li>
       <li>Useful for creating neat, aligned schematics</li>
+      <li><b>Smart Override:</b> Clicking connection squares (green endpoint markers) bypasses ortho mode for precise connections to existing wire endpoints, even if they're not aligned horizontally or vertically</li>
     </ul>
 
     <h3>Connection Hints</h3>
@@ -184,12 +185,13 @@
       <li>Visual only; does not affect snapping</li>
     </ul>
 
-    <h3>Snap Grid</h3>
+    <h3>Snap Modes</h3>
     <ul>
-      <li><b>Snap spacing:</b> 50 mils (1.27 mm) at all zoom levels</li>
-      <li>All components and wires snap to this grid</li>
-      <li>Ensures proper electrical connections</li>
-      <li>Dots align exactly with snap positions at 1000% zoom</li>
+      <li>Click the <b>Snap</b> button or press <span class="kbd">S</span> to cycle through modes:</li>
+      <li><b>50mil:</b> Snap to base grid (50 mils / 1.27 mm) — ensures proper electrical connections</li>
+      <li><b>Grid:</b> Snap to visible grid lines or dots — adjusts with zoom level</li>
+      <li><b>Off:</b> No snapping — free placement anywhere</li>
+      <li><b>Connection Squares:</b> Green endpoint markers always connect to exact wire positions, ignoring snap settings for precise connections</li>
     </ul>
 
     <h3>Coordinate Display</h3>
@@ -357,10 +359,12 @@
     <h3>Actions</h3>
     <ul>
       <li><span class="kbd">R</span> — Rotate selected component 90° clockwise</li>
+      <li><span class="kbd">O</span> — Toggle orthogonal mode</li>
+      <li><span class="kbd">S</span> — Cycle snap mode (50mil → Grid → Off)</li>
       <li><span class="kbd">Esc</span> — Cancel drawing / Deselect / Exit mode</li>
       <li><span class="kbd">Enter</span> — Finish wire drawing</li>
       <li><span class="kbd">Delete</span> — Delete selected component or wire</li>
-      <li><span class="kbd">Shift</span> — Hold while wiring for orthogonal mode</li>
+      <li><span class="kbd">Shift</span> — Hold while wiring for temporary orthogonal mode</li>
     </ul>
 
     <h3>File Operations</h3>
