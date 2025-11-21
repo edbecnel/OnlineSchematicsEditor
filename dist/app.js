@@ -1772,9 +1772,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     rect.setAttribute('stroke', 'lime');
                     rect.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
                     rect.style.cursor = 'pointer';
-                    // store snapped anchor coordinates for handler
-                    const anchor = { x: snapToBaseScalar(pt.x), y: snapToBaseScalar(pt.y) };
-                    rect.endpoint = { x: anchor.x, y: anchor.y };
+                    // Store the actual wire endpoint coordinates (not snapped) so connections align precisely
+                    rect.endpoint = { x: pt.x, y: pt.y };
                     rect.wireId = w.id;
                     rect.endpointIndex = ei; // 0=start, 1=end
                     // Click/tap behavior: snap to exact endpoint when placing wires/components
