@@ -408,6 +408,7 @@ let marquee: {
     nets: Set<string>;
     netClasses: Record<string, NetClass>;
     activeNetClass: string;
+    wireDefaults: typeof WIRE_DEFAULTS;
   }
   let undoStack: EditorState[] = [];
   let redoStack: EditorState[] = [];
@@ -422,7 +423,8 @@ let marquee: {
       counters: { ...counters },
       nets: new Set(nets),
       netClasses: JSON.parse(JSON.stringify(NET_CLASSES)),
-      activeNetClass: activeNetClass
+      activeNetClass: activeNetClass,
+      wireDefaults: JSON.parse(JSON.stringify(WIRE_DEFAULTS))
     };
   }
 
@@ -438,6 +440,9 @@ let marquee: {
     for (const key in NET_CLASSES) {
       if (key !== 'default') delete NET_CLASSES[key];
     }
+    
+    // Restore WIRE_DEFAULTS
+    WIRE_DEFAULTS = JSON.parse(JSON.stringify(state.wireDefaults));
     const restoredClasses = JSON.parse(JSON.stringify(state.netClasses));
     for (const key in restoredClasses) {
       NET_CLASSES[key] = restoredClasses[key];
@@ -450,6 +455,7 @@ let marquee: {
     redraw();
     renderNetList();
     renderInspector();
+    syncWireToolbar(); // Update wire stroke toolbar to reflect restored defaults
   }
 
   function pushUndo() {
@@ -983,7 +989,7 @@ let marquee: {
     saveBtn.className = 'ok';
     saveBtn.onclick = () => {
       // Parse width
-      const parsed = parseDimInput(widthInput.value || '0');
+      const parsed = parseDimInput(widthInput.value || '0', globalUnits);
       const nm = parsed ? parsed.nm : 0;
       const valMm = nm / NM_PER_MM;
       
@@ -3890,7 +3896,7 @@ let marquee: {
     inpW.oninput = () => {
       const raw = (inpW.value || '').trim();
       if (raw === '' || raw === '-' || raw === '.' || raw === '-.') return;
-      const parsed = parseDimInput(raw);
+      const parsed = parseDimInput(raw, globalUnits);
       if (!parsed) return;
       const mmVal = parsed.nm / NM_PER_MM;
       // update defaults using mm for backward compatibility, but keep widthNm for internal precision
@@ -3913,7 +3919,7 @@ let marquee: {
     };
     // Commit on blur/Enter: parse with optional suffix and normalize to nm/mm
     inpW.onchange = () => {
-      const parsed = parseDimInput((inpW.value||'').trim());
+      const parsed = parseDimInput((inpW.value||'').trim(), globalUnits);
       const nm = parsed ? parsed.nm : 0;
       const val = (nm / NM_PER_MM) || 0;
       WIRE_DEFAULTS.stroke.width = val;
@@ -4354,12 +4360,15 @@ let marquee: {
           pushUndo();
           ensureStroke(w);
           if (chkCustom.checked) {
-            // Switching to custom: populate with current net class values
+            // Switching to custom: populate with current effective values (width/type from effectiveStroke,
+            // but preserve the actual net class color, not the display-adjusted color)
             const nc = NET_CLASSES[w.netId || activeNetClass] || NET_CLASSES.default;
-            const rawColor = nc.wire.color;
+            const eff = effectiveStroke(w, nc, THEME);
+            // Determine the raw color to use (from wire's current stroke, or from netclass if using defaults)
+            const rawColor = (w.stroke && w.stroke.width > 0) ? w.stroke.color : nc.wire.color;
             const patch: Partial<Stroke> = {
-              width: Math.max(0.05, nc.wire.width || 0.25),
-              type: (nc.wire.type === 'default' ? 'solid' : nc.wire.type) || 'solid',
+              width: eff.width,
+              type: (eff.type === 'default' ? 'solid' : eff.type) || 'solid',
               color: rawColor
             };
             w.stroke = { ...(w.stroke as Stroke), ...patch };
@@ -4392,9 +4401,17 @@ let marquee: {
         // Live, non-destructive width updates while typing so the inspector DOM
         // isn't rebuilt on every keystroke. The final onchange will perform any
         // SWP-wide restroke and normalization.
+        let hasUndoForThisEdit = false;
+        wIn.onfocus = () => {
+          // Push undo once when editing starts
+          if (!hasUndoForThisEdit) {
+            pushUndo();
+            hasUndoForThisEdit = true;
+          }
+        };
         wIn.oninput = () => {
           try {
-            const parsed = parseDimInput(wIn.value || '0');
+            const parsed = parseDimInput(wIn.value || '0', globalUnits);
             if (!parsed) return;
             const nm = parsed.nm;
             const valMm = nm / NM_PER_MM;
@@ -4411,9 +4428,9 @@ let marquee: {
         };
 
         wIn.onchange = () => {
-          pushUndo();
+          // pushUndo() called on focus, not here, to avoid duplicate entries
           ensureStroke(w);
-          const parsed = parseDimInput(wIn.value || '0');
+          const parsed = parseDimInput(wIn.value || '0', globalUnits);
           const nm = parsed ? parsed.nm : 0;
           const valMm = nm / NM_PER_MM; // mm for legacy fields
           const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
@@ -4471,6 +4488,7 @@ let marquee: {
             // Width and color remain as-is.
             updateWireDOM(w); redrawCanvasOnly();
           }
+          syncPreview();
         };
         styleRow.appendChild(sLbl); styleRow.appendChild(sSel); holder.appendChild(styleRow);
                 // Color (RGB) + Opacity
@@ -4485,6 +4503,13 @@ let marquee: {
         cIn.type = 'color';
         // Tooltip for the color button
         cIn.title = 'Pick color';
+        
+        // Set initial value before defining syncColor
+        ensureStroke(w);
+        const initialColor = w.stroke!.color;
+        const initialHex = '#' + [initialColor.r, initialColor.g, initialColor.b]
+          .map(v => Math.round(v*255).toString(16).padStart(2,'0')).join('');
+        cIn.value = initialHex;
 
         const aIn = document.createElement('input');
         aIn.type = 'range';
@@ -4494,11 +4519,17 @@ let marquee: {
         // keep compact so it fits in the inspector width
         aIn.style.flex = '0 0 120px';
         aIn.style.maxWidth = '140px';
+        aIn.value = String(Math.max(0, Math.min(1, initialColor.a)));
 
         const syncColor = () => {
           // Use raw stored color, not effective stroke (which may convert black/white for visibility)
           ensureStroke(w);
           const rawColor = w.stroke!.color;
+          // Disable first, then update values, then re-enable to force browser to refresh
+          const wasDisabled = cIn.disabled;
+          cIn.disabled = true;
+          aIn.disabled = true;
+          
           // If not using custom properties, show netclass color instead
           if (!chkCustom.checked) {
             const nc = NET_CLASSES[w.netId || activeNetClass];
@@ -4512,6 +4543,8 @@ let marquee: {
             cIn.value = hex;
             aIn.value = String(Math.max(0, Math.min(1, rawColor.a)));
           }
+          
+          // Re-enable after updating value to force refresh
           cIn.disabled = !chkCustom.checked;
           aIn.disabled = !chkCustom.checked;
         };
@@ -4574,11 +4607,84 @@ let marquee: {
           }
         };
 
-        cIn.oninput = liveApplyColor;
-        aIn.oninput = liveApplyColor;
+        let hasColorUndo = false;
+        const ensureColorUndo = () => {
+          if (!hasColorUndo) {
+            pushUndo();
+            hasColorUndo = true;
+          }
+        };
+        cIn.onfocus = ensureColorUndo;
+        aIn.onfocus = ensureColorUndo;
+        cIn.oninput = () => {
+          ensureColorUndo();
+          liveApplyColor();
+        };
+        aIn.oninput = () => {
+          ensureColorUndo();
+          liveApplyColor();
+        };
         // Finalize (apply across SWP if present) when the picker is closed or change is committed
-        cIn.onchange = onColorCommit;
-        aIn.onchange = onColorCommit;
+        cIn.onchange = () => {
+          ensureColorUndo(); // Ensure undo is pushed even if oninput never fired
+          const hex = cIn.value || '#ffffff';
+          const m = hex.replace('#','');
+          const r = parseInt(m.slice(0,2),16), g = parseInt(m.slice(2,4),16), b = parseInt(m.slice(4,6),16);
+          const a = Math.max(0, Math.min(1, parseFloat(aIn.value) || 1));
+          const newColor: RGBA01 = { r:r/255, g:g/255, b:b/255, a };
+
+          const patch: Partial<Stroke> = { color: newColor };
+          const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
+
+          if (w.points && w.points.length === 2) {
+            ensureStroke(w);
+            w.stroke = { ...w.stroke!, color: newColor };
+            w.color = rgba01ToCss(w.stroke.color);
+            updateWireDOM(w);
+            redrawCanvasOnly();
+            selection = { kind: 'wire', id: w.id, segIndex: null };
+          } else if (swp) {
+            restrokeSwpSegments(swp, patch);
+            if (mid) reselectNearestAt(mid); else redraw();
+          } else {
+            ensureStroke(w);
+            w.stroke = { ...w.stroke!, color: newColor };
+            w.color = rgba01ToCss(w.stroke.color);
+            updateWireDOM(w);
+            redrawCanvasOnly();
+          }
+          syncWidth(); syncStyle(); syncColor(); syncPreview();
+        };
+        aIn.onchange = () => {
+          ensureColorUndo(); // Ensure undo is pushed even if oninput never fired
+          const hex = cIn.value || '#ffffff';
+          const m = hex.replace('#','');
+          const r = parseInt(m.slice(0,2),16), g = parseInt(m.slice(2,4),16), b = parseInt(m.slice(4,6),16);
+          const a = Math.max(0, Math.min(1, parseFloat(aIn.value) || 1));
+          const newColor: RGBA01 = { r:r/255, g:g/255, b:b/255, a };
+
+          const patch: Partial<Stroke> = { color: newColor };
+          const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
+
+          if (w.points && w.points.length === 2) {
+            ensureStroke(w);
+            w.stroke = { ...w.stroke!, color: newColor };
+            w.color = rgba01ToCss(w.stroke.color);
+            updateWireDOM(w);
+            redrawCanvasOnly();
+            selection = { kind: 'wire', id: w.id, segIndex: null };
+          } else if (swp) {
+            restrokeSwpSegments(swp, patch);
+            if (mid) reselectNearestAt(mid); else redraw();
+          } else {
+            ensureStroke(w);
+            w.stroke = { ...w.stroke!, color: newColor };
+            w.color = rgba01ToCss(w.stroke.color);
+            updateWireDOM(w);
+            redrawCanvasOnly();
+          }
+          syncWidth(); syncStyle(); syncColor(); syncPreview();
+        };
 
         colorRow.appendChild(cLbl);
         colorRow.appendChild(cIn);
@@ -4648,9 +4754,11 @@ let marquee: {
               // Prevent blur race when user clicks a swatch
               b.addEventListener('pointerdown', (ev)=>{ ev.preventDefault(); });
               b.addEventListener('click', ()=>{
+                ensureColorUndo();
                 cIn.value = String(col as string);
                 aIn.value = '1';
-                onColorCommit();
+                // Call the change handler directly
+                if (cIn.onchange) cIn.onchange.call(cIn, new Event('change'));
                 hidePopover();
               });
               pal.appendChild(b);
