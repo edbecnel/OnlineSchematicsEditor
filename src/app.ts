@@ -20,6 +20,12 @@ import type {
   MoveCollapseCtx, KWire
 } from './types.js';
 
+import {
+  PX_PER_MM, pxToNm, nmToPx, mmToPx,
+  nmToUnit, unitToNm,
+  parseDimInput, formatDimForDisplay
+} from './conversions.js';
+
 (function(){
 // ====== Module Imports (re-export for internal use) ======
 const {
@@ -705,7 +711,7 @@ let marquee: {
     const widthInput = document.createElement('input');
     widthInput.type = 'text';
     const widthNm = Math.round((netClass.wire.width || 0) * NM_PER_MM);
-    widthInput.value = formatDimForDisplay(widthNm);
+    widthInput.value = formatDimForDisplay(widthNm, globalUnits);
     widthRow.appendChild(widthLabel);
     widthRow.appendChild(widthInput);
     dialog.appendChild(widthRow);
@@ -3453,7 +3459,7 @@ let marquee: {
     const initialNm = ((WIRE_DEFAULTS.stroke as any).widthNm != null)
       ? (WIRE_DEFAULTS.stroke as any).widthNm
       : unitToNm(WIRE_DEFAULTS.stroke.width || 0, 'mm');
-    inpW.value = formatDimForDisplay(initialNm);
+    inpW.value = formatDimForDisplay(initialNm, globalUnits);
     rowW.append(capW, inpW);
     box.appendChild(rowW);
 
@@ -3576,7 +3582,7 @@ let marquee: {
       }
       // Width: show in the currently selected global units using nm internal representation when available
       const stNm = (st && (st as any).widthNm != null) ? (st as any).widthNm : unitToNm(st.width ?? 0, 'mm');
-      inpW.value = formatDimForDisplay(stNm);
+      inpW.value = formatDimForDisplay(stNm, globalUnits);
       // Style
       selS.value = (st.type || 'default') as string;
       // Color & opacity
@@ -3678,7 +3684,7 @@ let marquee: {
       syncWireToolbar();
       setEnabledStates();
       // Normalize and show the committed value in the current global units.
-      inpW.value = formatDimForDisplay(nm);
+      inpW.value = formatDimForDisplay(nm, globalUnits);
       refreshPreview();
     };
     selS.onchange = () => {
@@ -3738,7 +3744,7 @@ let marquee: {
     const hex = colorToHex(col);
     const label = WIRE_DEFAULTS.useNetclass
       ? 'Netclass defaults'
-      : `${(WIRE_DEFAULTS.stroke.type||'default')} @ ${formatDimForDisplay((WIRE_DEFAULTS.stroke as any).widthNm != null ? (WIRE_DEFAULTS.stroke as any).widthNm : unitToNm(WIRE_DEFAULTS.stroke.width || 0, 'mm'))}`;
+      : `${(WIRE_DEFAULTS.stroke.type||'default')} @ ${formatDimForDisplay((WIRE_DEFAULTS.stroke as any).widthNm != null ? (WIRE_DEFAULTS.stroke as any).widthNm : unitToNm(WIRE_DEFAULTS.stroke.width || 0, 'mm'), globalUnits)}`;
     wireColorBtn.title = `Wire Stroke: ${label} — ${hex}`;
     wireColorBtn.style.borderColor = col;
     const dot = document.querySelector('#dot circle'); if(dot) (dot as SVGElement).setAttribute('fill', col);
@@ -3868,59 +3874,14 @@ let marquee: {
   // (NM_PER_* constants are declared near the top-level so they're available to all code.)
 
   // Global units state & persistence are declared at module top-level to avoid TDZ issues
-
-  // px <-> nm helpers (PX_PER_MM is defined lower in the file; it's safe because these helpers are
-  // used only after initialization completes at runtime).
-  function pxToNm(px: number){ return Math.round(px * (NM_PER_MM / (PX_PER_MM || 4))); }
-  function nmToPx(nm: number){ return (nm * (PX_PER_MM || 4)) / NM_PER_MM; }
-
-  // Convert nm -> value in requested display unit (number)
-  function nmToUnit(nm: number, u: 'mm'|'in'|'mils'){
-    if(u==='mm') return nm / NM_PER_MM;
-    if(u==='in') return nm / NM_PER_IN;
-    return nm / NM_PER_MIL; // mils
-  }
-  // Convert value in unit -> nm
-  function unitToNm(val: number, u: 'mm'|'in'|'mils'){
-    if(u==='mm') return Math.round(val * NM_PER_MM);
-    if(u==='in') return Math.round(val * NM_PER_IN);
-    return Math.round(val * NM_PER_MIL);
-  }
-
-  // Parse a user-typed dimension like "1 mm", "0.0254 in", "39.37 mils" (case-insensitive)
-  // Returns { nm, unitNormalized } or null if parse failed.
-  function parseDimInput(str: string, assumeUnit: 'mm'|'in'|'mils' = globalUnits){
-    if(!str) return null;
-    const s = String(str).trim();
-    const m = s.match(/^([0-9.+\-eE]+)\s*([a-zA-Z]*)$/);
-    if(!m) return null;
-    const n = parseFloat(m[1]); if(Number.isNaN(n)) return null;
-    const suf = (m[2]||'').toLowerCase();
-    if(!suf) return { nm: unitToNm(n, assumeUnit), unit: assumeUnit };
-    if(suf==='mm') return { nm: unitToNm(n,'mm'), unit:'mm' };
-    if(suf==='in' || suf==='inch' || suf==='inches') return { nm: unitToNm(n,'in'), unit:'in' };
-    if(suf==='mil' || suf==='mils') return { nm: unitToNm(n,'mils'), unit:'mils' };
-    // Unknown suffix: treat as assumeUnit
-    return { nm: unitToNm(n, assumeUnit), unit: assumeUnit };
-  }
-
-  // Format an nm value for display in the currently selected global units.
-  // Returns string like "12.34 mm" or "39.37 mils". For 'in' uses suffix 'in'.
-  function formatDimForDisplay(nm: number){
-    const u = globalUnits;
-    const v = nmToUnit(nm, u);
-    if(u==='mm') return `${(Math.round(v*100)/100).toFixed(2)} mm`;
-    if(u==='in') return `${(Math.round(v*10000)/10000).toFixed(4)} in`;
-    // mils
-    return `${(Math.round(v*100)/100).toFixed(2)} mils`;
-  }
+  // Conversion functions now imported from conversions.ts
 
   // Specialized input used for coordinates (x/y) that are stored in px internally.
   function dimNumberPx(pxVal: number, onCommit: (px:number)=>void){
     const inp = document.createElement('input'); inp.type = 'text';
     // display initial value converted to current units
     const nm = pxToNm(pxVal);
-    inp.value = formatDimForDisplay(nm);
+    inp.value = formatDimForDisplay(nm, globalUnits);
     // commit on blur or Enter
     function commitFromStr(str: string){
       const parsed = parseDimInput(str);
@@ -3928,7 +3889,7 @@ let marquee: {
       const px = Math.round(nmToPx(parsed.nm));
       onCommit(px);
       // refresh displayed (normalize units & formatting)
-      inp.value = formatDimForDisplay(parsed.nm);
+      inp.value = formatDimForDisplay(parsed.nm, globalUnits);
     }
     inp.addEventListener('blur', ()=> commitFromStr(inp.value));
     inp.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ commitFromStr(inp.value); inp.blur(); } });
@@ -4059,15 +4020,15 @@ let marquee: {
       // Otherwise, prefer the SWP canonical endpoints; fallback to the polyline endpoints.
       if (w && w.points && w.points.length >= 2) {
         const A = w.points[0], B = w.points[w.points.length - 1];
-        wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(A.x))}, ${formatDimForDisplay(pxToNm(A.y))}`, true)));
-        wrap.appendChild(rowPair('Wire End',   text(`${formatDimForDisplay(pxToNm(B.x))}, ${formatDimForDisplay(pxToNm(B.y))}`, true)));
+        wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(A.x), globalUnits)}, ${formatDimForDisplay(pxToNm(A.y), globalUnits)}`  , true)));
+        wrap.appendChild(rowPair('Wire End',   text(`${formatDimForDisplay(pxToNm(B.x), globalUnits)}, ${formatDimForDisplay(pxToNm(B.y), globalUnits)}`, true)));
       } else if (swp) {
-        wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(swp.start.x))}, ${formatDimForDisplay(pxToNm(swp.start.y))}`, true)));
-        wrap.appendChild(rowPair('Wire End',   text(`${formatDimForDisplay(pxToNm(swp.end.x))}, ${formatDimForDisplay(pxToNm(swp.end.y))}`, true)));
+        wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(swp.start.x), globalUnits)}, ${formatDimForDisplay(pxToNm(swp.start.y), globalUnits)}`, true)));
+        wrap.appendChild(rowPair('Wire End',   text(`${formatDimForDisplay(pxToNm(swp.end.x), globalUnits)}, ${formatDimForDisplay(pxToNm(swp.end.y), globalUnits)}`, true)));
       } else {
         const A = w.points[0], B = w.points[w.points.length-1];
-        wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(A.x))}, ${formatDimForDisplay(pxToNm(A.y))}`, true)));
-        wrap.appendChild(rowPair('Wire End',   text(`${formatDimForDisplay(pxToNm(B.x))}, ${formatDimForDisplay(pxToNm(B.y))}`, true)));
+        wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(A.x), globalUnits)}, ${formatDimForDisplay(pxToNm(A.y), globalUnits)}`, true)));
+        wrap.appendChild(rowPair('Wire End',   text(`${formatDimForDisplay(pxToNm(B.x), globalUnits)}, ${formatDimForDisplay(pxToNm(B.y), globalUnits)}`, true)));
       }
 
       // ---- Net Assignment (includes Net Class selection) ----
@@ -4169,7 +4130,7 @@ let marquee: {
         const syncWidth = ()=>{
           const eff = effectiveStroke(w, netClassForWire(w), THEME);
           const effNm = Math.round((eff.width || 0) * NM_PER_MM);
-          wIn.value = formatDimForDisplay(effNm);
+          wIn.value = formatDimForDisplay(effNm, globalUnits);
           wIn.disabled = !chkCustom.checked;
         };
         // Live, non-destructive width updates while typing so the inspector DOM
@@ -4217,7 +4178,7 @@ let marquee: {
             updateWireDOM(w); redrawCanvasOnly();
           }
           // Normalize displayed value to chosen units
-          wIn.value = formatDimForDisplay(nm);
+          wIn.value = formatDimForDisplay(nm, globalUnits);
         };
         widthRow.appendChild(wLbl); widthRow.appendChild(wIn); holder.appendChild(widthRow);
 
@@ -5084,9 +5045,7 @@ let marquee: {
   //   return svg;
   // }
 
-  // px rendering helpers (keep visuals stable; 0.25 mm ≈ 1 px on canvas)
-  const PX_PER_MM = 100 / 25.4;  // Exactly 100 px per inch, so 50 mils = 5 px exactly
-  const mmToPx = (mm: number) => Math.max(1, Math.round(Math.max(0, mm) * PX_PER_MM));
+  // px rendering helpers imported from conversions.ts
 
   // Precedence: explicit wire.stroke → netclass → theme.
   // NOTE: width<=0 OR type==='default' means "don’t override lower-precedence value".
