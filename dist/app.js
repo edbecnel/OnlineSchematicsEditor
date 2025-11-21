@@ -1809,10 +1809,22 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                                 drawing.cursor = { x: ep.x, y: ep.y };
                             }
                             else {
-                                // Use exact endpoint coordinates - don't apply ortho constraints
-                                // when clicking on an endpoint square, we want precise connection
-                                drawing.points.push({ x: ep.x, y: ep.y });
-                                drawing.cursor = { x: ep.x, y: ep.y };
+                                // Use exact endpoint coordinates, but respect ortho mode constraint
+                                let finalX = ep.x, finalY = ep.y;
+                                if (orthoMode || globalShiftDown) {
+                                    const prev = drawing.points[drawing.points.length - 1];
+                                    const dx = Math.abs(ep.x - prev.x);
+                                    const dy = Math.abs(ep.y - prev.y);
+                                    // Lock to closer axis
+                                    if (dx > dy) {
+                                        finalY = prev.y;
+                                    }
+                                    else {
+                                        finalX = prev.x;
+                                    }
+                                }
+                                drawing.points.push({ x: finalX, y: finalY });
+                                drawing.cursor = { x: finalX, y: finalY };
                             }
                             renderDrawing();
                             redraw();
@@ -2557,9 +2569,21 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }
                 let nx, ny;
                 if (endpointData) {
-                    // Use the exact anchor position stored on the endpoint square
+                    // Use the exact anchor position stored on the endpoint square, but respect ortho mode
                     nx = endpointData.x;
                     ny = endpointData.y;
+                    if (orthoMode || globalShiftDown) {
+                        const prev = drawing.points[drawing.points.length - 1];
+                        const dx = Math.abs(nx - prev.x);
+                        const dy = Math.abs(ny - prev.y);
+                        // Lock to closer axis
+                        if (dx > dy) {
+                            ny = prev.y;
+                        }
+                        else {
+                            nx = prev.x;
+                        }
+                    }
                 }
                 else {
                     // Use the cursor position which already respects ortho mode and connection hints
