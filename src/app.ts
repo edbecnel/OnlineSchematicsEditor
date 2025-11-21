@@ -1,119 +1,43 @@
-(function(){
 // ================================================================================
 // ONLINE SCHEMATICS EDITOR - Main Application
 // ================================================================================
 //
-// TABLE OF CONTENTS:
-// ------------------
-// 1. UTILITIES & HELPERS
-//    - DOM utilities ($q, $qa, setAttr, getClientXY)
-//    - Color conversion (cssToRGBA01, rgba01ToCss, colorToHex)
-//    - Geometry (snap, distance, projection, rotation)
-//    - Unit conversion (nm/mm/in/mils)
-//
-// 2. CONSTANTS & CONFIGURATION
-//    - Grid and snapping constants (GRID, NM_PER_MM, SNAP_NM)
-//    - Viewport settings (BASE_W, BASE_H)
-//    - Theme and net classes
-//
-// 3. STATE MANAGEMENT
-//    - Global state (components, wires, nets, counters)
-//    - View state (zoom, pan, mode, selection)
-//    - Settings (units, grid mode, junction visibility)
-//
-// 4. TYPES & INTERFACES
-//    - Editor types (Mode, Selection, Topology)
-//    - Drawing state (Drawing, Marquee)
-//
-// 5. DOM REFERENCES
-//    - SVG layers (gWires, gComps, gJunctions, etc.)
-//    - UI elements (inspector, toolbar, panels)
-//
-// 6. CORE RENDERING
-//    - Grid rendering
-//    - Component rendering
-//    - Wire rendering
-//    - Junction dots
-//
-// 7. NET CLASSES & CONNECTIVITY
-//    - Net class management
-//    - Stroke calculation
-//    - Topology analysis (SWPs, nodes, edges)
-//
-// 8. INTERACTION HANDLERS
-//    - Mouse/pointer events
-//    - Keyboard shortcuts
-//    - Pan and zoom
-//    - Wire drawing
-//    - Component placement
-//    - Selection and move
-//
-// 9. UI COMPONENTS
-//    - Toolbar (mode buttons, wire stroke, grid toggle)
-//    - Inspector (property editing)
-//    - Dialogs (net properties, wire stroke)
-//    - Panels (project, nets list)
-//
-// 10. SERIALIZATION
-//     - Save to JSON
-//     - Load from JSON
-//     - KiCad export
-//
-// 11. INITIALIZATION
-//     - Panel setup
-//     - Event binding
-//     - Initial render
+// NOTE: This file is being incrementally modularized.
+// Pure utilities → utils.ts
+// Constants → constants.ts
+// See CODE_ORGANIZATION.md for details.
 //
 // ================================================================================
 
-// ====== 1. UTILITIES & HELPERS ======
+import * as Utils from './utils.js';
+import * as Constants from './constants.js';
+import type { ClientXYEvent } from './utils.js';
 
-// ====== Minimal shared types (temporary, editor-internal) ======
+(function(){
+// ====== Module Imports (re-export for internal use) ======
+const {
+  $q, $qa, setAttr, setAttrs, getClientXY,
+  colorToHex, cssToRGBA01, rgba01ToCss,
+  deg, normDeg, rotatePoint, eqPt,
+  pointToSegmentDistance, projectPointToSegment, segmentAngle,
+  rectFromPoints, inRect, segsIntersect, segmentIntersectsRect,
+  clamp
+} = Utils;
+
+const {
+  GRID, NM_PER_MM, NM_PER_IN, NM_PER_MIL, SNAP_MILS, SNAP_NM,
+  BASE_W, BASE_H,
+  HINT_SNAP_TOLERANCE_PX, HINT_UNLOCK_THRESHOLD_PX,
+  UNIT_OPTIONS, WIRE_COLOR_OPTIONS
+} = Constants;
+
+// ====== Local Types ======
 type UUID = string;
 type AnyProps = Record<string, any>;
-
-// Allow using dataset/value/closest cleanly with typed elements
-const $q = <T extends Element>(sel: string, root: ParentNode | Document = document) =>
-  root.querySelector<T>(sel)!;
-const $qa = <T extends Element>(sel: string, root: ParentNode | Document = document) =>
-  Array.from(root.querySelectorAll<T>(sel));
-
-// Small helper so numeric SVG attributes compile without changing behavior
-function setAttr(el: Element, name: string, value: number | string) {
-  el.setAttribute(name, String(value));
-}
-function setAttrs(el: Element, attrs: Record<string, number | string>) {
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
-}
-
-// Accepts Pointer/Mouse/Touch-ish events safely
-type ClientXYEvent = {
-  clientX?: number;
-  clientY?: number;
-  touches?: Array<{ clientX: number; clientY: number }> | TouchList;
-};
-
-// Pointer/touch coordinate helper
-function getClientXY(evt: ClientXYEvent) {
-  const t = (evt as any).touches?.[0];
-  const x = (evt as any).clientX ?? t?.clientX ?? 0;
-  const y = (evt as any).clientY ?? t?.clientY ?? 0;
-  return { x, y };
-}
 
 // ================================================================================
 // ====== 2. CONSTANTS & CONFIGURATION ======
 // ================================================================================
-
-  const GRID: number = 25; // px; 2*GRID = 50 px = exactly 10 snap units (500 mils)
-  // Nanometer resolution constants (internal units)
-  const NM_PER_MM = 1_000_000;   // 1 mm == 1,000,000 nm
-  const NM_PER_IN = 25_400_000;  // 25.4 mm == 1 inch
-  const NM_PER_MIL = NM_PER_IN / 1000; // 0.001 in
-
-  // Snapping resolution: 50 mils (0.05 in) internal nm value
-  const SNAP_MILS = 50;
-  const SNAP_NM = Math.round(NM_PER_MIL * SNAP_MILS); // nanometers for snap resolution
 
   // Global units state and persistence (available at module-init time to avoid TDZ issues)
   let globalUnits: 'mm' | 'in' | 'mils' = (localStorage.getItem('global.units') as any) || 'mm';
@@ -195,8 +119,6 @@ let crosshairMode: 'full' | 'short' = (localStorage.getItem('crosshair.mode') as
 // Connection hint: temporary lock to a wire endpoint's X AND Y coordinates
 type ConnectionHint = { lockedPt: Point; targetPt: Point; wasOrthoActive: boolean; lockAxis: 'x' | 'y' } | null;
 let connectionHint: ConnectionHint = null;
-  const HINT_SNAP_TOLERANCE_PX = 5;  // Direct pixel tolerance for snap detection
-  const HINT_UNLOCK_THRESHOLD_PX = 5; // Direct pixel threshold for unlocking - same as snap for consistent behavior
 // Visual shift indicator for temporary ortho mode
 let shiftOrthoVisualActive = false;
 
@@ -336,7 +258,6 @@ let marquee: {
   // Suppress the next contextmenu after right-click finishing a wire
   let suppressNextContextMenu = false;
   // ViewBox zoom state
-  const BASE_W = 1600, BASE_H = 1000;
   let zoom = 1;
   let viewX = 0, viewY = 0; // pan in SVG units
   let viewW = BASE_W, viewH = BASE_H; // effective viewBox size (updated by applyZoom)
@@ -662,26 +583,7 @@ let marquee: {
     return map[mode] || defaultWireColor;
   }
 
-  // Options used in both toolbar and Inspector (names -> resolved stroke colors)
-  const WIRE_COLOR_OPTIONS: Array<[WireColorMode, string]> = [
-    ['auto','Auto (Black/White)'],
-    ['black','Black/White'],
-    ['red','Red'], ['green','Green'], ['blue','Blue'],
-    ['yellow','Yellow'], ['magenta','Magenta'], ['cyan','Cyan']
-  ];
-
   let junctions: Array<{ at: Point; size?: number; color?: string; netId?: string|null }> = [];
-
-  // Convert CSS color ("rgb(...)" or color name) to #RRGGBB
-  function colorToHex(cstr){
-    const tmp = document.createElement('span');
-    tmp.style.color = cstr; document.body.appendChild(tmp);
-    const rgb = getComputedStyle(tmp).color; document.body.removeChild(tmp);
-    const m = rgb.match(/\d+/g); if(!m) return '#000000';
-    const [r,g,b] = m.map(n=> Math.max(0,Math.min(255,parseInt(n,10))));
-    const hx = v=> v.toString(16).padStart(2,'0').toUpperCase();
-    return `#${hx(r)}${hx(g)}${hx(b)}`;
-  }
 
   function wireColorNameFromValue(v){
     const val = (v||'').toLowerCase();
@@ -722,13 +624,6 @@ let marquee: {
       el.style.border = '';
     }
   }; 
-
-  // ====== Unit options for Value fields ======
-  const UNIT_OPTIONS = {
-    resistor: ['T\u03A9','G\u03A9','M\u03A9','k\u03A9','\u03A9','m\u03A9'],                // TΩ … mΩ
-    capacitor: ['TF','GF','MF','kF','F','mF','\u00B5F','nF','pF'],                        // µ = \u00B5
-    inductor: ['TH','GH','MH','kH','H','mH','\u00B5H','nH']                               // µ = \u00B5
-  };
 
   // Snap to the configured SNAP_NM resolution (converted to px). We keep the
   // `GRID` constant for component/layout sizes; snapping is driven by SNAP_NM.
@@ -1418,12 +1313,6 @@ let marquee: {
       const b = { x: c.x + L*ux, y: c.y + L*uy, name:'B' };
       return [a,b];      
     }
-  }
-
-  function rotatePoint(p, center, deg){
-    const rad = deg*Math.PI/180; const s=Math.sin(rad), co=Math.cos(rad);
-    const dx=p.x-center.x, dy=p.y-center.y;
-    return { x: center.x + dx*co - dy*s, y: center.y + dx*s + dy*co, name:p.name };
   }
 
   function drawComponent(c){
@@ -2127,15 +2016,8 @@ let marquee: {
     return best;
   }
 
-  function pointToSegmentDistance(p: Point, a: Point, b: Point){
-    const A = {x:a.x, y:a.y}, B={x:b.x, y:b.y}, P={x:p.x, y:p.y};
-    const ABx=B.x-A.x, ABy=B.y-A.y; const APx=P.x-A.x, APy=P.y-A.y;
-    const ab2 = ABx*ABx + ABy*ABy; if(ab2===0) return Math.hypot(APx,APy);
-    let t = (APx*ABx + APy*ABy)/ab2; t=Math.max(0, Math.min(1,t));
-    const Qx=A.x + t*ABx, Qy=A.y + t*ABy; return Math.hypot(P.x-Qx, P.y-Qy);
-  }
-
-  function projectPointToSegment(p: Point, a: Point, b: Point){
+  // Local version of projectPointToSegment that returns {q, t} format
+  function projectPointToSegmentWithT(p: Point, a: Point, b: Point){
     const A={x:a.x,y:a.y}, B={x:b.x,y:b.y}, P={x:p.x,y:p.y};
     const ABx=B.x-A.x, ABy=B.y-A.y; const APx=P.x-A.x, APy=P.y-A.y;
     const ab2 = ABx*ABx + ABy*ABy; if(ab2===0) return {q:{x:A.x,y:A.y}, t:0};
@@ -2144,17 +2026,14 @@ let marquee: {
   }
 
   // Angles / nearest segment helpers
-  const deg = (rad: number): number => rad * 180 / Math.PI;
-  const normDeg = (d: number): number => ((d % 360) + 360) % 360;
   const isTwoPinType = (t: string) => ['resistor','capacitor','inductor','diode','battery','ac'].includes(t);
-  function segmentAngle(a: Point, b: Point): number { return deg(Math.atan2(b.y - a.y, b.x - a.x)); }
 
   function nearestSegmentAtPoint(p, maxDist=18){
     let best=null, bestD=Infinity;
     for(const w of wires){
       for(let i=0;i<w.points.length-1;i++){
         const a=w.points[i], b=w.points[i+1];
-        const {q,t} = projectPointToSegment(p,a,b);
+        const {q,t} = projectPointToSegmentWithT(p,a,b);
         if(t<=0 || t>=1) continue; // interior only
         const d = Math.hypot(p.x-q.x, p.y-q.y);
         if(d<bestD){ bestD=d; best={w, idx:i, q, angle: segmentAngle(a,b)}; }
@@ -2178,28 +2057,6 @@ let marquee: {
   }
 
   // ----- Marquee helpers -----
-  const rectFromPoints = (a,b)=>{
-    const x = Math.min(a.x,b.x), y = Math.min(a.y,b.y);
-    return { x, y, w: Math.abs(a.x-b.x), h: Math.abs(a.y-b.y) };
-  };
-  const inRect = (p, r)=> p.x>=r.x && p.x<=r.x+r.w && p.y>=r.y && p.y<=r.y+r.h;
-  function segsIntersect(p1,p2,q1,q2){
-    const o = (a,b,c)=>Math.sign((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x));
-    const on = (a,b,c)=> Math.min(a.x,b.x)<=c.x && c.x<=Math.max(a.x,b.x) && Math.min(a.y,b.y)<=c.y && c.y<=Math.max(a.y,b.y);
-    const o1=o(p1,p2,q1), o2=o(p1,p2,q2), o3=o(q1,q2,p1), o4=o(q1,q2,p2);
-    if(o1!==o2 && o3!==o4) return true;
-    if(o1===0 && on(p1,p2,q1)) return true;
-    if(o2===0 && on(p1,p2,q2)) return true;
-    if(o3===0 && on(q1,q2,p1)) return true;
-    if(o4===0 && on(q1,q2,p2)) return true;
-    return false;
-  }
-  function segmentIntersectsRect(a,b,r){
-    if(inRect(a,r) || inRect(b,r)) return true;
-    const R = [{x:r.x,y:r.y},{x:r.x+r.w,y:r.y},{x:r.x+r.w,y:r.y+r.h},{x:r.x,y:r.y+r.h}];
-    return segsIntersect(a,b,R[0],R[1]) || segsIntersect(a,b,R[1],R[2]) ||
-           segsIntersect(a,b,R[2],R[3]) || segsIntersect(a,b,R[3],R[0]);
-  }
   function beginMarqueeAt(p, startedOnEmpty, preferComponents){
     marquee.active = true; marquee.start = p; marquee.end = p; marquee.startedOnEmpty = !!startedOnEmpty;
     marquee.shiftPreferComponents = !!preferComponents;  
@@ -2298,7 +2155,7 @@ let marquee: {
     for(const w of [...wires]){
       for(let i=0;i<w.points.length-1;i++){
         const a=w.points[i], b=w.points[i+1];
-        const {q,t} = projectPointToSegment(pin,a,b);
+        const {q,t} = projectPointToSegmentWithT(pin,a,b);
         const dist = pointToSegmentDistance(pin,a,b);
         // axis-aligned fallback for robust vertical/horizontal splitting
         const isVertical = (a.x===b.x);
@@ -2357,7 +2214,6 @@ let marquee: {
   }
 
   // ----- Slide helpers (simple case: each pin terminates one 2-point, axis-aligned wire) -----
-  const eqPt = (p,q)=> p.x===q.x && p.y===q.y;
   function userScale(){ return svg.clientWidth / Math.max(1, viewW); }
 
   // base snap in SVG user units corresponding to SNAP_NM (50 mils)
@@ -4022,8 +3878,6 @@ let marquee: {
     zoom = clamp(n, 0.25, 10); applyZoom();
   });
 
-  function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
-
   // ---- NEW: while typing, ignore app keyboard shortcuts ----
   // Treat focused INPUT / TEXTAREA / SELECT / contenteditable as "editing" targets.
   function isEditingKeystrokesTarget(evt: KeyboardEvent): boolean {
@@ -5300,31 +5154,6 @@ let marquee: {
   }
 
   // ===== CSS <-> RGBA helpers (0..1) + internal<->KiCad wire adapters =====
-
-  // Parse any CSS color to [0..1] RGBA
-  function cssToRGBA01(cstr: string): RGBA01 {
-    // Use a temp element to canonicalize the color, then parse computed rgb/rgba(...)
-    const tmp = document.createElement('span');
-    tmp.style.color = cstr;
-    document.body.appendChild(tmp);
-    const rgb = getComputedStyle(tmp).color; // "rgb(r,g,b)" or "rgba(r,g,b,a)"
-    document.body.removeChild(tmp);
-    const m = rgb.match(/[\d.]+/g) || ['0','0','0','1'];
-    const r = Math.max(0, Math.min(255, parseFloat(m[0] || '0'))) / 255;
-    const g = Math.max(0, Math.min(255, parseFloat(m[1] || '0'))) / 255;
-    const b = Math.max(0, Math.min(255, parseFloat(m[2] || '0'))) / 255;
-    const a = Math.max(0, Math.min(1,   parseFloat(m[3] || '1')));
-    return { r, g, b, a };
-  }
-
-  // Convert 0..1 RGBA to css rgba(r,g,b,a)
-  function rgba01ToCss(c: RGBA01): string {
-    const r = Math.round(c.r * 255);
-    const g = Math.round(c.g * 255);
-    const b = Math.round(c.b * 255);
-    const a = Math.max(0, Math.min(1, c.a));
-    return `rgba(${r}, ${g}, ${b}, ${a})`;
-  }
 
   // Map Stroke.type to SVG dash arrays for preview
   function dashArrayFor(type: Stroke['type']): string | null {
