@@ -1,4 +1,3 @@
-"use strict";
 // ================================================================================
 // ONLINE SCHEMATICS EDITOR - Main Application
 // ================================================================================
@@ -9,10 +8,9 @@
 // See CODE_ORGANIZATION.md for details.
 //
 // ================================================================================
-Object.defineProperty(exports, "__esModule", { value: true });
-const Utils = require("./utils.js");
-const Constants = require("./constants.js");
-const conversions_js_1 = require("./conversions.js");
+import * as Utils from './utils.js';
+import * as Constants from './constants.js';
+import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
 (function () {
     // ====== Module Imports (re-export for internal use) ======
     const { $q, $qa, setAttr, setAttrs, getClientXY, colorToHex, cssToRGBA01, rgba01ToCss, deg, normDeg, rotatePoint, eqPt, pointToSegmentDistance, projectPointToSegment, segmentAngle, rectFromPoints, inRect, segsIntersect, segmentIntersectsRect, clamp } = Utils;
@@ -145,7 +143,7 @@ const conversions_js_1 = require("./conversions.js");
         //  - Choose a major multiple (cellsPerMajor) so major cell on-screen is
         //    comfortable; the `#gridBold` pattern will use majorUser = minorUser * cellsPerMajor.
         const scale = svg.clientWidth / Math.max(1, viewW); // screen px per user unit
-        const baseSnapUser = (0, conversions_js_1.nmToPx)(SNAP_NM) / Math.max(1e-6, scale); // user units per base snap
+        const baseSnapUser = nmToPx(SNAP_NM) / Math.max(1e-6, scale); // user units per base snap
         const desiredMinorPx = 10; // target screen pixels between minor lines
         // number of baseSnap units per minor line (integer >=1)
         const minorFactor = Math.max(1, Math.round((desiredMinorPx / scale) / baseSnapUser));
@@ -284,7 +282,7 @@ const conversions_js_1 = require("./conversions.js");
                 snapMultiplier = 5 - t * 4; // 5 down to 1
             }
             // Dot spacing in user units (50 mils = 5 user units)
-            const dotSpacingUser = (0, conversions_js_1.nmToPx)(SNAP_NM) * snapMultiplier;
+            const dotSpacingUser = nmToPx(SNAP_NM) * snapMultiplier;
             // Calculate dot radius (1 screen pixel)
             const dotRadius = 1 / scale;
             // Calculate visible bounds with padding
@@ -650,7 +648,7 @@ const conversions_js_1 = require("./conversions.js");
         const widthInput = document.createElement('input');
         widthInput.type = 'text';
         const widthNm = Math.round((netClass.wire.width || 0) * NM_PER_MM);
-        widthInput.value = (0, conversions_js_1.formatDimForDisplay)(widthNm, globalUnits);
+        widthInput.value = formatDimForDisplay(widthNm, globalUnits);
         widthRow.appendChild(widthLabel);
         widthRow.appendChild(widthInput);
         dialog.appendChild(widthRow);
@@ -809,7 +807,7 @@ const conversions_js_1 = require("./conversions.js");
         saveBtn.className = 'ok';
         saveBtn.onclick = () => {
             // Parse width
-            const parsed = (0, conversions_js_1.parseDimInput)(widthInput.value || '0');
+            const parsed = parseDimInput(widthInput.value || '0');
             const nm = parsed ? parsed.nm : 0;
             const valMm = nm / NM_PER_MM;
             // Parse color
@@ -1571,7 +1569,7 @@ const conversions_js_1 = require("./conversions.js");
             vis.setAttribute('class', 'wire-stroke');
             vis.setAttribute('fill', 'none');
             vis.setAttribute('stroke', rgba01ToCss(eff.color));
-            vis.setAttribute('stroke-width', String((0, conversions_js_1.mmToPx)(eff.width))); // default 0.25mm -> 1px
+            vis.setAttribute('stroke-width', String(mmToPx(eff.width))); // default 0.25mm -> 1px
             vis.setAttribute('stroke-linecap', 'round');
             vis.setAttribute('stroke-linejoin', 'round');
             const dashes = dashArrayFor(eff.type);
@@ -1642,7 +1640,7 @@ const conversions_js_1 = require("./conversions.js");
             const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
             setAttr(dot, 'cx', j.at.x);
             setAttr(dot, 'cy', j.at.y);
-            setAttr(dot, 'r', Math.max(2, Math.round((0, conversions_js_1.mmToPx)(sizeMm) / 2)));
+            setAttr(dot, 'r', Math.max(2, Math.round(mmToPx(sizeMm) / 2)));
             dot.setAttribute('fill', color);
             dot.setAttribute('stroke', 'var(--bg)');
             dot.setAttribute('stroke-width', '1');
@@ -1687,7 +1685,7 @@ const conversions_js_1 = require("./conversions.js");
                 ensureStroke(w);
                 const eff = effectiveStroke(w, netClassForWire(w), THEME);
                 // compute square size in user units: about 3x the visible stroke width (in px -> user units)
-                const strokePx = Math.max(1, (0, conversions_js_1.mmToPx)(eff.width || 0.25));
+                const strokePx = Math.max(1, mmToPx(eff.width || 0.25));
                 // convert px to user units: 1 user unit == 1 SVG coordinate; userScale = screen px per user unit
                 const userPerPx = 1 / Math.max(1e-6, userScale());
                 // Slightly reduce the visual prominence: use a smaller multiplier and
@@ -2162,7 +2160,7 @@ const conversions_js_1 = require("./conversions.js");
     function baseSnapUser() {
         // 50 mils is always 5 user units in our coordinate system (100 px/inch DPI)
         // This is independent of zoom - the viewBox scaling handles the visual zoom
-        return (0, conversions_js_1.nmToPx)(SNAP_NM); // Returns 5 user units for 50 mils
+        return nmToPx(SNAP_NM); // Returns 5 user units for 50 mils
     }
     // Snap a scalar value to the base 50-mil grid in user units
     function snapToBaseScalar(v) { const b = baseSnapUser(); return Math.round(v / b) * b; }
@@ -2378,7 +2376,7 @@ const conversions_js_1 = require("./conversions.js");
             ensureStroke(w);
             const eff = effectiveStroke(w, netClassForWire(w), THEME);
             vis.setAttribute('stroke', rgba01ToCss(eff.color));
-            vis.setAttribute('stroke-width', String((0, conversions_js_1.mmToPx)(eff.width)));
+            vis.setAttribute('stroke-width', String(mmToPx(eff.width)));
             const dashes = dashArrayFor(eff.type);
             if (dashes)
                 vis.setAttribute('stroke-dasharray', dashes);
@@ -3248,10 +3246,10 @@ const conversions_js_1 = require("./conversions.js");
         if (!coordDisplay)
             return;
         // Convert user units (pixels) to nanometers, then to current units
-        const xNm = (0, conversions_js_1.pxToNm)(x);
-        const yNm = (0, conversions_js_1.pxToNm)(y);
-        const xVal = (0, conversions_js_1.nmToUnit)(xNm, globalUnits);
-        const yVal = (0, conversions_js_1.nmToUnit)(yNm, globalUnits);
+        const xNm = pxToNm(x);
+        const yNm = pxToNm(y);
+        const xVal = nmToUnit(xNm, globalUnits);
+        const yVal = nmToUnit(yNm, globalUnits);
         // Format with appropriate precision based on units
         let precision = 2;
         if (globalUnits === 'mils')
@@ -3482,7 +3480,7 @@ const conversions_js_1 = require("./conversions.js");
         line.setAttribute('y1', '11');
         line.setAttribute('y2', '11');
         line.setAttribute('stroke', rgba01ToCss(st.color));
-        line.setAttribute('stroke-width', String(Math.max(1, (0, conversions_js_1.mmToPx)(st.width || 0.25))));
+        line.setAttribute('stroke-width', String(Math.max(1, mmToPx(st.width || 0.25))));
         // dash mapping like inspector
         const style = st.type || 'default';
         const dash = style === 'dash' ? '6 4' :
@@ -3552,8 +3550,8 @@ const conversions_js_1 = require("./conversions.js");
         inpW.type = 'text';
         const initialNm = (WIRE_DEFAULTS.stroke.widthNm != null)
             ? WIRE_DEFAULTS.stroke.widthNm
-            : (0, conversions_js_1.unitToNm)(WIRE_DEFAULTS.stroke.width || 0, 'mm');
-        inpW.value = (0, conversions_js_1.formatDimForDisplay)(initialNm, globalUnits);
+            : unitToNm(WIRE_DEFAULTS.stroke.width || 0, 'mm');
+        inpW.value = formatDimForDisplay(initialNm, globalUnits);
         rowW.append(capW, inpW);
         box.appendChild(rowW);
         // Line style
@@ -3683,8 +3681,8 @@ const conversions_js_1 = require("./conversions.js");
                 st = WIRE_DEFAULTS.stroke;
             }
             // Width: show in the currently selected global units using nm internal representation when available
-            const stNm = (st && st.widthNm != null) ? st.widthNm : (0, conversions_js_1.unitToNm)(st.width ?? 0, 'mm');
-            inpW.value = (0, conversions_js_1.formatDimForDisplay)(stNm, globalUnits);
+            const stNm = (st && st.widthNm != null) ? st.widthNm : unitToNm(st.width ?? 0, 'mm');
+            inpW.value = formatDimForDisplay(stNm, globalUnits);
             // Style
             selS.value = (st.type || 'default');
             // Color & opacity
@@ -3739,7 +3737,7 @@ const conversions_js_1 = require("./conversions.js");
             const raw = (inpW.value || '').trim();
             if (raw === '' || raw === '-' || raw === '.' || raw === '-.')
                 return;
-            const parsed = (0, conversions_js_1.parseDimInput)(raw);
+            const parsed = parseDimInput(raw);
             if (!parsed)
                 return;
             const mmVal = parsed.nm / NM_PER_MM;
@@ -3763,7 +3761,7 @@ const conversions_js_1 = require("./conversions.js");
         };
         // Commit on blur/Enter: parse with optional suffix and normalize to nm/mm
         inpW.onchange = () => {
-            const parsed = (0, conversions_js_1.parseDimInput)((inpW.value || '').trim());
+            const parsed = parseDimInput((inpW.value || '').trim());
             const nm = parsed ? parsed.nm : 0;
             const val = (nm / NM_PER_MM) || 0;
             WIRE_DEFAULTS.stroke.width = val;
@@ -3786,7 +3784,7 @@ const conversions_js_1 = require("./conversions.js");
             syncWireToolbar();
             setEnabledStates();
             // Normalize and show the committed value in the current global units.
-            inpW.value = (0, conversions_js_1.formatDimForDisplay)(nm, globalUnits);
+            inpW.value = formatDimForDisplay(nm, globalUnits);
             refreshPreview();
         };
         selS.onchange = () => {
@@ -3843,7 +3841,7 @@ const conversions_js_1 = require("./conversions.js");
         const hex = colorToHex(col);
         const label = WIRE_DEFAULTS.useNetclass
             ? 'Netclass defaults'
-            : `${(WIRE_DEFAULTS.stroke.type || 'default')} @ ${(0, conversions_js_1.formatDimForDisplay)(WIRE_DEFAULTS.stroke.widthNm != null ? WIRE_DEFAULTS.stroke.widthNm : (0, conversions_js_1.unitToNm)(WIRE_DEFAULTS.stroke.width || 0, 'mm'), globalUnits)}`;
+            : `${(WIRE_DEFAULTS.stroke.type || 'default')} @ ${formatDimForDisplay(WIRE_DEFAULTS.stroke.widthNm != null ? WIRE_DEFAULTS.stroke.widthNm : unitToNm(WIRE_DEFAULTS.stroke.width || 0, 'mm'), globalUnits)}`;
         wireColorBtn.title = `Wire Stroke: ${label} — ${hex}`;
         wireColorBtn.style.borderColor = col;
         const dot = document.querySelector('#dot circle');
@@ -3985,17 +3983,17 @@ const conversions_js_1 = require("./conversions.js");
         const inp = document.createElement('input');
         inp.type = 'text';
         // display initial value converted to current units
-        const nm = (0, conversions_js_1.pxToNm)(pxVal);
-        inp.value = (0, conversions_js_1.formatDimForDisplay)(nm, globalUnits);
+        const nm = pxToNm(pxVal);
+        inp.value = formatDimForDisplay(nm, globalUnits);
         // commit on blur or Enter
         function commitFromStr(str) {
-            const parsed = (0, conversions_js_1.parseDimInput)(str);
+            const parsed = parseDimInput(str);
             if (!parsed)
                 return; // ignore invalid
-            const px = Math.round((0, conversions_js_1.nmToPx)(parsed.nm));
+            const px = Math.round(nmToPx(parsed.nm));
             onCommit(px);
             // refresh displayed (normalize units & formatting)
-            inp.value = (0, conversions_js_1.formatDimForDisplay)(parsed.nm, globalUnits);
+            inp.value = formatDimForDisplay(parsed.nm, globalUnits);
         }
         inp.addEventListener('blur', () => commitFromStr(inp.value));
         inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') {
@@ -4152,17 +4150,17 @@ const conversions_js_1 = require("./conversions.js");
             // Otherwise, prefer the SWP canonical endpoints; fallback to the polyline endpoints.
             if (w && w.points && w.points.length >= 2) {
                 const A = w.points[0], B = w.points[w.points.length - 1];
-                wrap.appendChild(rowPair('Wire Start', text(`${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(A.x), globalUnits)}, ${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(A.y), globalUnits)}`, true)));
-                wrap.appendChild(rowPair('Wire End', text(`${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(B.x), globalUnits)}, ${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(B.y), globalUnits)}`, true)));
+                wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(A.x), globalUnits)}, ${formatDimForDisplay(pxToNm(A.y), globalUnits)}`, true)));
+                wrap.appendChild(rowPair('Wire End', text(`${formatDimForDisplay(pxToNm(B.x), globalUnits)}, ${formatDimForDisplay(pxToNm(B.y), globalUnits)}`, true)));
             }
             else if (swp) {
-                wrap.appendChild(rowPair('Wire Start', text(`${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(swp.start.x), globalUnits)}, ${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(swp.start.y), globalUnits)}`, true)));
-                wrap.appendChild(rowPair('Wire End', text(`${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(swp.end.x), globalUnits)}, ${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(swp.end.y), globalUnits)}`, true)));
+                wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(swp.start.x), globalUnits)}, ${formatDimForDisplay(pxToNm(swp.start.y), globalUnits)}`, true)));
+                wrap.appendChild(rowPair('Wire End', text(`${formatDimForDisplay(pxToNm(swp.end.x), globalUnits)}, ${formatDimForDisplay(pxToNm(swp.end.y), globalUnits)}`, true)));
             }
             else {
                 const A = w.points[0], B = w.points[w.points.length - 1];
-                wrap.appendChild(rowPair('Wire Start', text(`${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(A.x), globalUnits)}, ${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(A.y), globalUnits)}`, true)));
-                wrap.appendChild(rowPair('Wire End', text(`${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(B.x), globalUnits)}, ${(0, conversions_js_1.formatDimForDisplay)((0, conversions_js_1.pxToNm)(B.y), globalUnits)}`, true)));
+                wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(A.x), globalUnits)}, ${formatDimForDisplay(pxToNm(A.y), globalUnits)}`, true)));
+                wrap.appendChild(rowPair('Wire End', text(`${formatDimForDisplay(pxToNm(B.x), globalUnits)}, ${formatDimForDisplay(pxToNm(B.y), globalUnits)}`, true)));
             }
             // ---- Net Assignment (includes Net Class selection) ----
             const netRow = document.createElement('div');
@@ -4272,7 +4270,7 @@ const conversions_js_1 = require("./conversions.js");
                 const syncWidth = () => {
                     const eff = effectiveStroke(w, netClassForWire(w), THEME);
                     const effNm = Math.round((eff.width || 0) * NM_PER_MM);
-                    wIn.value = (0, conversions_js_1.formatDimForDisplay)(effNm, globalUnits);
+                    wIn.value = formatDimForDisplay(effNm, globalUnits);
                     wIn.disabled = !chkCustom.checked;
                 };
                 // Live, non-destructive width updates while typing so the inspector DOM
@@ -4280,7 +4278,7 @@ const conversions_js_1 = require("./conversions.js");
                 // SWP-wide restroke and normalization.
                 wIn.oninput = () => {
                     try {
-                        const parsed = (0, conversions_js_1.parseDimInput)(wIn.value || '0');
+                        const parsed = parseDimInput(wIn.value || '0');
                         if (!parsed)
                             return;
                         const nm = parsed.nm;
@@ -4299,7 +4297,7 @@ const conversions_js_1 = require("./conversions.js");
                 };
                 wIn.onchange = () => {
                     ensureStroke(w);
-                    const parsed = (0, conversions_js_1.parseDimInput)(wIn.value || '0');
+                    const parsed = parseDimInput(wIn.value || '0');
                     const nm = parsed ? parsed.nm : 0;
                     const valMm = nm / NM_PER_MM; // mm for legacy fields
                     const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
@@ -4330,7 +4328,7 @@ const conversions_js_1 = require("./conversions.js");
                         redrawCanvasOnly();
                     }
                     // Normalize displayed value to chosen units
-                    wIn.value = (0, conversions_js_1.formatDimForDisplay)(nm, globalUnits);
+                    wIn.value = formatDimForDisplay(nm, globalUnits);
                 };
                 widthRow.appendChild(wLbl);
                 widthRow.appendChild(wIn);
@@ -4649,7 +4647,7 @@ const conversions_js_1 = require("./conversions.js");
                         ? NET_CLASSES[netSel.value].wire.color
                         : w.stroke.color;
                     pLine.setAttribute('stroke', rgba01ToCss(rawColor));
-                    pLine.setAttribute('stroke-width', String((0, conversions_js_1.mmToPx)(eff.width)));
+                    pLine.setAttribute('stroke-width', String(mmToPx(eff.width)));
                     const d = dashArrayFor(eff.type);
                     if (d)
                         pLine.setAttribute('stroke-dasharray', d);

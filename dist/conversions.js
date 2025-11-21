@@ -1,4 +1,3 @@
-"use strict";
 // ================================================================================
 // UNIT CONVERSION & DIMENSION PARSING
 // ================================================================================
@@ -7,64 +6,55 @@
 // (px, nm, mm, in, mils) and parsing/formatting dimensional input.
 //
 // ================================================================================
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.PX_PER_MM = void 0;
-exports.pxToNm = pxToNm;
-exports.nmToPx = nmToPx;
-exports.mmToPx = mmToPx;
-exports.nmToUnit = nmToUnit;
-exports.unitToNm = unitToNm;
-exports.parseDimInput = parseDimInput;
-exports.formatDimForDisplay = formatDimForDisplay;
-const constants_js_1 = require("./constants.js");
+import { NM_PER_MM, NM_PER_IN, NM_PER_MIL } from './constants.js';
 // px rendering constant: exactly 100 px per inch (50 mils = 5 px)
-exports.PX_PER_MM = 100 / 25.4;
+export const PX_PER_MM = 100 / 25.4;
 // ====== px ↔ nm Conversions ======
 /**
  * Convert pixels to nanometers
  */
-function pxToNm(px) {
-    return Math.round(px * (constants_js_1.NM_PER_MM / exports.PX_PER_MM));
+export function pxToNm(px) {
+    return Math.round(px * (NM_PER_MM / PX_PER_MM));
 }
 /**
  * Convert nanometers to pixels
  */
-function nmToPx(nm) {
-    return (nm * exports.PX_PER_MM) / constants_js_1.NM_PER_MM;
+export function nmToPx(nm) {
+    return (nm * PX_PER_MM) / NM_PER_MM;
 }
 /**
  * Convert millimeters to pixels (minimum 1px)
  */
-function mmToPx(mm) {
-    return Math.max(1, Math.round(Math.max(0, mm) * exports.PX_PER_MM));
+export function mmToPx(mm) {
+    return Math.max(1, Math.round(Math.max(0, mm) * PX_PER_MM));
 }
 // ====== nm ↔ Display Units ======
 /**
  * Convert nanometers to requested display unit (mm, in, or mils)
  */
-function nmToUnit(nm, u) {
+export function nmToUnit(nm, u) {
     if (u === 'mm')
-        return nm / constants_js_1.NM_PER_MM;
+        return nm / NM_PER_MM;
     if (u === 'in')
-        return nm / constants_js_1.NM_PER_IN;
-    return nm / constants_js_1.NM_PER_MIL; // mils
+        return nm / NM_PER_IN;
+    return nm / NM_PER_MIL; // mils
 }
 /**
  * Convert value in display unit to nanometers
  */
-function unitToNm(val, u) {
+export function unitToNm(val, u) {
     if (u === 'mm')
-        return Math.round(val * constants_js_1.NM_PER_MM);
+        return Math.round(val * NM_PER_MM);
     if (u === 'in')
-        return Math.round(val * constants_js_1.NM_PER_IN);
-    return Math.round(val * constants_js_1.NM_PER_MIL);
+        return Math.round(val * NM_PER_IN);
+    return Math.round(val * NM_PER_MIL);
 }
 // ====== Dimension Parsing & Formatting ======
 /**
  * Parse a user-typed dimension like "1 mm", "0.0254 in", "39.37 mils" (case-insensitive)
  * Returns { nm, unit } or null if parse failed.
  */
-function parseDimInput(str, assumeUnit = 'mm') {
+export function parseDimInput(str, assumeUnit = 'mm') {
     if (!str)
         return null;
     const s = String(str).trim();
@@ -90,7 +80,7 @@ function parseDimInput(str, assumeUnit = 'mm') {
  * Format a nanometer value for display in the specified unit system.
  * Returns string like "12.34 mm" or "39.37 mils".
  */
-function formatDimForDisplay(nm, u) {
+export function formatDimForDisplay(nm, u) {
     const v = nmToUnit(nm, u);
     if (u === 'mm')
         return `${(Math.round(v * 100) / 100).toFixed(2)} mm`;
