@@ -138,37 +138,38 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         setAttr(r, 'y', viewY);
         setAttr(r, 'width', w);
         setAttr(r, 'height', h);
-        // We want minor grid lines to appear at ~10 screen px spacing, but grid
-        // coordinates must remain on multiples of the SNAP_NM base (50 mils).
-        // Strategy:
-        //  - Compute baseSnapUser: user-space units per SNAP_NM (50 mils).
-        //  - Choose minorFactor so that minorUser = baseSnapUser * minorFactor
-        //    maps to ~10 screen px (rounded to an integer multiple of baseSnapUser).
-        //  - Choose a major multiple (cellsPerMajor) so major cell on-screen is
-        //    comfortable; the `#gridBold` pattern will use majorUser = minorUser * cellsPerMajor.
+        // Calculate grid spacing using the same algorithm as dot grid
+        // This ensures line grid intersections align with dot positions
         const scale = svg.clientWidth / Math.max(1, viewW); // screen px per user unit
-        const baseSnapUser = nmToPx(SNAP_NM) / Math.max(1e-6, scale); // user units per base snap
-        const desiredMinorPx = 10; // target screen pixels between minor lines
-        // number of baseSnap units per minor line (integer >=1)
-        const minorFactor = Math.max(1, Math.round((desiredMinorPx / scale) / baseSnapUser));
-        let minorUser = baseSnapUser * minorFactor; // user units between minor grid lines (may be fractional)
-        // choose major cells as multiples of minorUser so that major cell screen px is readable
-        const candidateMajors = [4, 5, 8, 10, 16, 20];
-        let cellsPerMajor = candidateMajors[0];
-        for (const c of candidateMajors) {
-            const screenPx = minorUser * c * scale;
-            if (screenPx >= 80 && screenPx <= 220) {
-                cellsPerMajor = c;
-                break;
-            }
-            if (screenPx <= 220)
-                cellsPerMajor = c;
+        // Grid spacing must always be a multiple of the base 50 mil grid
+        // Use zoom-dependent spacing for readability
+        const baseSnapUser = nmToPx(SNAP_NM); // 50 mils = 5 user units
+        const zoomMin = 0.25, zoom1x = 10;
+        let snapMultiplier;
+        if (zoom <= zoomMin) {
+            snapMultiplier = 5; // 250 mils (5 * 50 mils) at low zoom
         }
-        // Round to integer user units to avoid fractional offsets between
-        // pattern rendering and snapping. Ensure at least 1 user unit.
-        minorUser = Math.max(1, Math.round(minorUser));
+        else if (zoom >= zoom1x) {
+            snapMultiplier = 1; // 50 mils from 10x zoom onward
+        }
+        else {
+            // Use discrete multipliers at intermediate zooms to maintain 50 mil alignment
+            // Choose the nearest integer multiplier from [1, 2, 5]
+            const t = (zoom - zoomMin) / (zoom1x - zoomMin);
+            const interpolated = 5 - t * 4; // 5 down to 1
+            if (interpolated > 3)
+                snapMultiplier = 5;
+            else if (interpolated > 1.5)
+                snapMultiplier = 2;
+            else
+                snapMultiplier = 1;
+        }
+        // Grid spacing in user units - always a multiple of 50 mils
+        const minorUser = baseSnapUser * snapMultiplier;
+        // Major grid lines every 5 minor divisions
+        const cellsPerMajor = 5;
         const majorUser = minorUser * cellsPerMajor;
-        // Save chosen snap spacing (minor grid) for use by snap() — snap to minorUser.
+        // Save chosen snap spacing for use by snap() function
         CURRENT_SNAP_USER_UNITS = minorUser;
         // Update grid pattern defs: `#grid` will represent a major cell and draw
         // its internal minor lines at multiples of minorUser. Anchor patterns to
@@ -241,14 +242,14 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             patBold.appendChild(border);
             patBold.removeAttribute('patternTransform');
         }
-        // Update header UI with the current visible grid cell size (in screen px)
+        // Update status bar UI with the current grid spacing in mils
         try {
             const k = document.getElementById('gridSizeKbd');
+            // Convert minorUser to mils for display (5 user units = 50 mils)
+            const milsPerUserUnit = 10; // 100 px/inch ÷ 1000 mils/inch = 0.1 px/mil, so 1 user unit = 10 mils
+            const gridMils = Math.round(minorUser * milsPerUserUnit);
             if (k)
-                k.textContent = `${Math.round(majorUser * scale)}px`;
-            const snapK = document.getElementById('snapKbd');
-            if (snapK)
-                snapK.textContent = 'on';
+                k.textContent = `${gridMils} mil`;
         }
         catch (err) { /* ignore */ }
         // Update grid display based on gridMode
@@ -264,31 +265,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
         }
         catch (_) { }
-        // Render dot grid with zoom-based spacing
+        // Render dot grid with same spacing as line grid
         const dotGridEl = document.getElementById('dotGrid');
         if (dotGridEl && gridMode === 'dot') {
             dotGridEl.replaceChildren();
-            // Calculate dot spacing to align with 50 mil snap grid
-            // 50 mils = 5 user units in our coordinate system (100 px/inch DPI)
-            // At low zoom: use 250 mils (25 user units) for visibility
-            // At high zoom (10x+): use 50 mils (5 user units) to match snap grid
-            const zoomMin = 0.25, zoom1x = 10;
-            let snapMultiplier;
-            if (zoom <= zoomMin) {
-                snapMultiplier = 5; // 250 mils at low zoom
-            }
-            else if (zoom >= zoom1x) {
-                snapMultiplier = 1; // 50 mils from 10x zoom onward
-            }
-            else {
-                // Interpolate from 5x to 1x
-                const t = (zoom - zoomMin) / (zoom1x - zoomMin);
-                snapMultiplier = 5 - t * 4; // 5 down to 1
-            }
-            // Dot spacing in user units (50 mils = 5 user units)
-            const dotSpacingUser = nmToPx(SNAP_NM) * snapMultiplier;
-            // Save dot spacing for snap() function to use when in 'grid' snap mode
-            CURRENT_SNAP_USER_UNITS = dotSpacingUser;
+            // Use the same spacing calculation as line grid (already calculated above)
+            const dotSpacingUser = minorUser;
             // Calculate dot radius (1 screen pixel)
             const dotRadius = 1 / scale;
             // Calculate visible bounds with padding
@@ -1061,10 +1043,26 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 snapMode = '50mil';
             saveSnapMode();
             updateSnapButton();
+            updateSnapStatus();
+        }
+        function updateSnapStatus() {
+            const snapK = document.getElementById('snapKbd');
+            if (!snapK)
+                return;
+            if (snapMode === 'off') {
+                snapK.textContent = 'off';
+            }
+            else if (snapMode === 'grid') {
+                snapK.textContent = 'grid';
+            }
+            else {
+                snapK.textContent = '50mil';
+            }
         }
         if (snapBtn) {
             snapBtn.addEventListener('click', () => { cycleSnapMode(); });
             updateSnapButton();
+            updateSnapStatus();
         }
         window.addEventListener('keydown', (e) => {
             if (e.altKey || e.ctrlKey || e.metaKey)
@@ -2293,11 +2291,23 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             console.warn('debugDumpAnchors failed', err);
         }
     }
-    // Snap a user-space point to nearest anchor (50-mil snapped) if within threshold, else to minor grid via snap().
+    // Snap a user-space point to nearest anchor or wire segment if within threshold, else to grid via snap().
     function snapPointPreferAnchor(p, thresholdPx = 10) {
+        // First, check for anchors (wire endpoints and component pins)
         const a = nearestAnchorTo(p, thresholdPx);
         if (a)
             return { x: a.x, y: a.y };
+        // Second, check for nearby wire segments (snap to wire anywhere along its length)
+        // Convert 50 mils threshold to user units for wire segment snapping
+        const scale = svg.clientWidth / Math.max(1, viewW);
+        const wireSnapThreshold = nmToPx(SNAP_NM); // 50 mils in user units
+        const wireSnapThresholdPx = wireSnapThreshold * scale;
+        const seg = nearestSegmentAtPoint(p, wireSnapThresholdPx);
+        if (seg && seg.q) {
+            // Snap to the projected point on the wire segment
+            return { x: seg.q.x, y: seg.q.y };
+        }
+        // Finally, fall back to grid snapping
         return { x: snap(p.x), y: snap(p.y) };
     }
     function wiresEndingAt(pt) {
@@ -2675,7 +2685,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         x = last.x;
                 }
                 // Connection hint logic: try to lock onto nearby wire endpoint X or Y axis (only if tracking is enabled)
-                // Now uses ortho-constrained x,y if ortho is active
+                // Use RAW mouse position (p) for candidate search to avoid grid snap interference
                 // Convert pixel tolerances to SVG user coordinates based on current zoom
                 const scale = svg.clientWidth / Math.max(1, viewW); // screen px per user unit
                 const snapTol = HINT_SNAP_TOLERANCE_PX / scale; // convert to SVG user units
@@ -2767,15 +2777,19 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         };
                         let checkCount = 0;
                         candidates.forEach(cand => {
+                            // Use RAW mouse position (p) for distance checks, not snapped position
+                            // This prevents grid snap from interfering with tracking detection
+                            const rawX = p.x;
+                            const rawY = p.y;
                             // Check X-axis proximity (for vertical hint line - locks X, varies Y)
-                            const xDist = Math.abs(x - cand.x);
+                            const xDist = Math.abs(rawX - cand.x);
                             if (xDist < snapTol && xDist < bestAxisDist && !shouldExcludeCandidate(cand, false)) {
                                 bestAxisDist = xDist;
                                 bestCand = cand;
                                 bestIsHorizontalHint = false; // vertical hint line
                             }
                             // Check Y-axis proximity (for horizontal hint line - locks Y, varies X)
-                            const yDist = Math.abs(y - cand.y);
+                            const yDist = Math.abs(rawY - cand.y);
                             if (yDist < snapTol && yDist < bestAxisDist && !shouldExcludeCandidate(cand, true)) {
                                 bestAxisDist = yDist;
                                 bestCand = cand;
@@ -2785,18 +2799,18 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         });
                         if (bestCand) {
                             // Snap the cursor position to align orthogonally with the candidate
-                            // The cursor will move to align on one axis with the candidate
+                            // Use current snapped position as base, but override the locked axis
                             let snappedX = x;
                             let snappedY = y;
                             if (bestIsHorizontalHint) {
                                 // Horizontal hint: snap Y to candidate's Y (cursor moves to align horizontally)
                                 snappedY = bestCand.y;
-                                // X remains at current position
+                                // X uses the snapped grid position
                             }
                             else {
                                 // Vertical hint: snap X to candidate's X (cursor moves to align vertically)
                                 snappedX = bestCand.x;
-                                // Y remains at current position
+                                // Y uses the snapped grid position
                             }
                             connectionHint = {
                                 lockedPt: { x: snappedX, y: snappedY }, // Lock snapped position
@@ -4116,52 +4130,18 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // Refresh inspector UI and any open popovers
         renderInspector(); // safe to call repeatedly
     }
-    // Insert a simple Units selector into the header (shows current units; opens dropdown)
-    (function installUnitsButton() {
-        const header = document.querySelector('header');
-        if (!header)
+    // Hook up the units select in the status bar
+    (function installUnitsSelect() {
+        const unitsSelect = document.getElementById('unitsSelect');
+        if (!unitsSelect)
             return;
-        const modeGroup = document.getElementById('modeGroup');
-        const grp = document.createElement('div');
-        grp.className = 'group';
-        grp.style.marginLeft = '8px';
-        grp.style.position = 'relative'; // anchor for absolute dropdown
-        const btn = document.createElement('button');
-        btn.id = 'unitsBtn';
-        btn.title = 'Display units';
-        btn.textContent = (globalUnits === 'mm') ? 'mm' : (globalUnits === 'in' ? 'in' : 'mils');
-        const menu = document.createElement('div');
-        menu.id = 'unitsMenu';
-        // Always open downward: anchor at top:100% (below the header group)
-        menu.style.position = 'absolute';
-        menu.style.top = 'calc(100% + 6px)';
-        menu.style.left = '0';
-        menu.style.bottom = 'auto';
-        menu.style.display = 'none';
-        menu.style.background = '#0e1219';
-        menu.style.border = '1px solid #273042';
-        menu.style.padding = '6px';
-        menu.style.borderRadius = '8px';
-        menu.style.zIndex = '1000';
-        menu.style.maxHeight = '50vh';
-        menu.style.overflow = 'auto';
-        ['mm', 'in', 'mils'].forEach(u => {
-            const b = document.createElement('button');
-            b.style.display = 'block';
-            b.style.width = '100%';
-            b.textContent = u;
-            b.addEventListener('click', () => { setGlobalUnits(u); btn.textContent = (u === 'mm') ? 'mm' : (u === 'in' ? 'in' : 'mils'); menu.style.display = 'none'; });
-            menu.appendChild(b);
+        // Set initial value
+        unitsSelect.value = globalUnits;
+        // Handle changes
+        unitsSelect.addEventListener('change', () => {
+            const u = unitsSelect.value;
+            setGlobalUnits(u);
         });
-        btn.addEventListener('click', (e) => { e.stopPropagation(); menu.style.display = menu.style.display === 'none' ? 'block' : 'none'; });
-        document.addEventListener('click', () => { menu.style.display = 'none'; });
-        grp.appendChild(btn);
-        grp.appendChild(menu);
-        // Insert the units group into the modeGroup so it sits immediately after the Mode buttons
-        if (modeGroup)
-            modeGroup.appendChild(grp);
-        else
-            header.appendChild(grp);
     })();
     function renderInspector() {
         inspector.replaceChildren();
