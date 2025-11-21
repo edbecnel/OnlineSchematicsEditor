@@ -81,6 +81,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // Ortho mode: when true, all wiring is forced orthogonal (persisted)
     let orthoMode = (localStorage.getItem('ortho.mode') === 'true');
     function saveOrthoMode() { localStorage.setItem('ortho.mode', orthoMode ? 'true' : 'false'); }
+    let snapMode = localStorage.getItem('snap.mode') || '50mil';
+    function saveSnapMode() { localStorage.setItem('snap.mode', snapMode); }
     // Crosshair display mode: 'full' or 'short'
     let crosshairMode = localStorage.getItem('crosshair.mode') || 'full';
     let connectionHint = null;
@@ -491,7 +493,14 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // Current chosen snap spacing in SVG user units (set by redrawGrid()).
     let CURRENT_SNAP_USER_UNITS = null;
     const snap = (v) => {
-        // Always snap to the implicit base 50-mil grid in user units (5 user units = 50 mils)
+        if (snapMode === 'off')
+            return v; // No snapping
+        if (snapMode === 'grid') {
+            // Snap to visible grid spacing (CURRENT_SNAP_USER_UNITS)
+            const gridUnits = CURRENT_SNAP_USER_UNITS || baseSnapUser();
+            return Math.round(v / gridUnits) * gridUnits;
+        }
+        // Default: '50mil' mode - snap to 50-mil base grid
         const snapUnits = baseSnapUser(); // Returns 5 for 50 mil spacing
         return Math.round(v / snapUnits) * snapUnits;
     };
@@ -1005,6 +1014,56 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             if (e.key === 'o' || e.key === 'O') {
                 e.preventDefault();
                 toggleOrtho();
+            }
+        });
+    })();
+    // Wire up Snap mode toggle button and shortcut (S)
+    (function attachSnapToggle() {
+        const snapBtn = document.getElementById('snapToggleBtn');
+        function updateSnapButton() {
+            if (!snapBtn)
+                return;
+            // Update button text based on current mode
+            if (snapMode === 'grid') {
+                snapBtn.textContent = 'Grid';
+                snapBtn.classList.add('active');
+                snapBtn.title = 'Snap mode: Grid (S)';
+            }
+            else if (snapMode === '50mil') {
+                snapBtn.textContent = '50mil';
+                snapBtn.classList.add('active');
+                snapBtn.title = 'Snap mode: 50mil (S)';
+            }
+            else { // 'off'
+                snapBtn.textContent = 'Off';
+                snapBtn.classList.remove('active');
+                snapBtn.title = 'Snap mode: Off (S)';
+            }
+        }
+        function cycleSnapMode() {
+            // Cycle: 50mil → grid → off → 50mil
+            if (snapMode === '50mil')
+                snapMode = 'grid';
+            else if (snapMode === 'grid')
+                snapMode = 'off';
+            else
+                snapMode = '50mil';
+            saveSnapMode();
+            updateSnapButton();
+        }
+        if (snapBtn) {
+            snapBtn.addEventListener('click', () => { cycleSnapMode(); });
+            updateSnapButton();
+        }
+        window.addEventListener('keydown', (e) => {
+            if (e.altKey || e.ctrlKey || e.metaKey)
+                return;
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable))
+                return;
+            if (e.key === 's' || e.key === 'S') {
+                e.preventDefault();
+                cycleSnapMode();
             }
         });
     })();
