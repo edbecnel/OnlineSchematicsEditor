@@ -2398,7 +2398,17 @@ let marquee: {
         return;
       }
     }catch(_){ }
-    const snapCandDown = (mode==='wire') ? snapPointPreferAnchor({ x: p.x, y: p.y }) : { x: snap(p.x), y: snap(p.y) };
+    
+    // Check if clicking on an endpoint square - if so, use exact position without snapping
+    const tgt = e.target as Element;
+    let endpointClicked: Point | null = null;
+    if(tgt && tgt.tagName === 'rect' && (tgt as any).endpoint){
+      endpointClicked = (tgt as any).endpoint as Point;
+    }
+    
+    const snapCandDown = endpointClicked 
+      ? endpointClicked 
+      : (mode==='wire') ? snapPointPreferAnchor({ x: p.x, y: p.y }) : { x: snap(p.x), y: snap(p.y) };
     const x = snapCandDown.x, y = snapCandDown.y;
     // Middle mouse drag pans
     if (e.button === 1){

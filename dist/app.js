@@ -2466,7 +2466,15 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
         }
         catch (_) { }
-        const snapCandDown = (mode === 'wire') ? snapPointPreferAnchor({ x: p.x, y: p.y }) : { x: snap(p.x), y: snap(p.y) };
+        // Check if clicking on an endpoint square - if so, use exact position without snapping
+        const tgt = e.target;
+        let endpointClicked = null;
+        if (tgt && tgt.tagName === 'rect' && tgt.endpoint) {
+            endpointClicked = tgt.endpoint;
+        }
+        const snapCandDown = endpointClicked
+            ? endpointClicked
+            : (mode === 'wire') ? snapPointPreferAnchor({ x: p.x, y: p.y }) : { x: snap(p.x), y: snap(p.y) };
         const x = snapCandDown.x, y = snapCandDown.y;
         // Middle mouse drag pans
         if (e.button === 1) {
