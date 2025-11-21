@@ -3926,37 +3926,48 @@ let marquee: {
   }
 
   // Pan helpers
-  var isPanning = false, panStartSvg = null, panStartView = null, panPointerId = null;
+  var isPanning = false, panStartClient = null, panStartView = null, panPointerId = null;
   var panAnimationFrame = null;
+  var pendingPanPosition = null;
+  
   function beginPan(e){
     isPanning = true;
     document.body.classList.add('panning');
-    const p = svgPoint(e);
-    panStartSvg = {x:p.x, y:p.y};
+    // Store screen coordinates (clientX/Y) instead of SVG coordinates to avoid feedback loop
+    panStartClient = {x: e.clientX, y: e.clientY};
     panStartView = {x:viewX, y:viewY};
     panPointerId = e.pointerId;
     svg.setPointerCapture?.(panPointerId);
   }
+  
   function doPan(e){
     if(!isPanning) return;
-    const p = svgPoint(e);
-    const dx = p.x - panStartSvg.x;
-    const dy = p.y - panStartSvg.y;
-    viewX = panStartView.x - dx;
-    viewY = panStartView.y - dy;
     
-    // Use requestAnimationFrame to throttle updates and ensure smooth 60fps panning
+    // Calculate delta in screen pixels
+    const clientDx = e.clientX - panStartClient.x;
+    const clientDy = e.clientY - panStartClient.y;
+    
+    // Convert screen pixel delta to SVG user units
+    const scale = viewW / Math.max(1, svg.clientWidth);
+    const dx = clientDx * scale;
+    const dy = clientDy * scale;
+    
+    // Update view position directly
+    pendingPanPosition = {
+      x: panStartView.x - dx,
+      y: panStartView.y - dy
+    };
+    
+    // Use requestAnimationFrame to batch updates at 60fps
     if (panAnimationFrame === null) {
       panAnimationFrame = requestAnimationFrame(() => {
         panAnimationFrame = null;
-        // Update viewBox immediately for smooth panning
-        const vw = Math.max(1, svg.clientWidth);
-        const vh = Math.max(1, svg.clientHeight);
-        const aspect = vw / vh;
-        viewW = BASE_W / zoom;
-        viewH = viewW / aspect;
-        svg.setAttribute('viewBox', `${viewX} ${viewY} ${viewW} ${viewH}`);
-        // Skip expensive grid redraw during active panning - will redraw at end
+        if (pendingPanPosition) {
+          viewX = pendingPanPosition.x;
+          viewY = pendingPanPosition.y;
+          // Update viewBox for smooth panning
+          svg.setAttribute('viewBox', `${viewX} ${viewY} ${viewW} ${viewH}`);
+        }
       });
     }
   }
