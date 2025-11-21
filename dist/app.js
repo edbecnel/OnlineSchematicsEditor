@@ -3285,14 +3285,14 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             hintLine.setAttribute('stroke', '#00ff00'); // bright green
             // Calculate stroke width that scales with zoom to stay visible
             const scale = svg.clientWidth / Math.max(1, viewW);
-            const strokeWidth = 1 / scale; // 1 screen pixel
+            const strokeWidth = 2 / scale; // 2 screen pixels for better visibility
             const dashLength = 10 / scale; // 10 screen pixels for dashes
             const dashGap = 5 / scale; // 5 screen pixels for gaps
             hintLine.setAttribute('stroke-width', String(strokeWidth));
             hintLine.setAttribute('stroke-dasharray', `${dashLength},${dashGap}`);
             hintLine.setAttribute('stroke-linecap', 'round');
             hintLine.setAttribute('pointer-events', 'none');
-            hintLine.setAttribute('opacity', '0.8');
+            hintLine.setAttribute('opacity', '1');
             // Draw from the current cursor position to the target point
             // The cursor has been snapped to align orthogonally with the target
             hintLine.setAttribute('x1', String(drawing.cursor.x));
@@ -3337,6 +3337,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             vline.style.strokeDasharray = 'none';
             hline.style.pointerEvents = 'none';
             vline.style.pointerEvents = 'none';
+            hline.style.opacity = '0.4'; // semi-transparent so hints show through
+            vline.style.opacity = '0.4';
         }
         else {
             // Full-screen crosshair: span the visible viewBox, darker gray, dashed
@@ -3358,6 +3360,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             vline.style.strokeDasharray = '4 4';
             hline.style.pointerEvents = 'none';
             vline.style.pointerEvents = 'none';
+            hline.style.opacity = '0.3'; // semi-transparent so hints show through
+            vline.style.opacity = '0.3';
         }
         gOverlay.appendChild(hline);
         gOverlay.appendChild(vline);

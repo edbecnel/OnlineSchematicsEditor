@@ -65,10 +65,11 @@
     <h2>Getting Started</h2>
     <h3>Interface Layout</h3>
     <ul>
+      <li><b>Top Toolbar:</b> Mode buttons, component palette, zoom controls, and file operations</li>
       <li><b>Left Panel (Inspector):</b> Shows properties of the selected component or wire for editing</li>
-      <li><b>Center Canvas:</b> Main drawing area with zoom and pan controls</li>
-      <li><b>Right Panel (Project):</b> Net list, theme settings, units, and export options</li>
-      <li><b>Top Toolbar:</b> Mode buttons, component palette, and file operations</li>
+      <li><b>Center Canvas:</b> Main drawing area with grid and coordinate display</li>
+      <li><b>Right Panel (Project):</b> Net list, theme settings, and export options</li>
+      <li><b>Status Bar (bottom of canvas):</b> Drawing aids (Ortho, Snap, Grid, Crosshair, Junctions, Tracking), Theme toggle, Units selector, and status indicators</li>
     </ul>
 
     <h2>Modes</h2>
@@ -95,16 +96,28 @@
     <h3>Orthogonal Mode</h3>
     <ul>
       <li>Hold <span class="kbd">Shift</span> while drawing to force horizontal/vertical segments</li>
-      <li>Click the <b>Ortho</b> button or press <span class="kbd">O</span> to enable orthogonal mode permanently</li>
+      <li>Click the <b>Ortho</b> button in the status bar or press <span class="kbd">O</span> to enable orthogonal mode permanently</li>
       <li>Useful for creating neat, aligned schematics</li>
       <li><b>Smart Override:</b> Clicking connection squares (green endpoint markers) bypasses ortho mode for precise connections to existing wire endpoints, even if they're not aligned horizontally or vertically</li>
+      <li><b>Visual Feedback:</b> The Ortho button dims when hovering over non-orthogonal endpoints, indicating the override will activate</li>
     </ul>
 
-    <h3>Connection Hints</h3>
+    <h3>Connection Hints (Tracking)</h3>
     <ul>
-      <li>When drawing near wire endpoints, connection hints appear as colored guide lines</li>
-      <li>These help align new wires with existing ones</li>
-      <li>Click the <b>Tracking</b> button to toggle connection hints on/off</li>
+      <li>When drawing near wire endpoints, connection hints appear as green dashed guide lines</li>
+      <li>These help align new wires with existing ones on their X or Y axis</li>
+      <li>Click the <b>Tracking</b> button in the status bar or press <span class="kbd">T</span> to toggle connection hints on/off</li>
+      <li>Works with all snap modes and zoom levels</li>
+      <li>Automatically engages ortho mode while tracking to maintain clean routing</li>
+    </ul>
+    
+    <h3>Wire Snapping</h3>
+    <ul>
+      <li><b>Snap Priority:</b> Wire endpoints and component pins (highest), wire segments within 50 mils, then grid/snap mode</li>
+      <li><b>Snap to Wire Segments:</b> You can start a new wire anywhere along an existing wire, not just at endpoints</li>
+      <li>When your cursor is within 50 mils of a wire, it automatically snaps to the nearest point on that wire</li>
+      <li>This allows for easy T-junctions and mid-wire connections</li>
+      <li>Wire segment snapping overrides the current snap mode for intuitive connections</li>
     </ul>
 
     <h3>Wire Colors</h3>
@@ -180,18 +193,22 @@
     <h2>Grid &amp; Snapping</h2>
     <h3>Grid Display</h3>
     <ul>
-      <li>Click the <b>Grid</b> button to cycle: Lines → Dots → Off</li>
+      <li>Click the <b>Grid</b> button in the status bar or press <span class="kbd">G</span> to cycle: Lines → Dots → Off</li>
       <li>Grid helps align components and wires</li>
-      <li>Visual only; does not affect snapping</li>
+      <li><b>Grid Alignment:</b> Both line and dot grids are aligned to the base 50 mil snap grid at all zoom levels</li>
+      <li><b>Zoom-Adaptive Spacing:</b> Grid spacing adjusts for readability (50 mil at high zoom, 100 mil or 250 mil at lower zoom)</li>
+      <li><b>Status Display:</b> Current grid spacing shown in status bar (e.g., "50 mil", "100 mil")</li>
     </ul>
 
     <h3>Snap Modes</h3>
     <ul>
-      <li>Click the <b>Snap</b> button or press <span class="kbd">S</span> to cycle through modes:</li>
+      <li>Click the <b>Snap</b> button in the status bar or press <span class="kbd">S</span> to cycle through modes:</li>
       <li><b>50mil:</b> Snap to base grid (50 mils / 1.27 mm) — ensures proper electrical connections</li>
-      <li><b>Grid:</b> Snap to visible grid lines or dots — adjusts with zoom level</li>
+      <li><b>Grid:</b> Snap to visible grid lines or dots — spacing varies with zoom (50 mil, 100 mil, or 250 mil)</li>
       <li><b>Off:</b> No snapping — free placement anywhere</li>
-      <li><b>Connection Squares:</b> Green endpoint markers always connect to exact wire positions, ignoring snap settings for precise connections</li>
+      <li><b>Wire Segment Priority:</b> When within 50 mils of any wire, snapping automatically locks to that wire, overriding the current snap mode</li>
+      <li><b>Connection Squares:</b> Green endpoint markers always connect to exact wire positions for precise connections</li>
+      <li><b>Status Display:</b> Current snap mode shown in status bar (50mil, grid, or off)</li>
     </ul>
 
     <h3>Coordinate Display</h3>
@@ -217,23 +234,53 @@
       <li><b>Middle mouse button:</b> Click and drag to pan in any mode</li>
     </ul>
 
+    <h2>Status Bar Controls</h2>
+    <p>The status bar at the bottom of the canvas provides quick access to drawing aids and status information:</p>
+    
+    <h3>Drawing Aids (Left Section)</h3>
+    <ul>
+      <li><b>Ortho (O):</b> Toggle orthogonal mode for horizontal/vertical wire routing</li>
+      <li><b>Snap (S):</b> Cycle through snap modes (50mil → Grid → Off)</li>
+      <li><b>Grid (G):</b> Cycle through grid display (Lines → Dots → Off)</li>
+    </ul>
+    
+    <h3>Visual Aids (Middle Section)</h3>
+    <ul>
+      <li><b>Crosshair (X):</b> Toggle crosshair cursor style (+ → Full → Off)</li>
+      <li><b>Junctions (.):</b> Toggle junction dot visibility at wire intersections</li>
+      <li><b>Tracking (T):</b> Toggle connection hints for aligning with nearby wire endpoints</li>
+    </ul>
+    
+    <h3>Settings (Right Section)</h3>
+    <ul>
+      <li><b>Theme (☀/☾):</b> Toggle between dark and light themes</li>
+      <li><b>Units dropdown:</b> Select display units (mm, in, or mils)</li>
+    </ul>
+    
+    <h3>Status Indicators (Far Right)</h3>
+    <ul>
+      <li><b>Mode:</b> Current editing mode (Select, Wire, Delete, etc.)</li>
+      <li><b>Grid:</b> Current grid spacing in mils (50 mil, 100 mil, 250 mil)</li>
+      <li><b>Snap:</b> Current snap mode (50mil, grid, or off)</li>
+    </ul>
+
     <h2>Theme &amp; Units</h2>
     <h3>Dark/Light Theme</h3>
     <ul>
-      <li>Click the sun/moon icon in the toolbar to toggle</li>
+      <li>Click the sun/moon icon in the status bar to toggle</li>
       <li><b>Dark theme:</b> Low-contrast colors ideal for extended use</li>
       <li><b>Light theme:</b> High-contrast for printing or bright environments</li>
       <li>Black wires automatically display as white in dark theme and white wires automatically display as black in light theme</li>
     </ul>
 
     <h3>Units</h3>
-    <p>Choose your preferred measurement units in the Project panel:</p>
+    <p>Choose your preferred measurement units using the dropdown in the status bar:</p>
     <ul>
       <li><b>mm:</b> Millimeters</li>
       <li><b>in:</b> Inches</li>
       <li><b>mils:</b> Thousandths of an inch (1 mil = 0.001")</li>
     </ul>
-    <p class="tip"><i>Note:</i> Units affect display and input only; internal coordinates use 100 px/inch.</p>
+    <p class="tip"><i>Note:</i> Units affect display and input only; internal coordinates use 100 px/inch (10 mils per user unit).</p>
 
     <h2>Nets &amp; Connectivity</h2>
     <h3>What are Nets?</h3>
@@ -361,6 +408,9 @@
       <li><span class="kbd">R</span> — Rotate selected component 90° clockwise</li>
       <li><span class="kbd">O</span> — Toggle orthogonal mode</li>
       <li><span class="kbd">S</span> — Cycle snap mode (50mil → Grid → Off)</li>
+      <li><span class="kbd">G</span> — Cycle grid display (Lines → Dots → Off)</li>
+      <li><span class="kbd">X</span> — Cycle crosshair style (+ → Full → Off)</li>
+      <li><span class="kbd">T</span> — Toggle connection tracking on/off</li>
       <li><span class="kbd">Esc</span> — Cancel drawing / Deselect / Exit mode</li>
       <li><span class="kbd">Enter</span> — Finish wire drawing</li>
       <li><span class="kbd">Delete</span> — Delete selected component or wire</li>
@@ -378,11 +428,15 @@
       <li><b>Start with components:</b> Place all components before wiring</li>
       <li><b>Use labels:</b> Assign reference designators (R1, C1, etc.) to all components</li>
       <li><b>Name important nets:</b> Use meaningful names like VCC, GND, CLK for clarity</li>
-      <li><b>Zoom in for precision:</b> Use 1000% zoom to verify snap alignment</li>
+      <li><b>Zoom for precision:</b> Use 1000% zoom to verify 50 mil grid alignment</li>
       <li><b>Ortho mode for neatness:</b> Enable orthogonal wiring for cleaner schematics</li>
+      <li><b>Use tracking:</b> Enable connection hints to easily align wires with existing endpoints</li>
+      <li><b>Snap to wires:</b> Click anywhere along a wire to start a new connection (T-junction)</li>
+      <li><b>Connection squares:</b> Click green endpoint markers for precise connections, even at non-orthogonal angles</li>
       <li><b>Check connectivity:</b> Review the net list before export</li>
       <li><b>Save frequently:</b> Use Ctrl+S to save your work regularly</li>
       <li><b>Use wire colors:</b> Color-code power, ground, and signal wires for readability</li>
+      <li><b>Grid modes:</b> Switch between Lines and Dots to suit your preference - they're perfectly aligned</li>
     </ul>
 
     <h2>Troubleshooting</h2>
