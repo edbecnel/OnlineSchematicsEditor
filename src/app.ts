@@ -13,6 +13,13 @@ import * as Utils from './utils.js';
 import * as Constants from './constants.js';
 import type { ClientXYEvent } from './utils.js';
 
+import type {
+  Point, Axis, Mode, PlaceType, CounterKey, Selection, DiodeSubtype,
+  Component, RGBA01, StrokeType, Stroke, Wire, WireColorMode,
+  NetClass, Theme, Junction, SWPEdge, SWP, Topology,
+  MoveCollapseCtx, KWire
+} from './types.js';
+
 (function(){
 // ====== Module Imports (re-export for internal use) ======
 const {
@@ -123,116 +130,10 @@ let connectionHint: ConnectionHint = null;
 let shiftOrthoVisualActive = false;
 
 // ================================================================================
-// ====== 4. TYPES & INTERFACES ======
 // ================================================================================
-
-type Mode = 'none' | 'select' | 'wire' | 'delete' | 'place' | 'pan' | 'move';
-type PlaceType = 'resistor' | 'capacitor' | 'inductor' | 'diode' | 'npn' | 'pnp' | 'ground' | 'battery' | 'ac';
-// Selection shape. Note: legacy `segIndex` support remains for backward
-// compatibility (some UI code may still set it to `null`), but the editor now
-// treats each visible straight sub-segment as its own `Wire` (identified by
-// `wire.id`). Prefer selecting segments by `selection = { kind: 'wire', id: <wireId>, segIndex: null }`.
-type Selection =
-  | { kind: null; id: null; segIndex: null }
-  | { kind: 'component'; id: string; segIndex: null }
-  | { kind: 'wire'; id: string; segIndex: number | null };
-type Point = { x: number; y: number };
-type Axis = 'x' | 'y' | null;
-// ----- Editor model shapes (no behavior change) -----
-type DiodeSubtype = 'generic' | 'schottky' | 'zener' | 'led' | 'photo' | 'tunnel' | 'varactor' | 'laser';
-
-interface Component {
-  id: string;
-  type: PlaceType;
-  x: number;
-  y: number;
-  rot: number;               // degrees, multiples of 90
-  label: string;
-  value?: string;
-  props?: {
-    unit?: string;           // Ω / F / H symbol for R/C/L
-    subtype?: DiodeSubtype;  // diode subtype
-    voltage?: number;        // battery/AC source voltage
-    [k: string]: any;        // future-safe
-  };
-}
-
-interface Wire {
-  id: string;
-  points: Point[];
-  /** LEGACY editor field (kept for back-compat saves & SWP color heuristics) */
-  color?: string;            // css color string
-  /** KiCad-style override; width=0 and type='default' mean "use netclass/theme" */
-  stroke?: Stroke;
-  /** Optional net hook for later; defaults to 'default' netclass */
-  netId?: string | null;
-}
-
-type CounterKey = PlaceType | 'wire';
-// --- SWP / Topology shapes (editor-only) ---
-type SWPEdge = {
-  id: string;
-  wireId: string | null;     // null for synthetic component-bridge edges
-  i: number;                 // segment index within wireId (or -1 for bridge)
-  a: Point;
-  b: Point;
-  axis: Axis;                // 'x' | 'y' | null (null = angled/non-axis)
-  akey: string;              // "x,y"
-  bkey: string;              // "x,y"
-};
-
-type SWP = {
-  id: string;                // e.g. "swp3"
-  axis: Exclude<Axis, null>; // 'x' | 'y' only
-  start: Point;              // canonical start endpoint of the span
-  end: Point;                // canonical end endpoint of the span
-  color: string;             // representative color for the span
-  edgeWireIds: string[];     // contributing wire IDs
-  edgeIndicesByWire: Record<string, number[]>; // per-wire segment indices that belong to the SWP
-};
-
-type Topology = {
-  nodes: Array<{ x: number; y: number; edges: Set<string>; axDeg: { x: number; y: number } }>;
-  edges: SWPEdge[];
-  swps: SWP[];
-  compToSwp: Map<string, string>;  // component.id -> swp.id
-};
-
-type MoveCollapseCtx = {
-  kind: 'swp';
-  sid: string;               // SWP id
-  axis: 'x' | 'y';
-  fixed: number;             // orthogonal coordinate (y for 'x' spans, x for 'y' spans)
-  minCenter: number;         // clamp for the component center along axis
-  maxCenter: number;
-  ends: { lo: number; hi: number }; // SWP endpoints along axis
-  color: string;
-  collapsedId: string;       // temp wire id used while collapsed
-  lastCenter: number;        // last center position during drag
-};
-
-// ===== KiCad-friendly types (no behavior; types + adapters only) =====
-type RGBA01 = { r: number; g: number; b: number; a: number };            // 0..1
-type StrokeType = 'default' | 'solid' | 'dash' | 'dot' | 'dash_dot' | 'dash_dot_dot';
-type Stroke = { width: number; type: StrokeType; color: RGBA01 };        // mm + style + RGBA
-
-// Minimal net/theming for precedence (explicit → netclass → theme)
-type NetClass = {
-  id: string;
-  name: string;
-  wire: Stroke;                              // defaults for wires in this class
-  junction: { size: number; color: RGBA01 }; // mm + RGBA
-};
-type Theme = {
-  wire: Stroke;                              // global fallback
-  junction: { size: number; color: RGBA01 };
-};
-type KWire = {
-  id: string;                  // uuid in KiCad; we’ll keep our id for now
-  points: Point[];             // (pts (xy …) …)
-  stroke: Stroke;              // (stroke …)
-  netId?: string | null;       // optional editor-side metadata
-};
+// ====== 3. STATE MANAGEMENT ======
+// ================================================================================
+// Type definitions moved to types.ts and imported at the top
 
 let mode: Mode = 'select';
 let placeType: PlaceType | null = null;

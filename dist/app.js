@@ -87,6 +87,11 @@ const Constants = require("./constants.js");
     let connectionHint = null;
     // Visual shift indicator for temporary ortho mode
     let shiftOrthoVisualActive = false;
+    // ================================================================================
+    // ================================================================================
+    // ====== 3. STATE MANAGEMENT ======
+    // ================================================================================
+    // Type definitions moved to types.ts and imported at the top
     let mode = 'select';
     let placeType = null;
     // Selection object: prefer `wire.id` for segment selections. `segIndex` is
