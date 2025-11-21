@@ -1,4 +1,73 @@
 (function(){
+// ================================================================================
+// ONLINE SCHEMATICS EDITOR - Main Application
+// ================================================================================
+//
+// TABLE OF CONTENTS:
+// ------------------
+// 1. UTILITIES & HELPERS
+//    - DOM utilities ($q, $qa, setAttr, getClientXY)
+//    - Color conversion (cssToRGBA01, rgba01ToCss, colorToHex)
+//    - Geometry (snap, distance, projection, rotation)
+//    - Unit conversion (nm/mm/in/mils)
+//
+// 2. CONSTANTS & CONFIGURATION
+//    - Grid and snapping constants (GRID, NM_PER_MM, SNAP_NM)
+//    - Viewport settings (BASE_W, BASE_H)
+//    - Theme and net classes
+//
+// 3. STATE MANAGEMENT
+//    - Global state (components, wires, nets, counters)
+//    - View state (zoom, pan, mode, selection)
+//    - Settings (units, grid mode, junction visibility)
+//
+// 4. TYPES & INTERFACES
+//    - Editor types (Mode, Selection, Topology)
+//    - Drawing state (Drawing, Marquee)
+//
+// 5. DOM REFERENCES
+//    - SVG layers (gWires, gComps, gJunctions, etc.)
+//    - UI elements (inspector, toolbar, panels)
+//
+// 6. CORE RENDERING
+//    - Grid rendering
+//    - Component rendering
+//    - Wire rendering
+//    - Junction dots
+//
+// 7. NET CLASSES & CONNECTIVITY
+//    - Net class management
+//    - Stroke calculation
+//    - Topology analysis (SWPs, nodes, edges)
+//
+// 8. INTERACTION HANDLERS
+//    - Mouse/pointer events
+//    - Keyboard shortcuts
+//    - Pan and zoom
+//    - Wire drawing
+//    - Component placement
+//    - Selection and move
+//
+// 9. UI COMPONENTS
+//    - Toolbar (mode buttons, wire stroke, grid toggle)
+//    - Inspector (property editing)
+//    - Dialogs (net properties, wire stroke)
+//    - Panels (project, nets list)
+//
+// 10. SERIALIZATION
+//     - Save to JSON
+//     - Load from JSON
+//     - KiCad export
+//
+// 11. INITIALIZATION
+//     - Panel setup
+//     - Event binding
+//     - Initial render
+//
+// ================================================================================
+
+// ====== 1. UTILITIES & HELPERS ======
+
 // ====== Minimal shared types (temporary, editor-internal) ======
 type UUID = string;
 type AnyProps = Record<string, any>;
@@ -32,7 +101,10 @@ function getClientXY(evt: ClientXYEvent) {
   return { x, y };
 }
 
-  // ====== Core State ======
+// ================================================================================
+// ====== 2. CONSTANTS & CONFIGURATION ======
+// ================================================================================
+
   const GRID: number = 25; // px; 2*GRID = 50 px = exactly 10 snap units (500 mils)
   // Nanometer resolution constants (internal units)
   const NM_PER_MM = 1_000_000;   // 1 mm == 1,000,000 nm
@@ -47,7 +119,10 @@ function getClientXY(evt: ClientXYEvent) {
   let globalUnits: 'mm' | 'in' | 'mils' = (localStorage.getItem('global.units') as any) || 'mm';
   function saveGlobalUnits(){ localStorage.setItem('global.units', globalUnits); }
 
-// DOM refs
+// ================================================================================
+// ====== 5. DOM REFERENCES ======
+// ================================================================================
+
 const svg = $q<SVGSVGElement>('#svg');
 
 // Ensure required SVG layer <g> elements exist; create them if missing.
@@ -125,7 +200,10 @@ let connectionHint: ConnectionHint = null;
 // Visual shift indicator for temporary ortho mode
 let shiftOrthoVisualActive = false;
 
-// ===== Types (editor-only; no runtime) =====
+// ================================================================================
+// ====== 4. TYPES & INTERFACES ======
+// ================================================================================
+
 type Mode = 'none' | 'select' | 'wire' | 'delete' | 'place' | 'pan' | 'move';
 type PlaceType = 'resistor' | 'capacitor' | 'inductor' | 'diode' | 'npn' | 'pnp' | 'ground' | 'battery' | 'ac';
 // Selection shape. Note: legacy `segIndex` support remains for backward
@@ -485,8 +563,14 @@ let marquee: {
     updateGridToggleButton();
   }
 
+// ================================================================================
+// ====== 3. STATE MANAGEMENT ======
+// ================================================================================
+
+  // --- Component and Wire Counters ---
   let counters = { resistor:1, capacitor:1, inductor:1, diode:1, npn:1, pnp:1, ground:1, battery:1, ac:1, wire:1 };
-  // Core model arrays (global)
+  
+  // --- Core Model Arrays ---
   let components: Component[] = [];
   let wires: Wire[] = [];
   
@@ -2257,6 +2341,10 @@ let marquee: {
     });
   }  
 
+// ================================================================================
+// ====== 6. CORE RENDERING ======
+// ================================================================================
+
   // ====== SVG helpers ======
   function svgPoint(evt: ClientXYEvent): Point {
     const pt = svg.createSVGPoint();
@@ -2469,7 +2557,10 @@ let marquee: {
     }
   }
 
-  // ====== Interaction ======
+// ================================================================================
+// ====== 8. INTERACTION HANDLERS ======
+// ================================================================================
+
   svg.addEventListener('pointerdown', (e)=>{
     const p = svgPoint(e);
     // If user clicks on empty canvas while in Move mode, cancel the move and
@@ -3462,6 +3553,10 @@ let marquee: {
   document.getElementById('addNetBtn')!.addEventListener('click', addNet);
 
 
+// ================================================================================
+// ====== 9. UI COMPONENTS - TOOLBAR & DIALOGS ======
+// ================================================================================
+
   // Wire stroke defaults (global for NEW wires) — popover with KiCad-like fields
   const wireColorBtn = document.getElementById('wireColorBtn') as HTMLButtonElement;
   const wireColorMenu = document.getElementById('wireColorMenu') as HTMLElement;
@@ -4009,7 +4104,10 @@ let marquee: {
     redraw();
   }
 
-  // ====== Inspector ======
+// ================================================================================
+// ====== 9. UI COMPONENTS - INSPECTOR ======
+// ================================================================================
+
   // ====== Units & conversion helpers ======
   // Internal resolution: nanometers (integers). Display units: mm / in / mils
   // (NM_PER_* constants are declared near the top-level so they're available to all code.)
