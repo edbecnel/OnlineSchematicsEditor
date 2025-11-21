@@ -196,16 +196,23 @@
       <li>Click the <b>Grid</b> button in the status bar or press <span class="kbd">G</span> to cycle: Lines → Dots → Off</li>
       <li>Grid helps align components and wires</li>
       <li><b>Grid Alignment:</b> Both line and dot grids are aligned to the base 50 mil snap grid at all zoom levels</li>
-      <li><b>Zoom-Adaptive Spacing:</b> Grid spacing adjusts for readability (50 mil at high zoom, 100 mil or 250 mil at lower zoom)</li>
-      <li><b>Status Display:</b> Current grid spacing shown in status bar (e.g., "50 mil", "100 mil")</li>
+      <li><b>Zoom-Adaptive Spacing:</b> Grid spacing automatically adjusts using discrete multipliers (1×, 2×, or 5×) of the 50 mil base:
+        <ul>
+          <li><b>50 mil</b> (1× multiplier) — Zoom ≥ 1000% (10×): Shows every snap point for maximum precision</li>
+          <li><b>100 mil</b> (2× multiplier) — Medium zoom: Shows every 2nd snap point for balanced visibility</li>
+          <li><b>250 mil</b> (5× multiplier) — Zoom ≤ 25% (0.25×): Shows every 5th snap point to avoid clutter</li>
+        </ul>
+      </li>
+      <li><b>Perfect Alignment:</b> Grid lines/dots always fall exactly on snap points, never between them</li>
+      <li><b>Status Display:</b> Current grid spacing shown in status bar updates as you zoom in/out</li>
     </ul>
 
     <h3>Snap Modes</h3>
     <ul>
       <li>Click the <b>Snap</b> button in the status bar or press <span class="kbd">S</span> to cycle through modes:</li>
-      <li><b>50mil:</b> Snap to base grid (50 mils / 1.27 mm) — ensures proper electrical connections</li>
-      <li><b>Grid:</b> Snap to visible grid lines or dots — spacing varies with zoom (50 mil, 100 mil, or 250 mil)</li>
-      <li><b>Off:</b> No snapping — free placement anywhere</li>
+      <li><b>50mil:</b> Always snap to the base 50 mil grid (1.27 mm) regardless of zoom — ensures proper electrical connections at standard component pin spacing</li>
+      <li><b>Grid:</b> Snap to currently visible grid lines or dots — spacing matches the Grid status (50 mil, 100 mil, or 250 mil depending on zoom level). Use this for faster rough layout at lower zoom levels.</li>
+      <li><b>Off:</b> No snapping — free placement anywhere for custom positioning</li>
       <li><b>Wire Segment Priority:</b> When within 50 mils of any wire, snapping automatically locks to that wire, overriding the current snap mode</li>
       <li><b>Connection Squares:</b> Green endpoint markers always connect to exact wire positions for precise connections</li>
       <li><b>Status Display:</b> Current snap mode shown in status bar (50mil, grid, or off)</li>
@@ -260,7 +267,14 @@
     <h3>Status Indicators (Far Right)</h3>
     <ul>
       <li><b>Mode:</b> Current editing mode (Select, Wire, Delete, etc.)</li>
-      <li><b>Grid:</b> Current grid spacing in mils (50 mil, 100 mil, 250 mil)</li>
+      <li><b>Grid:</b> Current spacing between visible grid lines/dots in mils. Shows one of three values:
+        <ul>
+          <li><b>250 mil</b> — Zoomed out view (every 5th snap point visible)</li>
+          <li><b>100 mil</b> — Medium zoom (every 2nd snap point visible)</li>
+          <li><b>50 mil</b> — Zoomed in view (every snap point visible)</li>
+        </ul>
+        This value indicates what spacing you'll get when using "Grid" snap mode.
+      </li>
       <li><b>Snap:</b> Current snap mode (50mil, grid, or off)</li>
     </ul>
 
