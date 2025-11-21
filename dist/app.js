@@ -348,6 +348,72 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // Nets collection: user-defined nets for manual assignment
     let nets = new Set(['default']);
     let activeNetClass = 'default';
+    let undoStack = [];
+    let redoStack = [];
+    const MAX_UNDO_STACK = 50; // Limit stack size to prevent memory issues
+    function captureState() {
+        // Deep clone all mutable state
+        return {
+            components: JSON.parse(JSON.stringify(components)),
+            wires: JSON.parse(JSON.stringify(wires)),
+            selection: { ...selection },
+            counters: { ...counters },
+            nets: new Set(nets),
+            netClasses: JSON.parse(JSON.stringify(NET_CLASSES)),
+            activeNetClass: activeNetClass
+        };
+    }
+    function restoreState(state) {
+        // Restore all state from snapshot
+        components = JSON.parse(JSON.stringify(state.components));
+        wires = JSON.parse(JSON.stringify(state.wires));
+        selection = { ...state.selection };
+        counters = { ...state.counters };
+        nets = new Set(state.nets);
+        // Restore NET_CLASSES by clearing and re-adding
+        for (const key in NET_CLASSES) {
+            if (key !== 'default')
+                delete NET_CLASSES[key];
+        }
+        const restoredClasses = JSON.parse(JSON.stringify(state.netClasses));
+        for (const key in restoredClasses) {
+            NET_CLASSES[key] = restoredClasses[key];
+        }
+        activeNetClass = state.activeNetClass;
+        // Rebuild topology and UI
+        rebuildTopology();
+        redraw();
+        renderNetList();
+        renderInspector();
+    }
+    function pushUndo() {
+        // Capture current state before modification
+        undoStack.push(captureState());
+        // Limit stack size
+        if (undoStack.length > MAX_UNDO_STACK) {
+            undoStack.shift();
+        }
+        // Clear redo stack on new action
+        redoStack = [];
+    }
+    function undo() {
+        if (undoStack.length === 0)
+            return;
+        // Save current state to redo stack
+        redoStack.push(captureState());
+        // Restore previous state
+        const prevState = undoStack.pop();
+        restoreState(prevState);
+    }
+    function redo() {
+        if (redoStack.length === 0)
+            return;
+        // Save current state to undo stack
+        undoStack.push(captureState());
+        // Restore next state
+        const nextState = redoStack.pop();
+        restoreState(nextState);
+    }
     // Palette state: diode subtype selection
     let diodeSubtype = 'generic';
     // Wire color state: default from CSS var, and current palette choice (affects new wires only)
@@ -813,6 +879,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const b = parseInt(m.slice(4, 6), 16);
             const a = Math.max(0, Math.min(1, parseFloat(alphaInput.value) || 1));
             // Update net class
+            pushUndo();
             netClass.wire.width = valMm;
             netClass.wire.type = styleSelect.value;
             netClass.wire.color = { r: r / 255, g: g / 255, b: b / 255, a };
@@ -872,6 +939,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             if (selection.kind === 'wire') {
                 const w = wires.find(x => x.id === selection.id);
                 if (w) {
+                    pushUndo();
                     wires = wires.filter(x => x.id !== w.id);
                     selection = { kind: null, id: null, segIndex: null };
                     normalizeAllWires();
@@ -1843,6 +1911,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             const comp = { id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType] - 1}`, value: '', props: {} };
                             if (placeType === 'diode')
                                 comp.props.subtype = diodeSubtype;
+                            pushUndo();
                             components.push(comp);
                             breakWiresForComponent(comp);
                             if (isTwoPinType(placeType))
@@ -1916,6 +1985,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         }
     }
     function removeComponent(id) {
+        pushUndo();
         const comp = components.find(c => c.id === id);
         // Mend only for simple 2-pin parts
         if (comp && ['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'].includes(comp.type)) {
@@ -1941,6 +2011,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // For per-segment wires, deleting the clicked segment removes the whole wire object.
         if (!w)
             return;
+        pushUndo();
         if (w.points.length === 2) {
             wires = wires.filter(x => x.id !== w.id);
             selection = { kind: null, id: null, segIndex: null };
@@ -2938,6 +3009,20 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 e.preventDefault();
             return;
         }
+        // Undo/Redo shortcuts (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z)
+        if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+            const k = e.key.toLowerCase();
+            if (k === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                undo();
+                return;
+            }
+            if ((k === 'y') || (k === 'z' && e.shiftKey)) {
+                e.preventDefault();
+                redo();
+                return;
+            }
+        }
         if (e.key === 'Escape') {
             // If a drawing is in progress, cancel it first
             if (drawing.active) {
@@ -2994,6 +3079,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 // Per-segment model: each segment is its own Wire object. Delete the selected segment wire.
                 const w = wires.find(x => x.id === selection.id);
                 if (w) {
+                    pushUndo();
                     wires = wires.filter(x => x.id !== w.id);
                     selection = { kind: null, id: null, segIndex: null };
                     normalizeAllWires();
@@ -3176,6 +3262,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     pts.push({ x: p.x, y: p.y });
             }
             if (pts.length >= 2) {
+                pushUndo();
                 // Emit per-run so only truly colinear joins adopt an existing Wire's color.
                 // Bends (non-axis runs) stay with the current toolbar color.
                 emitRunsFromPolyline(pts);
@@ -3427,6 +3514,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const c = components.find(x => x.id === selection.id);
         if (!c)
             return;
+        pushUndo();
         c.rot = (c.rot + 90) % 360;
         // After rotation, if pins now cross a wire, split and remove bridge
         if (breakWiresForComponent(c)) {
@@ -4167,7 +4255,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const wrap = document.createElement('div');
             wrap.appendChild(rowPair('ID', text(c.id, true)));
             wrap.appendChild(rowPair('Type', text(c.type, true)));
-            wrap.appendChild(rowPair('Label', input(c.label, v => { c.label = v; redrawCanvasOnly(); })));
+            wrap.appendChild(rowPair('Label', input(c.label, v => { pushUndo(); c.label = v; redrawCanvasOnly(); })));
             // value field for generic components
             const showValue = ['resistor', 'capacitor', 'inductor', 'diode'].includes(c.type);
             // Value + Unit (inline) for R, C, L. (Diode keeps a simple Value field if desired.)
@@ -4181,9 +4269,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 const valInput = document.createElement('input');
                 valInput.type = 'text';
                 valInput.value = c.value || '';
-                valInput.oninput = () => { c.value = valInput.value; redrawCanvasOnly(); };
+                valInput.oninput = () => { pushUndo(); c.value = valInput.value; redrawCanvasOnly(); };
                 // unit select (uses symbols, e.g., kΩ, µF, mH)
                 const sel = unitSelect(typeKey, (c.props.unit) || defaultUnit(typeKey), (u) => {
+                    pushUndo();
                     c.props.unit = u;
                     redrawCanvasOnly();
                 });
@@ -4193,7 +4282,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
             else if (c.type === 'diode') {
                 // Value (optional text) for diode
-                wrap.appendChild(rowPair('Value', input(c.value || '', v => { c.value = v; redrawCanvasOnly(); })));
+                wrap.appendChild(rowPair('Value', input(c.value || '', v => { pushUndo(); c.value = v; redrawCanvasOnly(); })));
                 // Subtype (editable)
                 const subSel = document.createElement('select');
                 ['generic', 'schottky', 'zener', 'led', 'photo', 'tunnel', 'varactor', 'laser'].forEach(v => {
@@ -4208,6 +4297,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 });
                 subSel.value = (c.props && c.props.subtype) ? c.props.subtype : 'generic';
                 subSel.onchange = () => {
+                    pushUndo();
                     if (!c.props)
                         c.props = {};
                     c.props.subtype = subSel.value;
@@ -4220,12 +4310,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             if (c.type === 'battery' || c.type === 'ac') {
                 if (!c.props)
                     c.props = {};
-                wrap.appendChild(rowPair('Voltage (V)', number(c.props.voltage ?? 0, v => { c.props.voltage = v; redrawCanvasOnly(); })));
+                wrap.appendChild(rowPair('Voltage (V)', number(c.props.voltage ?? 0, v => { pushUndo(); c.props.voltage = v; redrawCanvasOnly(); })));
             }
             // position + rotation (X/Y are shown in selected units; internal positions are px)
-            wrap.appendChild(rowPair('X', dimNumberPx(c.x, v => { c.x = snap(v); redrawCanvasOnly(); })));
-            wrap.appendChild(rowPair('Y', dimNumberPx(c.y, v => { c.y = snap(v); redrawCanvasOnly(); })));
-            wrap.appendChild(rowPair('Rotation', number(c.rot, v => { c.rot = (Math.round(v / 90) * 90) % 360; redrawCanvasOnly(); })));
+            wrap.appendChild(rowPair('X', dimNumberPx(c.x, v => { pushUndo(); c.x = snap(v); redrawCanvasOnly(); })));
+            wrap.appendChild(rowPair('Y', dimNumberPx(c.y, v => { pushUndo(); c.y = snap(v); redrawCanvasOnly(); })));
+            wrap.appendChild(rowPair('Rotation', number(c.rot, v => { pushUndo(); c.rot = (Math.round(v / 90) * 90) % 360; redrawCanvasOnly(); })));
             inspector.appendChild(wrap);
             // After the DOM is in place, size any Value/Units selects to their content (capped at 50%)
             fitInspectorUnitSelects();
@@ -4307,6 +4397,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 const holder = document.createElement('div');
                 // Net selection handler - updates wire's net class assignment
                 netSel.onchange = () => {
+                    pushUndo();
                     ensureStroke(w);
                     activeNetClass = netSel.value;
                     renderNetList();
@@ -4329,6 +4420,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 };
                 // Custom properties checkbox handler
                 chkCustom.onchange = () => {
+                    pushUndo();
                     ensureStroke(w);
                     if (chkCustom.checked) {
                         // Switching to custom: populate with current net class values
@@ -4397,6 +4489,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     }
                 };
                 wIn.onchange = () => {
+                    pushUndo();
                     ensureStroke(w);
                     const parsed = parseDimInput(wIn.value || '0');
                     const nm = parsed ? parsed.nm : 0;
@@ -4453,6 +4546,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     sSel.disabled = !chkCustom.checked;
                 };
                 sSel.onchange = () => {
+                    pushUndo();
                     ensureStroke(w);
                     const val = (sSel.value || 'solid');
                     const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
@@ -4522,6 +4616,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     aIn.disabled = !chkCustom.checked;
                 };
                 function onColorCommit() {
+                    pushUndo();
                     // parse #RRGGBB + alpha slider → RGBA01
                     const hex = cIn.value || '#ffffff';
                     const m = hex.replace('#', '');
@@ -4913,6 +5008,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     }
     // ====== Move helpers (mouse drag already handled; this handles arrow keys & clamping) ======
     function moveSelectedBy(dx, dy) {
+        pushUndo();
         const c = components.find(x => x.id === selection.id);
         if (!c)
             return;
@@ -5845,6 +5941,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             lastMoveCompId = c.id;
             return moveCollapseCtx;
         }
+        // Capture undo state before beginning move
+        pushUndo();
         const swp = findSwpById(sid);
         if (!swp)
             return null;
