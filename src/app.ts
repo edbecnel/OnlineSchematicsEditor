@@ -2550,11 +2550,13 @@ let marquee: {
   });
   // Rubber-band wire, placement ghost, crosshair, and hover pan cursor
   svg.addEventListener('pointermove', (e)=>{
+    // Early exit for panning - skip expensive snap calculations
+    if (isPanning){ doPan(e); return; }
+    
     const p = svgPoint(e);
     // Prefer anchors while wiring so cursor and added points align to endpoints/pins
     const snapCandMove = (mode === 'wire') ? snapPointPreferAnchor({ x: p.x, y: p.y }) : { x: snap(p.x), y: snap(p.y) };
     let x = snapCandMove.x, y = snapCandMove.y;
-    if (isPanning){ doPan(e); return; }
     // Marquee update (Select mode). Track Shift to flip priority while dragging.
       if(marquee.active){
       marquee.shiftPreferComponents = !!((e as PointerEvent).shiftKey || globalShiftDown);
@@ -3943,18 +3945,18 @@ let marquee: {
     viewX = panStartView.x - dx;
     viewY = panStartView.y - dy;
     
-    // Use requestAnimationFrame to throttle updates and prevent flickering
+    // Use requestAnimationFrame to throttle updates and ensure smooth 60fps panning
     if (panAnimationFrame === null) {
       panAnimationFrame = requestAnimationFrame(() => {
         panAnimationFrame = null;
-        // Only update viewBox during panning for smooth performance
+        // Update viewBox immediately for smooth panning
         const vw = Math.max(1, svg.clientWidth);
         const vh = Math.max(1, svg.clientHeight);
         const aspect = vw / vh;
         viewW = BASE_W / zoom;
         viewH = viewW / aspect;
         svg.setAttribute('viewBox', `${viewX} ${viewY} ${viewW} ${viewH}`);
-        redrawGrid();
+        // Skip expensive grid redraw during active panning - will redraw at end
       });
     }
   }
@@ -3969,7 +3971,8 @@ let marquee: {
       cancelAnimationFrame(panAnimationFrame);
       panAnimationFrame = null;
     }
-    applyZoom(); // Full redraw at the end
+    // Full redraw including grid after panning completes
+    applyZoom();
   }  
 
   function clearAll(){
