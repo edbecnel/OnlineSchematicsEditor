@@ -60,6 +60,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     const inspector = $q('#inspector');
     const inspectorNone = $q('#inspectorNone');
     const projTitle = $q('#projTitle'); // uses .value later
+    const defaultResistorStyleSelect = $q('#defaultResistorStyleSelect');
     const countsEl = $q('#counts');
     const overlayMode = $q('#modeLabel');
     const coordDisplay = $q('#coordDisplay');
@@ -68,6 +69,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     let showJunctionDots = (localStorage.getItem('junctionDots.visible') !== 'false');
     // Tracking mode: when true, connection hints are enabled (persisted)
     let trackingMode = (localStorage.getItem('tracking.mode') !== 'false');
+    // Default resistor style for project: 'ansi' (US zigzag) or 'iec' (rectangle) - persisted
+    let defaultResistorStyle = localStorage.getItem('defaultResistorStyle') || 'ansi';
     // UI button ref (may be used before DOM-ready in some cases; guard accordingly)
     let gridToggleBtnEl = null;
     // Track Shift key state globally so we can enforce orthogonal preview even
@@ -361,7 +364,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             nets: new Set(nets),
             netClasses: JSON.parse(JSON.stringify(NET_CLASSES)),
             activeNetClass: activeNetClass,
-            wireDefaults: JSON.parse(JSON.stringify(WIRE_DEFAULTS))
+            wireDefaults: JSON.parse(JSON.stringify(WIRE_DEFAULTS)),
+            defaultResistorStyle: defaultResistorStyle
         };
     }
     function restoreState(state) {
@@ -383,6 +387,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             NET_CLASSES[key] = restoredClasses[key];
         }
         activeNetClass = state.activeNetClass;
+        defaultResistorStyle = state.defaultResistorStyle;
         // Rebuild topology and UI
         rebuildTopology();
         redraw();
@@ -1560,15 +1565,41 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const add = (el) => { gg.appendChild(el); return el; };
         const line = (x1, y1, x2, y2) => { const ln = document.createElementNS('http://www.w3.org/2000/svg', 'line'); ln.setAttribute('x1', x1); ln.setAttribute('y1', y1); ln.setAttribute('x2', x2); ln.setAttribute('y2', y2); ln.setAttribute('stroke', 'var(--component)'); ln.setAttribute('stroke-width', '2'); return add(ln); };
         const path = (d) => { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', 'var(--component)'); p.setAttribute('stroke-width', '2'); return add(p); };
-        // two-pin lead stubs
-        if (['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'].includes(c.type)) {
+        // two-pin lead stubs (skip for resistor - handled specially based on style)
+        if (['capacitor', 'inductor', 'diode', 'battery', 'ac'].includes(c.type)) {
             const ax = c.x - 48, bx = c.x + 48, y = c.y;
             line(ax, y, ax + 12, y);
             line(bx - 12, y, bx, y);
         }
         if (c.type === 'resistor') {
-            const y = c.y, x = c.x - 36;
-            path(`M ${x} ${y} l 8 -10 l 8 20 l 8 -20 l 8 20 l 8 -20 l 8 20 l 8 -10`);
+            // Determine resistor style: component override or project default
+            const style = (c.props?.resistorStyle) || defaultResistorStyle;
+            const y = c.y, x = c.x;
+            const ax = c.x - 48, bx = c.x + 48;
+            if (style === 'iec') {
+                // IEC rectangular resistor symbol (36x12 rectangle centered at x,y)
+                // Lead wires connect directly to rectangle edges (no gaps)
+                line(ax, y, x - 18, y); // left wire to left edge of rectangle
+                line(x + 18, y, bx, y); // right edge of rectangle to right wire
+                const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                rect.setAttribute('x', String(x - 18));
+                rect.setAttribute('y', String(y - 6));
+                rect.setAttribute('width', '36');
+                rect.setAttribute('height', '12');
+                rect.setAttribute('rx', '1');
+                rect.setAttribute('stroke', 'var(--component)');
+                rect.setAttribute('stroke-width', '2');
+                rect.setAttribute('fill', 'none');
+                add(rect);
+            }
+            else {
+                // US/ANSI zigzag resistor symbol with lead wires
+                line(ax, y, ax + 12, y);
+                line(bx - 12, y, bx, y);
+                // Scale factor: original was 64px wide, we need 72px, so scale by 1.125
+                // Original path: M2 12H10L14 6L22 18L30 6L38 18L46 6L54 18L58 12H62
+                path(`M ${x - 36} ${y} H ${x - 27} L ${x - 22.5} ${y - 6} L ${x - 13.5} ${y + 6} L ${x - 4.5} ${y - 6} L ${x + 4.5} ${y + 6} L ${x + 13.5} ${y - 6} L ${x + 22.5} ${y + 6} L ${x + 27} ${y} H ${x + 36}`);
+            }
         }
         if (c.type === 'capacitor') {
             const y = c.y, x1 = c.x - 8, x2 = c.x + 8;
@@ -1953,6 +1984,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             const comp = { id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType] - 1}`, value: '', props: {} };
                             if (placeType === 'diode')
                                 comp.props.subtype = diodeSubtype;
+                            if (placeType === 'resistor')
+                                comp.props.resistorStyle = defaultResistorStyle;
                             pushUndo();
                             components.push(comp);
                             breakWiresForComponent(comp);
@@ -2644,6 +2677,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             };
             if (placeType === 'diode') {
                 comp.props.subtype = diodeSubtype;
+            }
+            if (placeType === 'resistor') {
+                comp.props.resistorStyle = defaultResistorStyle;
             }
             components.push(comp);
             // Break wires at pins and remove inner bridge segment for 2-pin parts
@@ -4289,6 +4325,33 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const u = unitsSelect.value;
             setGlobalUnits(u);
         });
+        // Update resistor toolbar icon
+        function updateResistorToolbarIcon() {
+            const btn = $q('[data-tool="resistor"]');
+            if (!btn)
+                return;
+            const svg = btn.querySelector('svg');
+            if (!svg)
+                return;
+            if (defaultResistorStyle === 'iec') {
+                // IEC rectangle icon
+                svg.innerHTML = '<path d="M2 12H14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="14" y="6" width="36" height="12" rx="1" stroke="currentColor" stroke-width="2" fill="none"/><path d="M50 12H62" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>';
+            }
+            else {
+                // US/ANSI zigzag icon
+                svg.innerHTML = '<path d="M2 12H10L14 6L22 18L30 6L38 18L46 6L54 18L58 12H62" />';
+            }
+        }
+        // Resistor style selector
+        defaultResistorStyleSelect.value = defaultResistorStyle;
+        updateResistorToolbarIcon();
+        defaultResistorStyleSelect.addEventListener('change', () => {
+            const style = defaultResistorStyleSelect.value;
+            defaultResistorStyle = style;
+            localStorage.setItem('defaultResistorStyle', style);
+            updateResistorToolbarIcon();
+            // Note: Don't redraw canvas - only affects newly placed resistors
+        });
     })();
     function renderInspector() {
         inspector.replaceChildren();
@@ -4324,6 +4387,27 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 container.appendChild(valInput);
                 container.appendChild(sel);
                 wrap.appendChild(rowPair('Value', container));
+                // Resistor style selector (only for resistors)
+                if (c.type === 'resistor') {
+                    const styleSel = document.createElement('select');
+                    const ansiOpt = document.createElement('option');
+                    ansiOpt.value = 'ansi';
+                    ansiOpt.textContent = 'ANSI/IEEE (US)';
+                    const iecOpt = document.createElement('option');
+                    iecOpt.value = 'iec';
+                    iecOpt.textContent = 'IEC (International)';
+                    styleSel.appendChild(ansiOpt);
+                    styleSel.appendChild(iecOpt);
+                    styleSel.value = c.props.resistorStyle || defaultResistorStyle;
+                    styleSel.onchange = () => {
+                        pushUndo();
+                        if (!c.props)
+                            c.props = {};
+                        c.props.resistorStyle = styleSel.value;
+                        redrawCanvasOnly();
+                    };
+                    wrap.appendChild(rowPair('Standard', styleSel));
+                }
             }
             else if (c.type === 'diode') {
                 // Value (optional text) for diode
@@ -5795,7 +5879,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             activeNetClass,
             netClasses: Object.fromEntries(Object.entries(NET_CLASSES)
                 .filter(([id]) => id !== 'default')
-                .map(([id, nc]) => [id, nc]))
+                .map(([id, nc]) => [id, nc])),
+            defaultResistorStyle
         };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const a = document.createElement('a');
@@ -5810,6 +5895,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         components = data.components || [];
         wires = (data.wires || []);
         projTitle.value = data.title || '';
+        // Restore default resistor style
+        if (data.defaultResistorStyle && (data.defaultResistorStyle === 'ansi' || data.defaultResistorStyle === 'iec')) {
+            defaultResistorStyle = data.defaultResistorStyle;
+            defaultResistorStyleSelect.value = defaultResistorStyle;
+            localStorage.setItem('defaultResistorStyle', defaultResistorStyle);
+        }
         // Restore nets (add default if not present)
         nets = new Set(data.nets || ['default']);
         if (!nets.has('default'))

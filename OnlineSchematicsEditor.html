@@ -94,7 +94,8 @@
     #components g.comp.selected > g line,
     #components g.comp.selected > g path,
     #components g.comp.selected > g polyline,
-    #components g.comp.selected > g circle {
+    #components g.comp.selected > g circle,
+    #components g.comp.selected > g rect {
       stroke: var(--select) !important;
       filter: drop-shadow(0 0 2px rgba(245,158,11,.6));
     }
@@ -230,7 +231,11 @@
     </div>
     <div class="vsep"></div> 
   <div class="group" id="paletteRow1">
-      <button data-tool="resistor" title="Place Resistor (R)">Resistor</button>
+      <button data-tool="resistor" title="Place Resistor (R)">
+        <svg width="32" height="12" viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12H10L14 6L22 18L30 6L38 18L46 6L54 18L58 12H62" />
+        </svg>
+      </button>
       <button data-tool="capacitor" title="Place Capacitor (C)">Capacitor</button>
       <button data-tool="inductor" title="Place Inductor (L)">Inductor</button>
       <button data-tool="diode" title="Place Diode (D)">Diode</button>
@@ -362,6 +367,16 @@
         <div class="row"><label>Title</label></div>
         <div class="row"><input id="projTitle" type="text" placeholder="Untitled schematic" /></div>
         <div class="row hint">Saved into JSON</div>
+        <hr style="border-color:#22262f; margin:1rem 0" />
+        <h2>Settings</h2>
+        <div class="row"><label>Schematic Standard</label></div>
+        <div class="row">
+          <select id="defaultResistorStyleSelect">
+            <option value="ansi" selected>ANSI/IEEE (US)</option>
+            <option value="iec">IEC (International)</option>
+          </select>
+        </div>
+        <div class="row hint">Default for new components</div>
         <hr style="border-color:#22262f; margin:1rem 0" />
         <h2>Nets</h2>
         <div id="netList" class="hint">—</div>
