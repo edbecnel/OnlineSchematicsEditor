@@ -1996,8 +1996,11 @@ let marquee: {
         const half = side / 2;
         const ends = [ w.points[0], w.points[w.points.length-1] ];
         for(const [ei, pt] of ends.map((p,i)=>[i,p] as [number,Point])){
-            // Choose a fixed on-screen size (px) so squares remain visible when zoomed out.
-            const desiredScreenPx = 9;
+            // Choose a fixed on-screen size (px) that scales with zoom level
+            // 9px normal, 7px when < 75%, 6px when <= 25%
+            let desiredScreenPx = 9;
+            if(zoom <= 0.25) desiredScreenPx = 6;
+            else if(zoom < 0.75) desiredScreenPx = 7;
             const scale = userScale(); // screen px per user unit
             const widthUser = desiredScreenPx / Math.max(1e-6, scale);
             // Center the square directly on the actual wire point in SVG coordinates
@@ -2079,7 +2082,10 @@ let marquee: {
       for(const c of components){
         const pins = compPinPositions(c);
         for(const pin of pins){
-          const desiredScreenPx = 9;
+          // Scale square size with zoom: 9px normal, 7px when < 75%, 6px when <= 25%
+          let desiredScreenPx = 9;
+          if(zoom <= 0.25) desiredScreenPx = 6;
+          else if(zoom < 0.75) desiredScreenPx = 7;
           const scale = userScale();
           const widthUser = desiredScreenPx / Math.max(1e-6, scale);
           const rx = pin.x - widthUser / 2;
@@ -3514,7 +3520,10 @@ let marquee: {
       gDrawing.appendChild(circle);
       
       // Also draw green endpoint squares at each placed point
-      const desiredScreenPx = 9;
+      // Scale with zoom: 9px normal, 7px when < 75%, 6px when <= 25%
+      let desiredScreenPx = 9;
+      if(zoom <= 0.25) desiredScreenPx = 6;
+      else if(zoom < 0.75) desiredScreenPx = 7;
       const widthUser = desiredScreenPx / scale;
       // Center the square directly on the actual wire point in SVG coordinates
       const rx = pt.x - widthUser / 2;
