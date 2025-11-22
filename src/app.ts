@@ -1614,14 +1614,14 @@ let marquee: {
       // Determine resistor style: component override or project default
       const style = (c.props?.resistorStyle) || defaultResistorStyle;
       const y=c.y, x=c.x;
-      const ax = c.x - 48, bx = c.x + 48;
+      const ax = c.x - 50, bx = c.x + 50;
       
       if(style === 'iec') {
         // IEC rectangular resistor symbol spanning full width (no lead wires)
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         rect.setAttribute('x', String(ax));
         rect.setAttribute('y', String(y - 12));
-        rect.setAttribute('width', '96');
+        rect.setAttribute('width', '100');
         rect.setAttribute('height', '24');
         rect.setAttribute('rx', '1');
         rect.setAttribute('stroke', 'var(--component)');
@@ -1637,7 +1637,7 @@ let marquee: {
     if(c.type==='capacitor'){
       const subtype = (c.props?.capacitorSubtype) || 'standard';
       const y=c.y, x=c.x;
-      const ax = c.x - 48, bx = c.x + 48;
+      const ax = c.x - 50, bx = c.x + 50;
       
       if(subtype === 'polarized') {
         // Polarized capacitor - style depends on schematic standard
@@ -1679,8 +1679,8 @@ let marquee: {
     }
     if(c.type==='inductor'){
       // Inductor coils spanning full width to pins
-      const y=c.y, ax=c.x-48, bx=c.x+48;
-      const totalWidth = 96; // bx - ax
+      const y=c.y, ax=c.x-50, bx=c.x+50;
+      const totalWidth = 100; // bx - ax
       const r = 8; // coil radius
       const numCoils = 6;
       const coilWidth = totalWidth / numCoils;
@@ -1696,9 +1696,9 @@ let marquee: {
     }
     if(c.type==='battery'){
       // Battery symbol: negative terminal (long line) on left, positive terminal (short line) on right
-      // Pins are at x ± 2*GRID (x ± 48), so draw lines extending toward the pins
+      // Pins are at x ± 2*GRID (x ± 50), so draw lines extending toward the pins
       const y=c.y;
-      const pinOffset = 2*GRID; // 48px
+      const pinOffset = 2*GRID; // 50px
       
       // Negative terminal (long line) - left side
       const xNeg = c.x - 10;
@@ -1734,7 +1734,7 @@ let marquee: {
       gg.appendChild(minusText);
     }
     if(c.type==='ac'){
-      const ax=c.x-48, bx=c.x+48, y=c.y;
+      const ax=c.x-50, bx=c.x+50, y=c.y;
       // Circle spanning most of width with minimal leads
       const radius = 40;
       // Minimal leads
@@ -1791,7 +1791,7 @@ let marquee: {
     const lineEl = (x1,y1,x2,y2,w=sw)=>{ const ln=mk('line'); ln.setAttribute('x1',x1); ln.setAttribute('y1',y1); ln.setAttribute('x2',x2); ln.setAttribute('y2',y2); ln.setAttribute('stroke',stroke); ln.setAttribute('stroke-width',w); ln.setAttribute('fill','none'); return add(ln); };
     const pathEl = (d,w=sw)=>{ const p=mk('path'); p.setAttribute('d',d); p.setAttribute('stroke',stroke); p.setAttribute('stroke-width',w); p.setAttribute('fill','none'); return add(p); };
     // Diode spanning full width (no lead wires)
-    const y=c.y, ax=c.x-48, bx=c.x+48;
+    const y=c.y, ax=c.x-50, bx=c.x+50;
     // Triangle from left pin to center
     pathEl(`M ${ax} ${y} L ${ax} ${y-16} L ${c.x} ${y} L ${ax} ${y+16} Z`);
     // Cathode bar at right pin
@@ -1970,47 +1970,6 @@ let marquee: {
       }
     }
     
-    // Connection squares (green outlines) at all connection points in Select/Wire modes
-    if(mode === 'select' || mode === 'wire'){
-      // Collect all unique connection points
-      const connectionPoints = new Set<string>();
-      const addPoint = (x: number, y: number) => {
-        connectionPoints.add(`${x},${y}`);
-      };
-      
-      // Add component pins
-      for(const c of components){
-        const pins = compPinPositions(c);
-        for(const pin of pins){
-          addPoint(pin.x, pin.y);
-        }
-      }
-      
-      // Add wire endpoints
-      for(const w of wires){
-        if(w.points.length >= 2){
-          addPoint(w.points[0].x, w.points[0].y);
-          addPoint(w.points[w.points.length-1].x, w.points[w.points.length-1].y);
-        }
-      }
-      
-      // Draw squares at unique positions
-      const scale = svg.clientWidth / Math.max(1, viewW);
-      connectionPoints.forEach(pointStr => {
-        const [x, y] = pointStr.split(',').map(Number);
-        const square = document.createElementNS('http://www.w3.org/2000/svg','rect');
-        setAttr(square, 'x', x - 3);
-        setAttr(square, 'y', y - 3);
-        setAttr(square, 'width', 6);
-        setAttr(square, 'height', 6);
-        square.setAttribute('fill', 'none');
-        square.setAttribute('stroke', '#22c55e');
-        square.setAttribute('stroke-width', String(1.5 / scale)); // Fixed screen size
-        square.setAttribute('pointer-events', 'none');
-        gJunctions.appendChild(square);
-      });
-    }
-    
     updateSelectionOutline();    
     updateCounts();
     renderNetList();
@@ -2086,6 +2045,78 @@ let marquee: {
               renderDrawing(); redraw();
             } else if(mode === 'place' && placeType){
               // Place a component centered at the endpoint (mimic pointerdown place behavior)
+              const at = { x: ep.x, y: ep.y };
+              let rot = 0;
+              if(isTwoPinType(placeType)){
+                const hit = nearestSegmentAtPoint(at, 18);
+                if(hit){ rot = normDeg(hit.angle); }
+              }
+              const id = uid(placeType);
+              const labelPrefix = {resistor:'R', capacitor:'C', inductor:'L', diode:'D', npn:'Q', pnp:'Q', ground:'GND', battery:'BT', ac:'AC'}[placeType] || 'X';
+              const comp: Component = { id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType]-1}`, value: '', props: {} };
+              if (placeType === 'diode') (comp.props as Component['props']).subtype = diodeSubtype as DiodeSubtype;
+              if (placeType === 'resistor') (comp.props as Component['props']).resistorStyle = defaultResistorStyle;
+              if (placeType === 'capacitor') {
+                (comp.props as Component['props']).capacitorSubtype = capacitorSubtype;
+                if (capacitorSubtype === 'polarized') {
+                  (comp.props as Component['props']).capacitorStyle = defaultResistorStyle;
+                }
+              }
+              pushUndo();
+              components.push(comp);
+              breakWiresForComponent(comp);
+              if(isTwoPinType(placeType)) deleteBridgeBetweenPins(comp);
+              setMode('select'); placeType = null;
+              selection = { kind: 'component', id, segIndex: null };
+              redraw();
+            }
+          });
+          gOverlay.appendChild(rect);
+        }
+      }
+      
+      // Also add endpoint squares for component pins
+      for(const c of components){
+        const pins = compPinPositions(c);
+        for(const pin of pins){
+          const desiredScreenPx = 9;
+          const scale = userScale();
+          const widthUser = desiredScreenPx / Math.max(1e-6, scale);
+          const rx = pin.x - widthUser / 2;
+          const ry = pin.y - widthUser / 2;
+          const rect = document.createElementNS(ns, 'rect');
+          rect.setAttribute('data-endpoint', '1');
+          rect.setAttribute('x', String(rx));
+          rect.setAttribute('y', String(ry));
+          rect.setAttribute('width', String(widthUser));
+          rect.setAttribute('height', String(widthUser));
+          rect.setAttribute('fill', 'rgba(0,200,0,0.08)');
+          rect.setAttribute('stroke', 'lime');
+          rect.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
+          rect.style.cursor = 'pointer';
+          (rect as any).endpoint = { x: pin.x, y: pin.y };
+          (rect as any).componentId = c.id;
+          rect.addEventListener('pointerdown', (ev)=>{
+            const ep = (ev.currentTarget as any).endpoint as Point;
+            const cid = (ev.currentTarget as any).componentId as string | undefined;
+            ev.preventDefault(); ev.stopPropagation();
+            if(mode === 'select'){
+              if(cid){ selection = { kind: 'component', id: cid, segIndex: null }; renderInspector(); updateSelectionOutline(); }
+              return;
+            }
+            if(!ep) return;
+            if(mode === 'wire'){
+              if(!drawing.active){ drawing.active = true; drawing.points = [{ x: ep.x, y: ep.y }]; drawing.cursor = { x: ep.x, y: ep.y }; }
+              else {
+                drawing.points.push({ x: ep.x, y: ep.y });
+                drawing.cursor = { x: ep.x, y: ep.y };
+                if(endpointOverrideActive){
+                  endpointOverrideActive = false;
+                  if(updateOrthoButtonVisual) updateOrthoButtonVisual();
+                }
+              }
+              renderDrawing(); redraw();
+            } else if(mode === 'place' && placeType){
               const at = { x: ep.x, y: ep.y };
               let rot = 0;
               if(isTwoPinType(placeType)){
