@@ -1276,24 +1276,51 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             themeBtn.addEventListener('click', toggleTheme);
         }
     })(); // ====== Component Drawing ======
+    /**
+     * Get absolute pin positions for a component.
+     * Supports both legacy (calculated from type) and new (arbitrary pin definitions) modes.
+     *
+     * For backward compatibility: if c.pins is undefined, calculates pins from component type.
+     * If c.pins is defined, transforms the pin positions by component rotation and position.
+     */
     function compPinPositions(c) {
-        // two-pin components: pins at +/- 2*GRID along the component rotation axis
+        // NEW: If component has explicit pin definitions, use those
+        if (c.pins && c.pins.length > 0) {
+            const r = ((c.rot % 360) + 360) % 360;
+            return c.pins.map(pin => {
+                // Transform pin position from component-relative to absolute coordinates
+                const rotated = rotatePoint({ x: c.x + pin.x, y: c.y + pin.y }, { x: c.x, y: c.y }, r);
+                return {
+                    x: rotated.x,
+                    y: rotated.y,
+                    name: pin.name || pin.id,
+                    id: pin.id,
+                    electricalType: pin.electricalType
+                };
+            });
+        }
+        // LEGACY: Calculate pin positions from component type (backward compatible)
         const r = ((c.rot % 360) + 360) % 360;
-        if (c.type === 'npn' || c.type === 'pnp') { // base at center; collector top; emitter bottom (before rotation)
-            const pins = [{ name: 'B', x: c.x, y: c.y }, { name: 'C', x: c.x, y: c.y - 2 * GRID }, { name: 'E', x: c.x, y: c.y + 2 * GRID }];
-            return pins.map(p => rotatePoint(p, { x: c.x, y: c.y }, r));
+        if (c.type === 'npn' || c.type === 'pnp') {
+            // base at center; collector top; emitter bottom (before rotation)
+            const pins = [
+                { name: 'B', id: 'B', x: c.x, y: c.y, electricalType: 'input' },
+                { name: 'C', id: 'C', x: c.x, y: c.y - 2 * GRID, electricalType: 'passive' },
+                { name: 'E', id: 'E', x: c.x, y: c.y + 2 * GRID, electricalType: 'passive' }
+            ];
+            return pins.map(p => ({ ...rotatePoint(p, { x: c.x, y: c.y }, r), name: p.name, id: p.id, electricalType: p.electricalType }));
         }
         else if (c.type === 'ground') {
             // single pin at top of ground symbol
-            return [{ name: 'G', x: c.x, y: c.y - 2 }];
+            return [{ name: 'G', id: 'G', x: c.x, y: c.y - 2, electricalType: 'power_in' }];
         }
         else {
             // Generic 2-pin (resistor, capacitor, inductor, diode, battery, ac)
             const L = 2 * GRID;
             const rad = r * Math.PI / 180;
             const ux = Math.cos(rad), uy = Math.sin(rad);
-            const a = { x: c.x - L * ux, y: c.y - L * uy, name: 'A' };
-            const b = { x: c.x + L * ux, y: c.y + L * uy, name: 'B' };
+            const a = { x: c.x - L * ux, y: c.y - L * uy, name: '1', id: '1', electricalType: 'passive' };
+            const b = { x: c.x + L * ux, y: c.y + L * uy, name: '2', id: '2', electricalType: 'passive' };
             return [a, b];
         }
     }

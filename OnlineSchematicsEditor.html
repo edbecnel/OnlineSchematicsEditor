@@ -14,8 +14,8 @@
     }
     /* Light theme */
     [data-theme="light"]{
-      --bg:#F0F0F0; --panel:#ffffff; --ink:#333333; --muted:#666666; --accent:#0ea5e9; --danger:#dc2626; --ok:#16a34a;
-      --grid:#d1d5db; --grid-bold:#9ca3af; --wire:#000000; --select:#f59e0b; --pin:#3b82f6; --component:#1f2937; --ghost:#6b7280;
+      --bg:#e8e8e8; --panel:#f5f5f5; --ink:#333333; --muted:#666666; --accent:#0ea5e9; --danger:#dc2626; --ok:#059669;
+      --grid:#c8ccd0; --grid-bold:#9ca3af; --wire:#000000; --select:#f59e0b; --pin:#3b82f6; --component:#1f2937; --ghost:#6b7280;
     }
     html, body {height:100%;}
     body{margin:0; font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color:var(--ink); background:var(--bg);}
@@ -49,7 +49,7 @@
     [data-theme="light"] button:disabled:hover{border-color:#d1d5db;}
     button.active{outline:2px solid var(--accent);}
     button.danger{border-color:#623; color:#ffb3c7}
-    button.ok{border-color:#1b3; color:#bff7d0}
+    button.ok{border-color:#1b3; color:var(--ok)}
     button svg{display:block;}
     /* Resizable panels */
     .panel{background:var(--panel); display:flex; flex-direction:column; overflow:hidden; position:relative; transition:width 0.2s ease; min-height:0;}
@@ -216,15 +216,15 @@
     </div>
     <div class="group">
       <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 7 L3 3 L7 3" />
-          <path d="M3 3 Q3 3, 5 5 Q7 7, 10 7 Q13 7, 13 10 Q13 13, 10 13" />
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 14L4 9L9 4" />
+          <path d="M20 20V14.5C20 11.4624 17.5376 9 14.5 9H4" />
         </svg>
       </button>
       <button id="redoBtn" title="Redo (Ctrl+Y)" disabled>
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M13 7 L13 3 L9 3" />
-          <path d="M13 3 Q13 3, 11 5 Q9 7, 6 7 Q3 7, 3 10 Q3 13, 6 13" />
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 14L20 9L15 4" />
+          <path d="M4 20V14.5C4 11.4624 6.46243 9 9.5 9H20" />
         </svg>
       </button>
     </div>

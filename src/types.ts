@@ -32,6 +32,35 @@ export type Selection =
 
 export type DiodeSubtype = 'generic' | 'schottky' | 'zener' | 'led' | 'photo' | 'tunnel' | 'varactor' | 'laser';
 
+export type PinElectricalType = 'input' | 'output' | 'bidirectional' | 'power_in' | 'power_out' | 'passive' | 'unspecified';
+
+/**
+ * Pin definition for components with arbitrary pin counts.
+ * Position is relative to component origin (x, y) and will be transformed by component rotation.
+ */
+export interface Pin {
+  id: string;                    // pin number/name: "1", "2", "A", "B", "C", "E", etc.
+  x: number;                     // relative X position from component center (before rotation)
+  y: number;                     // relative Y position from component center (before rotation)
+  rotation: number;              // pin orientation in degrees (0, 90, 180, 270)
+  electricalType: PinElectricalType; // KiCad-compatible electrical type
+  name?: string;                 // optional human-readable name ("VCC", "GND", "OUT", etc.)
+  visible?: boolean;             // whether pin number/name is visible on schematic (default true)
+}
+
+/**
+ * Graphic element for component symbols (lines, rectangles, circles, arcs, polygons, text)
+ */
+export type GraphicElement = 
+  | { type: 'line'; x1: number; y1: number; x2: number; y2: number; stroke?: string; strokeWidth?: number }
+  | { type: 'rectangle'; x: number; y: number; width: number; height: number; fill?: string; stroke?: string; strokeWidth?: number }
+  | { type: 'circle'; cx: number; cy: number; r: number; fill?: string; stroke?: string; strokeWidth?: number }
+  | { type: 'arc'; cx: number; cy: number; r: number; startAngle: number; endAngle: number; stroke?: string; strokeWidth?: number }
+  | { type: 'polyline'; points: Point[]; fill?: string; stroke?: string; strokeWidth?: number }
+  | { type: 'polygon'; points: Point[]; fill?: string; stroke?: string; strokeWidth?: number }
+  | { type: 'path'; d: string; fill?: string; stroke?: string; strokeWidth?: number }
+  | { type: 'text'; x: number; y: number; text: string; fontSize?: number; anchor?: 'start' | 'middle' | 'end' };
+
 export interface Component {
   id: string;
   type: PlaceType;
@@ -46,6 +75,14 @@ export interface Component {
     voltage?: number;        // battery/AC source voltage
     [k: string]: any;        // future-safe
   };
+  
+  // NEW: Arbitrary pin support (backward compatible - undefined means use legacy pin calculation)
+  pins?: Pin[];              // if defined, use these pins instead of computing from type
+  graphics?: GraphicElement[]; // if defined, render these graphics instead of built-in symbol
+  
+  // Symbol library metadata (for imported components)
+  libraryId?: string;        // reference to symbol library
+  symbolName?: string;       // original symbol name from library
 }
 
 // ====== KiCad-friendly Stroke Types ======
