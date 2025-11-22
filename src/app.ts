@@ -4534,6 +4534,7 @@ let marquee: {
               c.props.capacitorStyle = defaultResistorStyle;
             }
             redrawCanvasOnly();
+            renderInspector(); // Refresh inspector to show/hide Standard selector
           };
           wrap.appendChild(rowPair('Subtype', subSel));
           
