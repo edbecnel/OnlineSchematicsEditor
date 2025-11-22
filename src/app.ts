@@ -1443,18 +1443,20 @@ let marquee: {
     hit.setAttribute('fill','transparent');
     g.appendChild(hit);
 
-    // pins
-    compPinPositions(c).forEach((p,idx)=>{
-      const pin = document.createElementNS('http://www.w3.org/2000/svg','circle');
-      setAttr(pin, 'cx', p.x); setAttr(pin, 'cy', p.y);
-      setAttr(pin, 'r', 3);      
-      pin.setAttribute('fill', 'var(--pin)');
-      // 1px outline for contrast (especially against white wires). Non-scaling via global CSS.
-      pin.setAttribute('stroke', 'var(--bg)');
-      pin.setAttribute('stroke-width', '1');
-      pin.setAttribute('data-pin', String(idx));
-      g.appendChild(pin);
-    });
+    // Pin position markers (green squares for connection points - only in Select/Wire modes)
+    if(mode === 'select' || mode === 'wire'){
+      compPinPositions(c).forEach((p,idx)=>{
+        const pin = document.createElementNS('http://www.w3.org/2000/svg','rect');
+        setAttr(pin, 'x', p.x - 3); setAttr(pin, 'y', p.y - 3);
+        setAttr(pin, 'width', 6); setAttr(pin, 'height', 6);
+        pin.setAttribute('fill', 'none'); // Unfilled
+        pin.setAttribute('stroke', '#22c55e'); // Green stroke
+        pin.setAttribute('stroke-width', '1.5');
+        pin.setAttribute('data-pin', String(idx));
+        pin.setAttribute('pointer-events', 'none');
+        g.appendChild(pin);
+      });
+    }
 
     // hover cue
     g.addEventListener('pointerenter', ()=>{ g.classList.add('comp-hover'); });
@@ -1620,11 +1622,7 @@ let marquee: {
     const line = (x1,y1,x2,y2)=>{ const ln = document.createElementNS('http://www.w3.org/2000/svg','line'); ln.setAttribute('x1',x1); ln.setAttribute('y1',y1); ln.setAttribute('x2',x2); ln.setAttribute('y2',y2); ln.setAttribute('stroke','var(--component)'); ln.setAttribute('stroke-width','2'); return add(ln); };
     const path = (d)=>{ const p=document.createElementNS('http://www.w3.org/2000/svg','path'); p.setAttribute('d',d); p.setAttribute('fill','none'); p.setAttribute('stroke','var(--component)'); p.setAttribute('stroke-width','2'); return add(p); };
 
-    // two-pin lead stubs (skip for resistor and capacitor - handled specially)
-    if(['inductor','diode','battery','ac'].includes(c.type)){
-      const ax = c.x - 48, bx = c.x + 48, y = c.y;
-      line(ax, y, ax+12, y); line(bx-12, y, bx, y);
-    }
+    // Lead stubs removed - components now draw directly to pin positions (±48)
     if(c.type==='resistor'){
       // Determine resistor style: component override or project default
       const style = (c.props?.resistorStyle) || defaultResistorStyle;
@@ -1632,14 +1630,11 @@ let marquee: {
       const ax = c.x - 48, bx = c.x + 48;
       
       if(style === 'iec') {
-        // IEC rectangular resistor symbol (36x24 rectangle centered at x,y)
-        // Lead wires connect directly to rectangle edges (no gaps)
-        line(ax, y, x - 18, y);  // left wire to left edge of rectangle
-        line(x + 18, y, bx, y);  // right edge of rectangle to right wire
+        // IEC rectangular resistor symbol spanning full width (no lead wires)
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', String(x - 18));
+        rect.setAttribute('x', String(ax));
         rect.setAttribute('y', String(y - 12));
-        rect.setAttribute('width', '36');
+        rect.setAttribute('width', '96');
         rect.setAttribute('height', '24');
         rect.setAttribute('rx', '1');
         rect.setAttribute('stroke', 'var(--component)');
@@ -1647,10 +1642,9 @@ let marquee: {
         rect.setAttribute('fill', 'none');
         add(rect);
       } else {
-        // US/ANSI zigzag resistor symbol with lead wires
-        line(ax, y, ax+12, y); line(bx-12, y, bx, y);
-        // Double height zigzag (from ±6 to ±12)
-        path(`M ${x-36} ${y} H ${x-27} L ${x-22.5} ${y-12} L ${x-13.5} ${y+12} L ${x-4.5} ${y-12} L ${x+4.5} ${y+12} L ${x+13.5} ${y-12} L ${x+22.5} ${y+12} L ${x+27} ${y} H ${x+36}`);
+        // US/ANSI zigzag resistor spanning full width to pins (no lead wires)
+        // Zigzag pattern extends from pin to pin
+        path(`M ${ax} ${y} H ${x-39} L ${x-33} ${y-12} L ${x-21} ${y+12} L ${x-9} ${y-12} L ${x+3} ${y+12} L ${x+15} ${y-12} L ${x+27} ${y+12} L ${x+33} ${y} H ${bx}`);
       }
     }
     if(c.type==='capacitor'){
@@ -1665,10 +1659,10 @@ let marquee: {
         if(style === 'iec') {
           // IEC polarized: two straight plates with +/- marks
           const x1=x-6, x2=x+6;
-          line(ax, y, x1, y);       // left wire to left plate
+          line(x-48, y, x1, y);       // left wire from pin to left plate
           line(x1, y-16, x1, y+16);   // left plate (positive) - doubled height
           line(x2, y-16, x2, y+16);   // right plate (negative) - doubled height
-          line(x2, y, bx, y);       // right plate to right wire
+          line(x2, y, x+48, y);       // right plate to right wire pin
           // Plus sign near positive plate (doubled size, moved further from plate)
           line(x-18, y-24, x-18, y-12);   // vertical (12px tall)
           line(x-24, y-18, x-12, y-18); // horizontal (12px wide)
@@ -1677,12 +1671,12 @@ let marquee: {
         } else {
           // ANSI polarized: straight positive plate + curved negative plate
           const x1=x-8, x2=x+8;
-          line(ax, y, x1, y);       // left wire to positive plate
+          line(x-48, y, x1, y);       // left wire from pin to positive plate
           line(x1, y-16, x1, y+16);   // positive plate (straight) - doubled height
           // Curved negative plate (using quadratic bezier) - doubled height
           const curveLeft = x2 - 6;
           path(`M ${x2} ${y-16} Q ${curveLeft} ${y} ${x2} ${y+16}`);
-          line(x2, y, bx, y);       // negative plate to right wire
+          line(x2, y, x+48, y);       // negative plate to right wire pin
           // Plus sign near positive plate (doubled size, moved further from plate)
           line(x-20, y-24, x-20, y-12);   // vertical (12px tall)
           line(x-26, y-18, x-14, y-18); // horizontal (12px wide)
@@ -1690,15 +1684,23 @@ let marquee: {
       } else {
         // Standard non-polarized capacitor with longer plates (no gaps)
         const x1=x-6, x2=x+6;
-        line(ax, y, x1, y);       // left wire to left plate
+        line(x-48, y, x1, y);       // left wire from pin to left plate
         line(x1, y-16, x1, y+16);   // left plate - doubled height
         line(x2, y-16, x2, y+16);   // right plate - doubled height
-        line(x2, y, bx, y);       // right plate to right wire
+        line(x2, y, x+48, y);       // right plate to right wire pin
       }
     }
     if(c.type==='inductor'){
-      const y=c.y, start=c.x-28, r=8; let d=`M ${start} ${y}`;
-      for(let i=0;i<5;i++) d += ` q ${r} -${r} ${r*2} 0`;
+      // Inductor coils spanning full width to pins
+      const y=c.y, ax=c.x-48, bx=c.x+48;
+      const totalWidth = 96; // bx - ax
+      const r = 8; // coil radius
+      const numCoils = 6;
+      const coilWidth = totalWidth / numCoils;
+      let d = `M ${ax} ${y}`;
+      for(let i=0; i<numCoils; i++){
+        d += ` q ${coilWidth/2} -${r} ${coilWidth} 0`;
+      }
       path(d);
     }
     if(c.type==='diode'){
@@ -1745,13 +1747,21 @@ let marquee: {
       gg.appendChild(minusText);
     }
     if(c.type==='ac'){
+      const ax=c.x-48, bx=c.x+48, y=c.y;
+      // Circle spanning most of width with minimal leads
+      const radius = 40;
+      // Minimal leads
+      line(ax, y, c.x-radius, y);
+      line(c.x+radius, y, bx, y);
+      // Circle
       const circ = document.createElementNS('http://www.w3.org/2000/svg','circle');
       setAttr(circ, 'cx', c.x);
       setAttr(circ, 'cy', c.y);
-      setAttr(circ, 'r', 14);
+      setAttr(circ, 'r', radius);
       circ.setAttribute('fill','none'); circ.setAttribute('stroke','var(--component)'); circ.setAttribute('stroke-width','2');
       gg.appendChild(circ);
-      path(`M ${c.x-10} ${c.y} q 5 -8 10 0 q 5 8 10 0`);
+      // Sine wave inside circle (scaled up)
+      path(`M ${c.x-30} ${c.y} q 15 -20 30 0 q 15 20 30 0`);
     }
     if(c.type==='npn' || c.type==='pnp'){
       const x=c.x, y=c.y, arrowOut = c.type==='npn';
@@ -1793,11 +1803,14 @@ let marquee: {
     const mk = (tag)=> document.createElementNS('http://www.w3.org/2000/svg', tag);
     const lineEl = (x1,y1,x2,y2,w=sw)=>{ const ln=mk('line'); ln.setAttribute('x1',x1); ln.setAttribute('y1',y1); ln.setAttribute('x2',x2); ln.setAttribute('y2',y2); ln.setAttribute('stroke',stroke); ln.setAttribute('stroke-width',w); ln.setAttribute('fill','none'); return add(ln); };
     const pathEl = (d,w=sw)=>{ const p=mk('path'); p.setAttribute('d',d); p.setAttribute('stroke',stroke); p.setAttribute('stroke-width',w); p.setAttribute('fill','none'); return add(p); };
-    // Base geometry around center
-    const y=c.y, xTri=c.x-24;
-    // Triangle (anode) and bar (cathode)
-    pathEl(`M ${xTri} ${y-16} L ${xTri} ${y+16} L ${c.x} ${y} Z`);
-    lineEl(c.x+8, y-16, c.x+8, y+16); // cathode bar
+    // Diode spanning full width (no lead wires)
+    const y=c.y, ax=c.x-48, bx=c.x+48;
+    // Triangle from left pin to center
+    pathEl(`M ${ax} ${y} L ${ax} ${y-16} L ${c.x} ${y} L ${ax} ${y+16} Z`);
+    // Cathode bar at right pin
+    lineEl(bx, y-16, bx, y+16);
+    // Horizontal line from triangle tip to cathode
+    lineEl(c.x, y, bx, y);
     // Subtype adorners near cathode side
     const cx=c.x+8, cy=y;
     const addArrow = (outward=true)=>{
@@ -1899,6 +1912,24 @@ let marquee: {
 
       g.appendChild(hit);
       g.appendChild(vis);
+      
+      // Green squares at wire endpoints for connection points (only in Select/Wire modes)
+      if ((mode === 'select' || mode === 'wire') && w.points.length >= 2) {
+        const endpoints = [w.points[0], w.points[w.points.length - 1]];
+        endpoints.forEach(pt => {
+          const square = document.createElementNS('http://www.w3.org/2000/svg','rect');
+          setAttr(square, 'x', pt.x - 3);
+          setAttr(square, 'y', pt.y - 3);
+          setAttr(square, 'width', 6);
+          setAttr(square, 'height', 6);
+          square.setAttribute('fill', 'none'); // Unfilled
+          square.setAttribute('stroke', '#22c55e'); // Green stroke
+          square.setAttribute('stroke-width', '1.5');
+          square.setAttribute('pointer-events', 'none');
+          g.appendChild(square);
+        });
+      }
+      
       // persistent selection highlight for the selected wire segment
       if (selection.kind === 'wire' && selection.id === w.id) {
         if (w.points.length >= 2) {
@@ -1930,16 +1961,33 @@ let marquee: {
       gJunctions.appendChild(dot);
     }
     
-    // Draw junction dots at wire endpoints if enabled
+    // Draw junction dots at wire endpoints and component pins if enabled
     if(showJunctionDots){
       const scale = svg.clientWidth / Math.max(1, viewW);
       const dotRadius = 3 / scale; // 3 screen pixels
+      
+      // Wire endpoint dots
       for(const w of wires){
         if(w.points.length < 2) continue;
         // Draw dots at first and last points
         for(const pt of [w.points[0], w.points[w.points.length - 1]]){
           const dot = document.createElementNS('http://www.w3.org/2000/svg','circle');
           setAttr(dot, 'cx', pt.x); setAttr(dot, 'cy', pt.y);
+          setAttr(dot, 'r', dotRadius);
+          dot.setAttribute('fill', 'white');
+          dot.setAttribute('stroke', 'black');
+          dot.setAttribute('stroke-width', String(1 / scale)); // 1 screen pixel
+          dot.setAttribute('pointer-events', 'none');
+          gJunctions.appendChild(dot);
+        }
+      }
+      
+      // Component pin dots
+      for(const c of components){
+        const pins = compPinPositions(c);
+        for(const pin of pins){
+          const dot = document.createElementNS('http://www.w3.org/2000/svg','circle');
+          setAttr(dot, 'cx', pin.x); setAttr(dot, 'cy', pin.y);
           setAttr(dot, 'r', dotRadius);
           dot.setAttribute('fill', 'white');
           dot.setAttribute('stroke', 'black');
