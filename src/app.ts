@@ -1617,11 +1617,20 @@ let marquee: {
       const ax = c.x - 50, bx = c.x + 50;
       
       if(style === 'iec') {
-        // IEC rectangular resistor symbol spanning full width (no lead wires)
+        // IEC rectangular resistor symbol with lead wires
+        const rectWidth = 60; // Rectangle width
+        const rectLeft = x - rectWidth/2;
+        const rectRight = x + rectWidth/2;
+        
+        // Lead wires from pins to rectangle
+        line(ax, y, rectLeft, y);  // left lead
+        line(rectRight, y, bx, y); // right lead
+        
+        // Rectangle body
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', String(ax));
+        rect.setAttribute('x', String(rectLeft));
         rect.setAttribute('y', String(y - 12));
-        rect.setAttribute('width', '100');
+        rect.setAttribute('width', String(rectWidth));
         rect.setAttribute('height', '24');
         rect.setAttribute('rx', '1');
         rect.setAttribute('stroke', 'var(--component)');
