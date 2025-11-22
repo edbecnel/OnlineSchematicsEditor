@@ -131,8 +131,8 @@
     <h2>Placing Components</h2>
     <h3>Component Types</h3>
     <ul>
-      <li><b>Resistor (1):</b> Two-terminal resistor</li>
-      <li><b>Capacitor (2):</b> Two-terminal capacitor</li>
+      <li><b>Resistor (1):</b> Two-terminal resistor with IEC (rectangular) or ANSI (zigzag) styles. Symbol height has been doubled for better visibility.</li>
+      <li><b>Capacitor (2):</b> Two-terminal capacitor. Press <span class="kbd">Alt+C</span> to toggle between standard and polarized subtypes. Symbol height has been doubled for better visibility.</li>
       <li><b>Inductor (3):</b> Two-terminal inductor</li>
       <li><b>Diode (4):</b> Two-terminal diode with multiple subtypes</li>
       <li><b>NPN (5):</b> NPN bipolar transistor (3 pins)</li>
@@ -150,6 +150,14 @@
       <li>Click to place the component</li>
       <li>Two-pin components auto-align to nearby wires</li>
     </ol>
+
+    <h3>Capacitor Subtypes</h3>
+    <p>Capacitors support two subtypes, selectable via buttons in the component palette:</p>
+    <ul>
+      <li><b>Standard (C):</b> Non-polarized capacitor with two parallel plates</li>
+      <li><b>Polarized (Alt+C):</b> Electrolytic/tantalum capacitor with polarity markings (+ and −). Style (IEC or ANSI) follows the project's resistor style setting.</li>
+    </ul>
+    <p class="tip"><i>Tip:</i> Use polarized capacitors for electrolytics and tantalum capacitors; use standard for ceramic and film capacitors.</p>
 
     <h3>Diode Subtypes</h3>
     <p>When Diode is selected, a dropdown appears with these options:</p>
@@ -223,6 +231,21 @@
       <li>When drawing wires or placing components, current cursor position appears in upper left</li>
       <li>Shows snapped coordinates in your chosen units</li>
       <li>Format: <code>x, y units</code></li>
+      <li>Automatically adjusts contrast for light and dark themes for optimal readability</li>
+    </ul>
+
+    <h3>Connection Squares</h3>
+    <ul>
+      <li><b>Visual Indicators:</b> Green squares appear at all wire endpoints and component pins during Select, Wire, and Place modes</li>
+      <li><b>Zoom-Responsive Size:</b> Connection squares automatically scale based on zoom level:
+        <ul>
+          <li>9 pixels at normal zoom (≥75%)</li>
+          <li>7 pixels when zoomed out below 75%</li>
+          <li>6 pixels at maximum zoom-out (25%)</li>
+        </ul>
+      </li>
+      <li><b>Clickable:</b> Click any connection square to start a wire or place a component at that exact location</li>
+      <li><b>Precise Connections:</b> Connection squares ensure wires connect exactly to component pins and other wire endpoints</li>
     </ul>
 
     <h2>Zoom &amp; Navigation</h2>
@@ -233,6 +256,13 @@
       <li><b>− button:</b> Zoom out</li>
       <li><b>100% button:</b> Reset zoom and pan to default</li>
       <li><b>Zoom range:</b> 25% to 1000%</li>
+      <li><b>Visual Consistency:</b> Crosshairs, connection hints, and connection squares maintain appropriate visual thickness at all zoom levels:
+        <ul>
+          <li>Crosshairs remain 1 pixel wide regardless of zoom</li>
+          <li>Connection hint lines remain 2 pixels wide regardless of zoom</li>
+          <li>Connection squares scale proportionally to reduce clutter when zoomed out</li>
+        </ul>
+      </li>
     </ul>
 
     <h3>Panning</h3>
@@ -417,6 +447,12 @@
       <li><span class="kbd">1-9</span> — Place component</li>
     </ul>
 
+    <h3>Component Shortcuts</h3>
+    <ul>
+      <li><span class="kbd">C</span> — Place standard capacitor</li>
+      <li><span class="kbd">Alt+C</span> — Place polarized capacitor</li>
+    </ul>
+
     <h3>Actions</h3>
     <ul>
       <li><span class="kbd">R</span> — Rotate selected component 90° clockwise</li>
@@ -442,15 +478,17 @@
       <li><b>Start with components:</b> Place all components before wiring</li>
       <li><b>Use labels:</b> Assign reference designators (R1, C1, etc.) to all components</li>
       <li><b>Name important nets:</b> Use meaningful names like VCC, GND, CLK for clarity</li>
-      <li><b>Zoom for precision:</b> Use 1000% zoom to verify 50 mil grid alignment</li>
+      <li><b>Zoom for precision:</b> Use 1000% zoom to verify 50 mil grid alignment - components and connection points are now precisely aligned to the grid</li>
       <li><b>Ortho mode for neatness:</b> Enable orthogonal wiring for cleaner schematics</li>
       <li><b>Use tracking:</b> Enable connection hints to easily align wires with existing endpoints</li>
       <li><b>Snap to wires:</b> Click anywhere along a wire to start a new connection (T-junction)</li>
-      <li><b>Connection squares:</b> Click green endpoint markers for precise connections, even at non-orthogonal angles</li>
+      <li><b>Connection squares:</b> Click green endpoint markers for precise connections - they show exactly where wires will connect</li>
+      <li><b>Capacitor types:</b> Use <span class="kbd">C</span> for standard capacitors and <span class="kbd">Alt+C</span> for polarized capacitors</li>
       <li><b>Check connectivity:</b> Review the net list before export</li>
       <li><b>Save frequently:</b> Use Ctrl+S to save your work regularly</li>
       <li><b>Use wire colors:</b> Color-code power, ground, and signal wires for readability</li>
       <li><b>Grid modes:</b> Switch between Lines and Dots to suit your preference - they're perfectly aligned</li>
+      <li><b>Component visibility:</b> Resistor and capacitor symbols are now twice their original size for better visibility and easier selection</li>
     </ul>
 
     <h2>Troubleshooting</h2>
