@@ -1443,20 +1443,7 @@ let marquee: {
     hit.setAttribute('fill','transparent');
     g.appendChild(hit);
 
-    // Pin position markers (green squares for connection points - only in Select/Wire modes)
-    if(mode === 'select' || mode === 'wire'){
-      compPinPositions(c).forEach((p,idx)=>{
-        const pin = document.createElementNS('http://www.w3.org/2000/svg','rect');
-        setAttr(pin, 'x', p.x - 3); setAttr(pin, 'y', p.y - 3);
-        setAttr(pin, 'width', 6); setAttr(pin, 'height', 6);
-        pin.setAttribute('fill', 'none'); // Unfilled
-        pin.setAttribute('stroke', '#22c55e'); // Green stroke
-        pin.setAttribute('stroke-width', '1.5');
-        pin.setAttribute('data-pin', String(idx));
-        pin.setAttribute('pointer-events', 'none');
-        g.appendChild(pin);
-      });
-    }
+    // Pin markers removed - drawn centrally to avoid duplicates
 
     // hover cue
     g.addEventListener('pointerenter', ()=>{ g.classList.add('comp-hover'); });
@@ -1875,8 +1862,8 @@ let marquee: {
       vis.setAttribute('fill','none');
       vis.setAttribute('stroke', rgba01ToCss(eff.color));
       vis.setAttribute('stroke-width', String(mmToPx(eff.width))); // default 0.25mm -> 1px
-      vis.setAttribute('stroke-linecap','round');
-      vis.setAttribute('stroke-linejoin','round');
+      vis.setAttribute('stroke-linecap','butt');
+      vis.setAttribute('stroke-linejoin','miter');
       const dashes = dashArrayFor(eff.type);
       if (dashes) vis.setAttribute('stroke-dasharray', dashes); else vis.removeAttribute('stroke-dasharray');
       vis.setAttribute('points', w.points.map(p=>`${p.x},${p.y}`).join(' '));
@@ -1913,22 +1900,7 @@ let marquee: {
       g.appendChild(hit);
       g.appendChild(vis);
       
-      // Green squares at wire endpoints for connection points (only in Select/Wire modes)
-      if ((mode === 'select' || mode === 'wire') && w.points.length >= 2) {
-        const endpoints = [w.points[0], w.points[w.points.length - 1]];
-        endpoints.forEach(pt => {
-          const square = document.createElementNS('http://www.w3.org/2000/svg','rect');
-          setAttr(square, 'x', pt.x - 3);
-          setAttr(square, 'y', pt.y - 3);
-          setAttr(square, 'width', 6);
-          setAttr(square, 'height', 6);
-          square.setAttribute('fill', 'none'); // Unfilled
-          square.setAttribute('stroke', '#22c55e'); // Green stroke
-          square.setAttribute('stroke-width', '1.5');
-          square.setAttribute('pointer-events', 'none');
-          g.appendChild(square);
-        });
-      }
+      // Wire endpoint markers removed - drawn centrally to avoid duplicates
       
       // persistent selection highlight for the selected wire segment
       if (selection.kind === 'wire' && selection.id === w.id) {
@@ -1997,6 +1969,48 @@ let marquee: {
         }
       }
     }
+    
+    // Connection squares (green outlines) at all connection points in Select/Wire modes
+    if(mode === 'select' || mode === 'wire'){
+      // Collect all unique connection points
+      const connectionPoints = new Set<string>();
+      const addPoint = (x: number, y: number) => {
+        connectionPoints.add(`${x},${y}`);
+      };
+      
+      // Add component pins
+      for(const c of components){
+        const pins = compPinPositions(c);
+        for(const pin of pins){
+          addPoint(pin.x, pin.y);
+        }
+      }
+      
+      // Add wire endpoints
+      for(const w of wires){
+        if(w.points.length >= 2){
+          addPoint(w.points[0].x, w.points[0].y);
+          addPoint(w.points[w.points.length-1].x, w.points[w.points.length-1].y);
+        }
+      }
+      
+      // Draw squares at unique positions
+      const scale = svg.clientWidth / Math.max(1, viewW);
+      connectionPoints.forEach(pointStr => {
+        const [x, y] = pointStr.split(',').map(Number);
+        const square = document.createElementNS('http://www.w3.org/2000/svg','rect');
+        setAttr(square, 'x', x - 3);
+        setAttr(square, 'y', y - 3);
+        setAttr(square, 'width', 6);
+        setAttr(square, 'height', 6);
+        square.setAttribute('fill', 'none');
+        square.setAttribute('stroke', '#22c55e');
+        square.setAttribute('stroke-width', String(1.5 / scale)); // Fixed screen size
+        square.setAttribute('pointer-events', 'none');
+        gJunctions.appendChild(square);
+      });
+    }
+    
     updateSelectionOutline();    
     updateCounts();
     renderNetList();
