@@ -32,6 +32,7 @@ export type Selection =
 
 export type DiodeSubtype = 'generic' | 'schottky' | 'zener' | 'led' | 'photo' | 'tunnel' | 'varactor' | 'laser';
 export type ResistorStyle = 'ansi' | 'iec';
+export type CapacitorSubtype = 'standard' | 'polarized';
 
 export type PinElectricalType = 'input' | 'output' | 'bidirectional' | 'power_in' | 'power_out' | 'passive' | 'unspecified';
 
@@ -73,7 +74,9 @@ export interface Component {
   props?: {
     unit?: string;           // Ω / F / H symbol for R/C/L
     subtype?: DiodeSubtype;  // diode subtype
+    capacitorSubtype?: CapacitorSubtype; // capacitor subtype (standard/polarized)
     resistorStyle?: ResistorStyle; // resistor representation (ansi/iec), overrides project default
+    capacitorStyle?: ResistorStyle; // polarized capacitor representation (ansi/iec), overrides project default
     voltage?: number;        // battery/AC source voltage
     [k: string]: any;        // future-safe
   };

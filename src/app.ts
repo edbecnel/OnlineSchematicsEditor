@@ -14,7 +14,7 @@ import * as Constants from './constants.js';
 import type { ClientXYEvent } from './utils.js';
 
 import type {
-  Point, Axis, Mode, PlaceType, CounterKey, Selection, DiodeSubtype, ResistorStyle,
+  Point, Axis, Mode, PlaceType, CounterKey, Selection, DiodeSubtype, ResistorStyle, CapacitorSubtype,
   Component, RGBA01, StrokeType, Stroke, Wire, WireColorMode,
   NetClass, Theme, Junction, SWPEdge, SWP, Topology,
   MoveCollapseCtx, KWire
@@ -512,6 +512,7 @@ let marquee: {
 
   // Palette state: diode subtype selection
   let diodeSubtype: DiodeSubtype = 'generic';
+  let capacitorSubtype: CapacitorSubtype = 'standard';
 
   // Wire color state: default from CSS var, and current palette choice (affects new wires only)
   const defaultWireColor: string = (getComputedStyle(document.documentElement).getPropertyValue('--wire').trim() || '#c7f284');
@@ -1619,8 +1620,8 @@ let marquee: {
     const line = (x1,y1,x2,y2)=>{ const ln = document.createElementNS('http://www.w3.org/2000/svg','line'); ln.setAttribute('x1',x1); ln.setAttribute('y1',y1); ln.setAttribute('x2',x2); ln.setAttribute('y2',y2); ln.setAttribute('stroke','var(--component)'); ln.setAttribute('stroke-width','2'); return add(ln); };
     const path = (d)=>{ const p=document.createElementNS('http://www.w3.org/2000/svg','path'); p.setAttribute('d',d); p.setAttribute('fill','none'); p.setAttribute('stroke','var(--component)'); p.setAttribute('stroke-width','2'); return add(p); };
 
-    // two-pin lead stubs (skip for resistor - handled specially based on style)
-    if(['capacitor','inductor','diode','battery','ac'].includes(c.type)){
+    // two-pin lead stubs (skip for resistor and capacitor - handled specially)
+    if(['inductor','diode','battery','ac'].includes(c.type)){
       const ax = c.x - 48, bx = c.x + 48, y = c.y;
       line(ax, y, ax+12, y); line(bx-12, y, bx, y);
     }
@@ -1654,9 +1655,47 @@ let marquee: {
       }
     }
     if(c.type==='capacitor'){
-      const y=c.y, x1=c.x-8, x2=c.x+8;
-      line(x1, y-16, x1, y+16);
-      line(x2, y-16, x2, y+16);
+      const subtype = (c.props?.capacitorSubtype) || 'standard';
+      const y=c.y, x=c.x;
+      const ax = c.x - 48, bx = c.x + 48;
+      
+      if(subtype === 'polarized') {
+        // Polarized capacitor - style depends on schematic standard
+        const style = (c.props?.capacitorStyle) || defaultResistorStyle;
+        
+        if(style === 'iec') {
+          // IEC polarized: two straight plates with +/- marks
+          const x1=x-6, x2=x+6;
+          line(ax, y, x1, y);       // left wire to left plate
+          line(x1, y-8, x1, y+8);   // left plate (positive)
+          line(x2, y-8, x2, y+8);   // right plate (negative)
+          line(x2, y, bx, y);       // right plate to right wire
+          // Plus sign near positive plate
+          line(x-14, y-6, x-14, y);   // vertical
+          line(x-17, y-3, x-11, y-3); // horizontal
+          // Minus sign near negative plate
+          line(x+10, y-3, x+16, y-3); // horizontal bar
+        } else {
+          // ANSI polarized: straight positive plate + curved negative plate
+          const x1=x-8, x2=x+8;
+          line(ax, y, x1, y);       // left wire to positive plate
+          line(x1, y-8, x1, y+8);   // positive plate (straight)
+          // Curved negative plate (using quadratic bezier)
+          const curveLeft = x2 - 6;
+          path(`M ${x2} ${y-8} Q ${curveLeft} ${y} ${x2} ${y+8}`);
+          line(x2, y, bx, y);       // negative plate to right wire
+          // Plus sign near positive plate
+          line(x-16, y-6, x-16, y);   // vertical
+          line(x-19, y-3, x-13, y-3); // horizontal
+        }
+      } else {
+        // Standard non-polarized capacitor with longer plates (no gaps)
+        const x1=x-6, x2=x+6;
+        line(ax, y, x1, y);       // left wire to left plate
+        line(x1, y-8, x1, y+8);   // left plate
+        line(x2, y-8, x2, y+8);   // right plate
+        line(x2, y, bx, y);       // right plate to right wire
+      }
     }
     if(c.type==='inductor'){
       const y=c.y, start=c.x-28, r=8; let d=`M ${start} ${y}`;
@@ -1997,6 +2036,12 @@ let marquee: {
               const comp: Component = { id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType]-1}`, value: '', props: {} };
               if (placeType === 'diode') (comp.props as Component['props']).subtype = diodeSubtype as DiodeSubtype;
               if (placeType === 'resistor') (comp.props as Component['props']).resistorStyle = defaultResistorStyle;
+              if (placeType === 'capacitor') {
+                (comp.props as Component['props']).capacitorSubtype = capacitorSubtype;
+                if (capacitorSubtype === 'polarized') {
+                  (comp.props as Component['props']).capacitorStyle = defaultResistorStyle;
+                }
+              }
               pushUndo();
               components.push(comp);
               breakWiresForComponent(comp);
@@ -2635,6 +2680,12 @@ let marquee: {
       }
       if (placeType === 'resistor') {
         (comp.props as Component['props']).resistorStyle = defaultResistorStyle;
+      }
+      if (placeType === 'capacitor') {
+        (comp.props as Component['props']).capacitorSubtype = capacitorSubtype;
+        if (capacitorSubtype === 'polarized') {
+          (comp.props as Component['props']).capacitorStyle = defaultResistorStyle;
+        }
       }
       components.push(comp);
       // Break wires at pins and remove inner bridge segment for 2-pin parts
@@ -3566,14 +3617,18 @@ let marquee: {
   }
   window.addEventListener('resize', ()=>{ if(paletteRow2.style.display!=='none') positionSubtypeDropdown(); });
 
-  // Show only while placing diode; hide otherwise.
+  // Show subtype row for diode or capacitor placement
   function updateSubtypeVisibility(){
     if(!paletteRow2) return;
-    const show = (mode === 'place' && placeType === 'diode');
+    const show = (mode === 'place' && (placeType === 'diode' || placeType === 'capacitor'));
     if (show){
       paletteRow2.style.display = 'block';
       const ds = document.getElementById('diodeSelect') as HTMLSelectElement | null;
-      if (ds) ds.value = diodeSubtype;
+      const cs = document.getElementById('capacitorSelect') as HTMLSelectElement | null;
+      if (ds) ds.style.display = (placeType === 'diode') ? 'inline-block' : 'none';
+      if (cs) cs.style.display = (placeType === 'capacitor') ? 'inline-block' : 'none';
+      if (ds && placeType === 'diode') ds.value = diodeSubtype;
+      if (cs && placeType === 'capacitor') cs.value = capacitorSubtype;
       positionSubtypeDropdown();
     } else {
       paletteRow2.style.display = 'none';
@@ -3598,16 +3653,17 @@ let marquee: {
     if(!btn) return;
     placeType = (btn.dataset.tool as PlaceType | undefined) || placeType;
     setMode('place');
-    // Reveal sub-type row only for types that have subtypes (currently: diode)
-    if (placeType === 'diode') {
+    // Reveal sub-type row for types that have subtypes (diode, capacitor)
+    if (placeType === 'diode' || placeType === 'capacitor') {
       paletteRow2.style.display = 'block';
-      // keep dropdown reflecting last chosen subtype
-      const ds = document.getElementById('diodeSelect') as HTMLSelectElement | null; if (ds) ds.value = diodeSubtype;
+      const ds = document.getElementById('diodeSelect') as HTMLSelectElement | null;
+      const cs = document.getElementById('capacitorSelect') as HTMLSelectElement | null;
+      if (ds) ds.value = diodeSubtype;
+      if (cs) cs.value = capacitorSubtype;
       positionSubtypeDropdown();
     } else {
       paletteRow2.style.display = 'none';
     }
-    // Show only for diode; hide for all others
     updateSubtypeVisibility();        
   });
   // Diode subtype select → enter Place mode for diode using chosen subtype
@@ -3623,6 +3679,23 @@ let marquee: {
     // clicking the dropdown should also arm diode placement without changing the value
     diodeSel.addEventListener('mousedown', ()=>{
       placeType='diode'; setMode('place');
+      paletteRow2.style.display = 'block';
+      positionSubtypeDropdown();
+      updateSubtypeVisibility();
+    });
+  }
+  
+  // Capacitor subtype select → enter Place mode for capacitor using chosen subtype
+  const capacitorSel = $q<HTMLSelectElement>('#capacitorSelect');
+  if (capacitorSel){
+    capacitorSel.value = capacitorSubtype;
+    capacitorSel.addEventListener('change', ()=>{
+      capacitorSubtype = (capacitorSel.value as CapacitorSubtype) || 'standard';
+      placeType = 'capacitor'; setMode('place');
+      updateSubtypeVisibility();     
+    });
+    capacitorSel.addEventListener('mousedown', ()=>{
+      placeType='capacitor'; setMode('place');
       paletteRow2.style.display = 'block';
       positionSubtypeDropdown();
       updateSubtypeVisibility();
@@ -4332,6 +4405,51 @@ let marquee: {
             redrawCanvasOnly();
           };
           wrap.appendChild(rowPair('Standard', styleSel));
+        }
+        
+        // Capacitor subtype and style selectors (only for capacitors)
+        if(c.type === 'capacitor') {
+          const subSel = document.createElement('select');
+          const stdOpt = document.createElement('option');
+          stdOpt.value = 'standard';
+          stdOpt.textContent = 'Standard';
+          const polOpt = document.createElement('option');
+          polOpt.value = 'polarized';
+          polOpt.textContent = 'Polarized';
+          subSel.appendChild(stdOpt);
+          subSel.appendChild(polOpt);
+          subSel.value = c.props.capacitorSubtype || 'standard';
+          subSel.onchange = () => {
+            pushUndo();
+            if (!c.props) c.props = {};
+            c.props.capacitorSubtype = subSel.value as CapacitorSubtype;
+            if (subSel.value === 'polarized' && !c.props.capacitorStyle) {
+              c.props.capacitorStyle = defaultResistorStyle;
+            }
+            redrawCanvasOnly();
+          };
+          wrap.appendChild(rowPair('Subtype', subSel));
+          
+          // Style selector for polarized capacitors
+          if (c.props.capacitorSubtype === 'polarized') {
+            const styleSel = document.createElement('select');
+            const ansiOpt = document.createElement('option');
+            ansiOpt.value = 'ansi';
+            ansiOpt.textContent = 'ANSI/IEEE (US)';
+            const iecOpt = document.createElement('option');
+            iecOpt.value = 'iec';
+            iecOpt.textContent = 'IEC (International)';
+            styleSel.appendChild(ansiOpt);
+            styleSel.appendChild(iecOpt);
+            styleSel.value = c.props.capacitorStyle || defaultResistorStyle;
+            styleSel.onchange = () => {
+              pushUndo();
+              if (!c.props) c.props = {};
+              c.props.capacitorStyle = styleSel.value as ResistorStyle;
+              redrawCanvasOnly();
+            };
+            wrap.appendChild(rowPair('Standard', styleSel));
+          }
         }
       } else if (c.type==='diode'){
         // Value (optional text) for diode
