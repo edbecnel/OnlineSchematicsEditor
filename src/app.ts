@@ -3558,11 +3558,11 @@ let marquee: {
       hintLine.setAttribute('data-hint','1');
       hintLine.setAttribute('stroke','#00ff00'); // bright green
       
-      // Calculate stroke width that scales with zoom to stay visible
+      // Use constant stroke width in SVG units for consistent appearance
       const scale = svg.clientWidth / Math.max(1, viewW);
-      const strokeWidth = 2 / scale; // 2 screen pixels for better visibility
-      const dashLength = 10 / scale; // 10 screen pixels for dashes
-      const dashGap = 5 / scale; // 5 screen pixels for gaps
+      const strokeWidth = 2; // 2 SVG units (constant visual width)
+      const dashLength = 10; // 10 SVG units for dashes
+      const dashGap = 5; // 5 SVG units for gaps
       
       hintLine.setAttribute('stroke-width', String(strokeWidth));
       hintLine.setAttribute('stroke-dasharray', `${dashLength},${dashGap}`);
@@ -3599,7 +3599,7 @@ let marquee: {
       const halfLenPixels = 40;
       const scale = svg.clientWidth / Math.max(1, viewW);
       const halfLen = halfLenPixels / scale; // Convert to SVG user coordinates
-      const strokeWidth = 1 / scale; // 1 screen pixel
+      const strokeWidth = 1; // 1 SVG unit (constant visual width)
       const xL = x - halfLen, xR = x + halfLen;
       const yT = y - halfLen, yB = y + halfLen;
       setAttr(hline, 'x1', xL); setAttr(hline, 'y1', y);
@@ -3619,7 +3619,7 @@ let marquee: {
     } else {
       // Full-screen crosshair: span the visible viewBox, same styling as short
       const scale = svg.clientWidth / Math.max(1, viewW);
-      const strokeWidth = 1 / scale; // 1 screen pixel (same as short)
+      const strokeWidth = 1; // 1 SVG unit (constant visual width, same as short)
       const xL = viewX, xR = viewX + viewW;
       const yT = viewY, yB = viewY + viewH;
       setAttr(hline, 'x1', xL); setAttr(hline, 'y1', y);
