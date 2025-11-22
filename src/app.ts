@@ -1632,15 +1632,15 @@ let marquee: {
       const ax = c.x - 48, bx = c.x + 48;
       
       if(style === 'iec') {
-        // IEC rectangular resistor symbol (36x12 rectangle centered at x,y)
+        // IEC rectangular resistor symbol (36x24 rectangle centered at x,y)
         // Lead wires connect directly to rectangle edges (no gaps)
         line(ax, y, x - 18, y);  // left wire to left edge of rectangle
         line(x + 18, y, bx, y);  // right edge of rectangle to right wire
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         rect.setAttribute('x', String(x - 18));
-        rect.setAttribute('y', String(y - 6));
+        rect.setAttribute('y', String(y - 12));
         rect.setAttribute('width', '36');
-        rect.setAttribute('height', '12');
+        rect.setAttribute('height', '24');
         rect.setAttribute('rx', '1');
         rect.setAttribute('stroke', 'var(--component)');
         rect.setAttribute('stroke-width', '2');
@@ -1649,9 +1649,8 @@ let marquee: {
       } else {
         // US/ANSI zigzag resistor symbol with lead wires
         line(ax, y, ax+12, y); line(bx-12, y, bx, y);
-        // Scale factor: original was 64px wide, we need 72px, so scale by 1.125
-        // Original path: M2 12H10L14 6L22 18L30 6L38 18L46 6L54 18L58 12H62
-        path(`M ${x-36} ${y} H ${x-27} L ${x-22.5} ${y-6} L ${x-13.5} ${y+6} L ${x-4.5} ${y-6} L ${x+4.5} ${y+6} L ${x+13.5} ${y-6} L ${x+22.5} ${y+6} L ${x+27} ${y} H ${x+36}`);
+        // Double height zigzag (from ±6 to ±12)
+        path(`M ${x-36} ${y} H ${x-27} L ${x-22.5} ${y-12} L ${x-13.5} ${y+12} L ${x-4.5} ${y-12} L ${x+4.5} ${y+12} L ${x+13.5} ${y-12} L ${x+22.5} ${y+12} L ${x+27} ${y} H ${x+36}`);
       }
     }
     if(c.type==='capacitor'){
@@ -1667,33 +1666,33 @@ let marquee: {
           // IEC polarized: two straight plates with +/- marks
           const x1=x-6, x2=x+6;
           line(ax, y, x1, y);       // left wire to left plate
-          line(x1, y-8, x1, y+8);   // left plate (positive)
-          line(x2, y-8, x2, y+8);   // right plate (negative)
+          line(x1, y-16, x1, y+16);   // left plate (positive) - doubled height
+          line(x2, y-16, x2, y+16);   // right plate (negative) - doubled height
           line(x2, y, bx, y);       // right plate to right wire
-          // Plus sign near positive plate
-          line(x-14, y-6, x-14, y);   // vertical
-          line(x-17, y-3, x-11, y-3); // horizontal
-          // Minus sign near negative plate
-          line(x+10, y-3, x+16, y-3); // horizontal bar
+          // Plus sign near positive plate (doubled size, moved further from plate)
+          line(x-18, y-24, x-18, y-12);   // vertical (12px tall)
+          line(x-24, y-18, x-12, y-18); // horizontal (12px wide)
+          // Minus sign near negative plate (doubled size, moved further from plate)
+          line(x+12, y-18, x+24, y-18); // horizontal bar (12px wide)
         } else {
           // ANSI polarized: straight positive plate + curved negative plate
           const x1=x-8, x2=x+8;
           line(ax, y, x1, y);       // left wire to positive plate
-          line(x1, y-8, x1, y+8);   // positive plate (straight)
-          // Curved negative plate (using quadratic bezier)
+          line(x1, y-16, x1, y+16);   // positive plate (straight) - doubled height
+          // Curved negative plate (using quadratic bezier) - doubled height
           const curveLeft = x2 - 6;
-          path(`M ${x2} ${y-8} Q ${curveLeft} ${y} ${x2} ${y+8}`);
+          path(`M ${x2} ${y-16} Q ${curveLeft} ${y} ${x2} ${y+16}`);
           line(x2, y, bx, y);       // negative plate to right wire
-          // Plus sign near positive plate
-          line(x-16, y-6, x-16, y);   // vertical
-          line(x-19, y-3, x-13, y-3); // horizontal
+          // Plus sign near positive plate (doubled size, moved further from plate)
+          line(x-20, y-24, x-20, y-12);   // vertical (12px tall)
+          line(x-26, y-18, x-14, y-18); // horizontal (12px wide)
         }
       } else {
         // Standard non-polarized capacitor with longer plates (no gaps)
         const x1=x-6, x2=x+6;
         line(ax, y, x1, y);       // left wire to left plate
-        line(x1, y-8, x1, y+8);   // left plate
-        line(x2, y-8, x2, y+8);   // right plate
+        line(x1, y-16, x1, y+16);   // left plate - doubled height
+        line(x2, y-16, x2, y+16);   // right plate - doubled height
         line(x2, y, bx, y);       // right plate to right wire
       }
     }
@@ -3176,6 +3175,23 @@ let marquee: {
     }    
     if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); saveJSON(); }
     if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); clearAll(); }
+    
+    // Component placement shortcuts
+    if(e.key.toLowerCase()==='c' && !isEditingKeystrokesTarget(e)){
+      e.preventDefault();
+      if(e.altKey){
+        // Alt+C = Polarized Capacitor
+        capacitorSubtype = 'polarized';
+      } else {
+        // C = Standard Capacitor
+        capacitorSubtype = 'standard';
+      }
+      updateCapacitorButtonIcon();
+      updateCapacitorSubtypeButtons();
+      placeType = 'capacitor';
+      setMode('place');
+    }
+    
     // Quick debug dump: press 'D' (when not focused on an input) to log anchors/overlays
     if(e.key.toLowerCase()==='d' && !isEditingKeystrokesTarget(e)){
       e.preventDefault(); debugDumpAnchors();
@@ -3607,11 +3623,17 @@ let marquee: {
   function positionSubtypeDropdown(){
     if(!paletteRow2) return;
     const headerEl = document.querySelector('header');
-    const diodeBtn = document.querySelector('#paletteRow1 button[data-tool="diode"]');
-    if(!headerEl || !diodeBtn) return;
+    // Position under the active button (diode or capacitor)
+    let activeBtn: Element | null = null;
+    if(placeType === 'diode') {
+      activeBtn = document.querySelector('#paletteRow1 button[data-tool="diode"]');
+    } else if(placeType === 'capacitor') {
+      activeBtn = document.querySelector('#paletteRow1 button[data-tool="capacitor"]');
+    }
+    if(!headerEl || !activeBtn) return;
     const hb = headerEl.getBoundingClientRect();
-    const bb = diodeBtn.getBoundingClientRect();
-    // Position just under the Diode button, with a small vertical gap
+    const bb = activeBtn.getBoundingClientRect();
+    // Position just under the active button, with a small vertical gap
     paletteRow2.style.left = (bb.left - hb.left) + 'px';
     paletteRow2.style.top  = (bb.bottom - hb.top + 6) + 'px';
   }
@@ -3624,11 +3646,11 @@ let marquee: {
     if (show){
       paletteRow2.style.display = 'block';
       const ds = document.getElementById('diodeSelect') as HTMLSelectElement | null;
-      const cs = document.getElementById('capacitorSelect') as HTMLSelectElement | null;
+      const capacitorSubtypes = document.querySelector('.capacitor-subtypes') as HTMLElement | null;
       if (ds) ds.style.display = (placeType === 'diode') ? 'inline-block' : 'none';
-      if (cs) cs.style.display = (placeType === 'capacitor') ? 'inline-block' : 'none';
+      if (capacitorSubtypes) capacitorSubtypes.style.display = (placeType === 'capacitor') ? 'flex' : 'none';
       if (ds && placeType === 'diode') ds.value = diodeSubtype;
-      if (cs && placeType === 'capacitor') cs.value = capacitorSubtype;
+      if (capacitorSubtypes && placeType === 'capacitor') updateCapacitorSubtypeButtons();
       positionSubtypeDropdown();
     } else {
       paletteRow2.style.display = 'none';
@@ -3642,7 +3664,9 @@ let marquee: {
       const btn = (e.target as Element | null)?.closest('button') as HTMLButtonElement | null;
       if (!btn) return;    
       const isDiodeBtn = btn.matches('#paletteRow1 button[data-tool="diode"]');
-      if(!isDiodeBtn){
+      const isCapacitorBtn = btn.matches('#paletteRow1 button[data-tool="capacitor"]');
+      const isSubtypeBtn = btn.closest('#paletteRow2');
+      if(!isDiodeBtn && !isCapacitorBtn && !isSubtypeBtn){
         paletteRow2.style.display = 'none';
       }
     }, true);
@@ -3685,22 +3709,103 @@ let marquee: {
     });
   }
   
-  // Capacitor subtype select → enter Place mode for capacitor using chosen subtype
-  const capacitorSel = $q<HTMLSelectElement>('#capacitorSelect');
-  if (capacitorSel){
-    capacitorSel.value = capacitorSubtype;
-    capacitorSel.addEventListener('change', ()=>{
-      capacitorSubtype = (capacitorSel.value as CapacitorSubtype) || 'standard';
-      placeType = 'capacitor'; setMode('place');
-      updateSubtypeVisibility();     
-    });
-    capacitorSel.addEventListener('mousedown', ()=>{
-      placeType='capacitor'; setMode('place');
-      paletteRow2.style.display = 'block';
-      positionSubtypeDropdown();
-      updateSubtypeVisibility();
+  // Update capacitor toolbar button icon based on selected subtype
+  function updateCapacitorButtonIcon() {
+    const capacitorBtn = document.querySelector('#paletteRow1 button[data-tool="capacitor"]');
+    if (!capacitorBtn) return;
+    
+    const svg = capacitorBtn.querySelector('svg');
+    if (!svg) return;
+    
+    if (capacitorSubtype === 'polarized') {
+      // Polarized capacitor icon - ANSI style (straight + curved)
+      if (defaultResistorStyle === 'iec') {
+        // IEC: two straight plates
+        svg.innerHTML = `
+          <path d="M2 12H26" />
+          <path d="M26 4V20" />
+          <path d="M38 4V20" />
+          <path d="M38 12H62" />
+        `.trim();
+      } else {
+        // ANSI: straight + curved
+        svg.innerHTML = `
+          <path d="M2 12H26" />
+          <path d="M26 4V20" />
+          <path d="M38 4 Q 32 12 38 20" />
+          <path d="M38 12H62" />
+        `.trim();
+      }
+    } else {
+      // Standard capacitor icon (two straight plates)
+      svg.innerHTML = `
+        <path d="M2 12H26" />
+        <path d="M26 4V20" />
+        <path d="M38 4V20" />
+        <path d="M38 12H62" />
+      `.trim();
+    }
+  }
+
+  // Capacitor subtype buttons → enter Place mode for capacitor using chosen subtype
+  function updateCapacitorSubtypeButtons() {
+    const standardBtn = document.getElementById('capacitorStandard');
+    const polarizedBtn = document.getElementById('capacitorPolarized');
+    if (standardBtn) {
+      standardBtn.classList.toggle('active', capacitorSubtype === 'standard');
+    }
+    if (polarizedBtn) {
+      polarizedBtn.classList.toggle('active', capacitorSubtype === 'polarized');
+      // Update polarized button icon based on schematic standard
+      const svg = polarizedBtn.querySelector('svg');
+      if (svg) {
+        if (defaultResistorStyle === 'iec') {
+          // IEC: two straight plates
+          svg.innerHTML = `
+            <path d="M2 12H26" />
+            <path d="M26 4V20" />
+            <path d="M38 4V20" />
+            <path d="M38 12H62" />
+          `.trim();
+        } else {
+          // ANSI: straight + curved
+          svg.innerHTML = `
+            <path d="M2 12H26" />
+            <path d="M26 4V20" />
+            <path d="M38 4 Q 32 12 38 20" />
+            <path d="M38 12H62" />
+          `.trim();
+        }
+      }
+    }
+  }
+
+  const capacitorStandardBtn = document.getElementById('capacitorStandard');
+  const capacitorPolarizedBtn = document.getElementById('capacitorPolarized');
+  
+  if (capacitorStandardBtn) {
+    capacitorStandardBtn.addEventListener('click', () => {
+      capacitorSubtype = 'standard';
+      updateCapacitorButtonIcon();
+      updateCapacitorSubtypeButtons();
+      placeType = 'capacitor';
+      setMode('place');
     });
   }
+  
+  if (capacitorPolarizedBtn) {
+    capacitorPolarizedBtn.addEventListener('click', () => {
+      capacitorSubtype = 'polarized';
+      updateCapacitorButtonIcon();
+      updateCapacitorSubtypeButtons();
+      placeType = 'capacitor';
+      setMode('place');
+    });
+  }
+  
+  // Initialize capacitor button icon and subtype buttons on load
+  updateCapacitorButtonIcon();
+  updateCapacitorSubtypeButtons();
 
   document.getElementById('rotateBtn').addEventListener('click', rotateSelected);
   document.getElementById('clearBtn').addEventListener('click', clearAll);
@@ -4348,6 +4453,8 @@ let marquee: {
       defaultResistorStyle = style;
       localStorage.setItem('defaultResistorStyle', style);
       updateResistorToolbarIcon();
+      updateCapacitorButtonIcon();
+      updateCapacitorSubtypeButtons();
       // Note: Don't redraw canvas - only affects newly placed resistors
     });
   })();

@@ -37,6 +37,10 @@
       z-index:5;                    /* above header background */
     }
     #paletteRow2 select{ width:auto; white-space:nowrap; }
+    /* Capacitor subtype buttons */
+    .capacitor-subtypes{ display: flex; gap: .25rem; }
+    .capacitor-subtypes button{ padding: .35rem .5rem; min-width: 48px; }
+    .capacitor-subtypes button svg{ width: 32px; height: 16px; }
   header .group{display:flex; gap:.15rem; align-items:center; background:#0e1219; padding:.22rem; border-radius:10px; border:1px solid #1e2430; position:relative}
     [data-theme="light"] header .group{background:#e5e7eb; border:1px solid #d1d5db;}
     button{appearance:none; background:#0e1219; border:1px solid #273042; color:var(--ink); padding:.45rem .6rem; border-radius:8px; cursor:pointer; font-size:.92rem}
@@ -264,10 +268,24 @@
         <option value="varactor">Varactor / Varicap</option>
         <option value="laser">Laser</option>
       </select>
-      <select id="capacitorSelect" title="Capacitor subtype">
-        <option value="standard" selected>Standard</option>
-        <option value="polarized">Polarized</option>
-      </select>
+      <div class="capacitor-subtypes">
+        <button id="capacitorStandard" data-subtype="standard" title="Standard Capacitor">
+          <svg viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M2 12H26" />
+            <path d="M26 4V20" />
+            <path d="M38 4V20" />
+            <path d="M38 12H62" />
+          </svg>
+        </button>
+        <button id="capacitorPolarized" data-subtype="polarized" title="Polarized Capacitor">
+          <svg viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M2 12H26" />
+            <path d="M26 4V20" />
+            <path d="M38 4 Q 32 12 38 20" />
+            <path d="M38 12H62" />
+          </svg>
+        </button>
+      </div>
     </div>    
     <div class="group">
       <button id="rotateBtn" title="Rotate 90° (R)">Rotate</button>
