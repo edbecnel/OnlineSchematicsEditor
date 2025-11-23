@@ -143,7 +143,7 @@ type ConnectionHint = { lockedPt: Point; targetPt: Point; wasOrthoActive: boolea
 let connectionHint: ConnectionHint = null;
 // Visual shift indicator for temporary ortho mode
 let shiftOrthoVisualActive = false;
-// Visual indicator when endpoint square overrides ortho mode
+// Visual indicator when endpoint circle overrides ortho mode
 let endpointOverrideActive = false;
 
 // ================================================================================
@@ -188,7 +188,7 @@ let marquee: {
     viewH = viewW / aspect;              // compute height from live aspect
     svg.setAttribute('viewBox', `${viewX} ${viewY} ${viewW} ${viewH}`);
     redrawGrid();
-    // Re-render canvas overlays (endpoint squares, wires) so overlays stay aligned after zoom
+    // Re-render canvas overlays (endpoint circles, wires) so overlays stay aligned after zoom
     redrawCanvasOnly();
     updateZoomUI();
   }
@@ -1170,7 +1170,7 @@ let marquee: {
     const orthoBtn = document.getElementById('orthoToggleBtn') as HTMLButtonElement | null;
     function updateOrthoButton(){
       if(!orthoBtn) return;
-      // Show dimmed/inactive if endpoint square is overriding ortho
+      // Show dimmed/inactive if endpoint circle is overriding ortho
       if(endpointOverrideActive){
         orthoBtn.classList.remove('active');
         orthoBtn.style.opacity = '0.4';
@@ -1983,24 +1983,24 @@ let marquee: {
     updateCounts();
     renderNetList();
 
-    // Endpoint selection squares (overlay). Visible while placing wires or components
+    // Endpoint selection circles (overlay). Visible while placing wires or components
     // Remove any previous endpoint markers in the overlay
     try{
       $qa('[data-endpoint]', gOverlay).forEach(el => el.remove());
     }catch(_){ }
-    // Show endpoint squares while wiring, placing, or when Select is active
+    // Show endpoint circles while wiring, placing, or when Select is active
     if(mode === 'wire' || mode === 'place' || mode === 'select'){
       const ns = 'http://www.w3.org/2000/svg';
       for(const w of wires){
         if(!w.points || w.points.length < 2) continue;
         ensureStroke(w);
         const eff = effectiveStroke(w, netClassForWire(w), THEME);
-        // compute square size in user units: about 3x the visible stroke width (in px -> user units)
+        // compute circle diameter in user units: about 3x the visible stroke width (in px -> user units)
         const strokePx = Math.max(1, mmToPx(eff.width || 0.25));
         // convert px to user units: 1 user unit == 1 SVG coordinate; userScale = screen px per user unit
         const userPerPx = 1 / Math.max(1e-6, userScale());
         // Slightly reduce the visual prominence: use a smaller multiplier and
-        // a smaller minimum side so squares are less dominant.
+        // a smaller minimum diameter so circles are less dominant.
         const side = Math.max(3, Math.round(strokePx * 2.2 * userPerPx));
         const half = side / 2;
         const ends = [ w.points[0], w.points[w.points.length-1] ];
@@ -2012,86 +2012,78 @@ let marquee: {
             else if(zoom < 0.75) desiredScreenPx = 7;
             const scale = userScale(); // screen px per user unit
             const widthUser = desiredScreenPx / Math.max(1e-6, scale);
-            // Center the square directly on the actual wire point in SVG coordinates
+            // Center the circle directly on the actual wire point in SVG coordinates
             const rx = pt.x - widthUser / 2;
             const ry = pt.y - widthUser / 2;
-            const rect = document.createElementNS(ns, 'rect');
-            rect.setAttribute('data-endpoint', '1');
-            rect.setAttribute('x', String(rx)); rect.setAttribute('y', String(ry));
-            rect.setAttribute('width', String(widthUser)); rect.setAttribute('height', String(widthUser));
-            rect.setAttribute('fill', 'rgba(0,200,0,0.08)');
-            rect.setAttribute('stroke', 'lime'); rect.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
-          rect.style.cursor = 'pointer';
-          // Store the actual wire endpoint coordinates (not snapped) so connections align precisely
-          (rect as any).endpoint = { x: pt.x, y: pt.y };
-          (rect as any).wireId = w.id;
-          (rect as any).endpointIndex = ei; // 0=start, 1=end
-          // Click/tap behavior: snap to exact endpoint when placing wires/components
-          rect.addEventListener('pointerdown', (ev)=>{
-            const ep = (ev.currentTarget as any).endpoint as Point;
-            const wid = (ev.currentTarget as any).wireId as string | undefined;
-            // Prevent the event from bubbling up to the main SVG handler which
-            // also listens for pointerdown; overlay clicks must be handled here
-            // exclusively to guarantee canonical base-grid snapping.
-            ev.preventDefault(); ev.stopPropagation();
-            try{ console.debug('[overlay] endpoint-click', { ep, wireId: wid }); }catch(_){ }
-            if(mode === 'select'){
-              // In select mode, pick the wire segment corresponding to this endpoint
-              if(wid){ selection = { kind: 'wire', id: wid, segIndex: null }; renderInspector(); updateSelectionOutline(); }
-              return;
-            }
-            if(!ep) return;
-            if(mode === 'wire'){
-              // start or add a drawing point exactly at the endpoint
-              if(!drawing.active){ drawing.active = true; drawing.points = [{ x: ep.x, y: ep.y }]; drawing.cursor = { x: ep.x, y: ep.y }; }
-              else {
-                // Use exact endpoint coordinates - no ortho constraint when clicking connection squares
-                drawing.points.push({ x: ep.x, y: ep.y });
-                drawing.cursor = { x: ep.x, y: ep.y };
-                // Clear the override indicator that was set on hover
-                if(endpointOverrideActive){
-                  endpointOverrideActive = false;
-                  if(updateOrthoButtonVisual) updateOrthoButtonVisual();
+            const circle = document.createElementNS(ns, 'circle');
+            circle.setAttribute('data-endpoint', '1');
+            circle.setAttribute('cx', String(pt.x));
+            circle.setAttribute('cy', String(pt.y));
+            circle.setAttribute('r', String(widthUser / 2));
+            circle.setAttribute('fill', 'rgba(0,200,0,0.08)');
+            circle.setAttribute('stroke', 'lime');
+            circle.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
+            circle.style.cursor = 'pointer';
+            (circle as any).endpoint = { x: pt.x, y: pt.y };
+            (circle as any).wireId = w.id;
+            (circle as any).endpointIndex = ei; // 0=start, 1=end
+            circle.addEventListener('pointerdown', (ev)=>{
+              const ep = (ev.currentTarget as any).endpoint as Point;
+              const wid = (ev.currentTarget as any).wireId as string | undefined;
+              ev.preventDefault(); ev.stopPropagation();
+              try{ console.debug('[overlay] endpoint-click', { ep, wireId: wid }); }catch(_){ }
+              if(mode === 'select'){
+                if(wid){ selection = { kind: 'wire', id: wid, segIndex: null }; renderInspector(); updateSelectionOutline(); }
+                return;
+              }
+              if(!ep) return;
+              if(mode === 'wire'){
+                if(!drawing.active){ drawing.active = true; drawing.points = [{ x: ep.x, y: ep.y }]; drawing.cursor = { x: ep.x, y: ep.y }; }
+                else {
+                  drawing.points.push({ x: ep.x, y: ep.y });
+                  drawing.cursor = { x: ep.x, y: ep.y };
+                  if(endpointOverrideActive){
+                    endpointOverrideActive = false;
+                    if(updateOrthoButtonVisual) updateOrthoButtonVisual();
+                  }
                 }
-              }
-              renderDrawing(); redraw();
-            } else if(mode === 'place' && placeType){
-              // Place a component centered at the endpoint (mimic pointerdown place behavior)
-              const at = { x: ep.x, y: ep.y };
-              let rot = 0;
-              if(isTwoPinType(placeType)){
-                const hit = nearestSegmentAtPoint(at, 18);
-                if(hit){ rot = normDeg(hit.angle); }
-              }
-              const id = uid(placeType);
-              const labelPrefix = {resistor:'R', capacitor:'C', inductor:'L', diode:'D', npn:'Q', pnp:'Q', ground:'GND', battery:'BT', ac:'AC'}[placeType] || 'X';
-              const comp: Component = { id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType]-1}`, value: '', props: {} };
-              if (placeType === 'diode') (comp.props as Component['props']).subtype = diodeSubtype as DiodeSubtype;
-              if (placeType === 'resistor') (comp.props as Component['props']).resistorStyle = defaultResistorStyle;
-              if (placeType === 'capacitor') {
-                (comp.props as Component['props']).capacitorSubtype = capacitorSubtype;
-                if (capacitorSubtype === 'polarized') {
-                  (comp.props as Component['props']).capacitorStyle = defaultResistorStyle;
+                renderDrawing(); redraw();
+              } else if(mode === 'place' && placeType){
+                const at = { x: ep.x, y: ep.y };
+                let rot = 0;
+                if(isTwoPinType(placeType)){
+                  const hit = nearestSegmentAtPoint(at, 18);
+                  if(hit){ rot = normDeg(hit.angle); }
                 }
+                const id = uid(placeType);
+                const labelPrefix = {resistor:'R', capacitor:'C', inductor:'L', diode:'D', npn:'Q', pnp:'Q', ground:'GND', battery:'BT', ac:'AC'}[placeType] || 'X';
+                const comp: Component = { id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType]-1}`, value: '', props: {} };
+                if (placeType === 'diode') (comp.props as Component['props']).subtype = diodeSubtype as DiodeSubtype;
+                if (placeType === 'resistor') (comp.props as Component['props']).resistorStyle = defaultResistorStyle;
+                if (placeType === 'capacitor') {
+                  (comp.props as Component['props']).capacitorSubtype = capacitorSubtype;
+                  if (capacitorSubtype === 'polarized') {
+                    (comp.props as Component['props']).capacitorStyle = defaultResistorStyle;
+                  }
+                }
+                pushUndo();
+                components.push(comp);
+                breakWiresForComponent(comp);
+                if(isTwoPinType(placeType)) deleteBridgeBetweenPins(comp);
+                setMode('select'); placeType = null;
+                selection = { kind: 'component', id, segIndex: null };
+                redraw();
               }
-              pushUndo();
-              components.push(comp);
-              breakWiresForComponent(comp);
-              if(isTwoPinType(placeType)) deleteBridgeBetweenPins(comp);
-              setMode('select'); placeType = null;
-              selection = { kind: 'component', id, segIndex: null };
-              redraw();
-            }
-          });
-          gOverlay.appendChild(rect);
+            });
+            gOverlay.appendChild(circle);
         }
       }
       
-      // Also add endpoint squares for component pins
+      // Also add endpoint circles for component pins
       for(const c of components){
         const pins = compPinPositions(c);
         for(const pin of pins){
-          // Scale square size with zoom: 9px normal, 7px when < 75%, 6px when <= 25%
+          // Scale circle diameter with zoom: 9px normal, 7px when < 75%, 6px when <= 25%
           let desiredScreenPx = 9;
           if(zoom <= 0.25) desiredScreenPx = 6;
           else if(zoom < 0.75) desiredScreenPx = 7;
@@ -2099,19 +2091,18 @@ let marquee: {
           const widthUser = desiredScreenPx / Math.max(1e-6, scale);
           const rx = pin.x - widthUser / 2;
           const ry = pin.y - widthUser / 2;
-          const rect = document.createElementNS(ns, 'rect');
-          rect.setAttribute('data-endpoint', '1');
-          rect.setAttribute('x', String(rx));
-          rect.setAttribute('y', String(ry));
-          rect.setAttribute('width', String(widthUser));
-          rect.setAttribute('height', String(widthUser));
-          rect.setAttribute('fill', 'rgba(0,200,0,0.08)');
-          rect.setAttribute('stroke', 'lime');
-          rect.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
-          rect.style.cursor = 'pointer';
-          (rect as any).endpoint = { x: pin.x, y: pin.y };
-          (rect as any).componentId = c.id;
-          rect.addEventListener('pointerdown', (ev)=>{
+          const circle = document.createElementNS(ns, 'circle');
+          circle.setAttribute('data-endpoint', '1');
+          circle.setAttribute('cx', String(pin.x));
+          circle.setAttribute('cy', String(pin.y));
+          circle.setAttribute('r', String(widthUser / 2));
+          circle.setAttribute('fill', 'rgba(0,200,0,0.08)');
+          circle.setAttribute('stroke', 'lime');
+          circle.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
+          circle.style.cursor = 'pointer';
+          (circle as any).endpoint = { x: pin.x, y: pin.y };
+          (circle as any).componentId = c.id;
+          circle.addEventListener('pointerdown', (ev)=>{
             const ep = (ev.currentTarget as any).endpoint as Point;
             const cid = (ev.currentTarget as any).componentId as string | undefined;
             ev.preventDefault(); ev.stopPropagation();
@@ -2158,7 +2149,7 @@ let marquee: {
               redraw();
             }
           });
-          gOverlay.appendChild(rect);
+          gOverlay.appendChild(circle);
         }
       }
     }
@@ -2532,7 +2523,7 @@ let marquee: {
     for(const w of wires){
       if(!w.points || w.points.length<2) continue;
       const a = w.points[0], b = w.points[w.points.length-1];
-      // Use actual coordinates, not snapped, to match endpoint square storage
+      // Use actual coordinates, not snapped, to match endpoint circle storage
       out.push({ x: a.x, y: a.y });
       out.push({ x: b.x, y: b.y });
     }
@@ -2746,7 +2737,7 @@ let marquee: {
       }
     }catch(_){ }
     
-    // Check if clicking on an endpoint square - if so, use exact position without snapping
+    // Check if clicking on an endpoint circle - if so, use exact position without snapping
     const tgt = e.target as Element;
     let endpointClicked: Point | null = null;
     if(tgt && tgt.tagName === 'rect' && (tgt as any).endpoint){
@@ -2809,7 +2800,7 @@ let marquee: {
       if(!drawing.active){ 
         drawing.active=true; drawing.points=[{x,y}]; drawing.cursor={x,y};
       } else {
-        // Check if we clicked on an endpoint square (during drawing)
+        // Check if we clicked on an endpoint circle (during drawing)
         const tgt = e.target as Element;
         
         // Check if the target or any parent has endpoint data
@@ -2845,7 +2836,7 @@ let marquee: {
         
         let nx, ny;
         if(endpointData){
-          // Use the exact anchor position stored on the endpoint square - no ortho constraint
+          // Use the exact anchor position stored on the endpoint circle - no ortho constraint
           nx = endpointData.x;
           ny = endpointData.y;
         } else {
@@ -2895,7 +2886,7 @@ let marquee: {
       updateMarqueeTo(svgPoint(e));
     }  
     
-    // Check if hovering over an endpoint square that would create a non-orthogonal line
+    // Check if hovering over an endpoint circle that would create a non-orthogonal line
     if(mode === 'wire' && drawing.active && drawing.points.length > 0){
       const tgt = e.target as Element;
       if(tgt && tgt.tagName === 'rect' && (tgt as any).endpoint){
@@ -3528,27 +3519,22 @@ let marquee: {
       circle.setAttribute('stroke-width', String(1 / scale)); // 1 screen pixel
       gDrawing.appendChild(circle);
       
-      // Also draw green endpoint squares at each placed point
+      // Also draw green endpoint circles at each placed point
       // Scale with zoom: 9px normal, 7px when < 75%, 6px when <= 25%
       let desiredScreenPx = 9;
       if(zoom <= 0.25) desiredScreenPx = 6;
       else if(zoom < 0.75) desiredScreenPx = 7;
       const widthUser = desiredScreenPx / scale;
-      // Center the square directly on the actual wire point in SVG coordinates
-      const rx = pt.x - widthUser / 2;
-      const ry = pt.y - widthUser / 2;
-      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      rect.setAttribute('x', String(rx));
-      rect.setAttribute('y', String(ry));
-      rect.setAttribute('width', String(widthUser));
-      rect.setAttribute('height', String(widthUser));
-      rect.setAttribute('fill', 'rgba(0,200,0,0.08)');
-      rect.setAttribute('stroke', 'lime');
-      rect.setAttribute('stroke-width', String(1 / scale));
-      rect.style.cursor = 'pointer';
-      // Store actual coordinates (not snapped) so connections align precisely
-      (rect as any).endpoint = { x: pt.x, y: pt.y };
-      gDrawing.appendChild(rect);
+      const endpointCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      endpointCircle.setAttribute('cx', String(pt.x));
+      endpointCircle.setAttribute('cy', String(pt.y));
+      endpointCircle.setAttribute('r', String(widthUser / 2));
+      endpointCircle.setAttribute('fill', 'rgba(0,200,0,0.08)');
+      endpointCircle.setAttribute('stroke', 'lime');
+      endpointCircle.setAttribute('stroke-width', String(1 / scale));
+      endpointCircle.style.cursor = 'pointer';
+      (endpointCircle as any).endpoint = { x: pt.x, y: pt.y };
+      gDrawing.appendChild(endpointCircle);
     }
     
     // keep endpoint marker in sync with in-progress color

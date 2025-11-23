@@ -98,7 +98,7 @@
       <li>Hold <span class="kbd">Shift</span> while drawing to force horizontal/vertical segments</li>
       <li>Click the <b>Ortho</b> button in the status bar or press <span class="kbd">O</span> to enable orthogonal mode permanently</li>
       <li>Useful for creating neat, aligned schematics</li>
-      <li><b>Smart Override:</b> Clicking connection squares (green endpoint markers) bypasses ortho mode for precise connections to existing wire endpoints, even if they're not aligned horizontally or vertically</li>
+      <li><b>Smart Override:</b> Clicking connection circles (green endpoint markers) bypasses ortho mode for precise connections to existing wire endpoints, even if they're not aligned horizontally or vertically</li>
       <li><b>Visual Feedback:</b> The Ortho button dims when hovering over non-orthogonal endpoints, indicating the override will activate</li>
     </ul>
 
@@ -222,7 +222,7 @@
       <li><b>Grid:</b> Snap to currently visible grid lines or dots — spacing matches the Grid status (50 mil, 100 mil, or 250 mil depending on zoom level). Use this for faster rough layout at lower zoom levels.</li>
       <li><b>Off:</b> No snapping — free placement anywhere for custom positioning</li>
       <li><b>Wire Segment Priority:</b> When within 50 mils of any wire, snapping automatically locks to that wire, overriding the current snap mode</li>
-      <li><b>Connection Squares:</b> Green endpoint markers always connect to exact wire positions for precise connections</li>
+      <li><b>Connection Circles:</b> Green endpoint markers always connect to exact wire positions for precise connections</li>
       <li><b>Status Display:</b> Current snap mode shown in status bar (50mil, grid, or off)</li>
     </ul>
 
@@ -234,18 +234,18 @@
       <li>Automatically adjusts contrast for light and dark themes for optimal readability</li>
     </ul>
 
-    <h3>Connection Squares</h3>
+    <h3>Connection Circles</h3>
     <ul>
-      <li><b>Visual Indicators:</b> Green squares appear at all wire endpoints and component pins during Select, Wire, and Place modes</li>
-      <li><b>Zoom-Responsive Size:</b> Connection squares automatically scale based on zoom level:
+      <li><b>Visual Indicators:</b> Green circles appear at all wire endpoints and component pins during Select, Wire, and Place modes</li>
+      <li><b>Zoom-Responsive Size:</b> Connection circles automatically scale based on zoom level:
         <ul>
           <li>9 pixels at normal zoom (≥75%)</li>
           <li>7 pixels when zoomed out below 75%</li>
           <li>6 pixels at maximum zoom-out (25%)</li>
         </ul>
       </li>
-      <li><b>Clickable:</b> Click any connection square to start a wire or place a component at that exact location</li>
-      <li><b>Precise Connections:</b> Connection squares ensure wires connect exactly to component pins and other wire endpoints</li>
+      <li><b>Clickable:</b> Click any connection circle to start a wire or place a component at that exact location</li>
+      <li><b>Precise Connections:</b> Connection circles ensure wires connect exactly to component pins and other wire endpoints</li>
     </ul>
 
     <h2>Zoom &amp; Navigation</h2>
@@ -256,11 +256,11 @@
       <li><b>− button:</b> Zoom out</li>
       <li><b>100% button:</b> Reset zoom and pan to default</li>
       <li><b>Zoom range:</b> 25% to 1000%</li>
-      <li><b>Visual Consistency:</b> Crosshairs, connection hints, and connection squares maintain appropriate visual thickness at all zoom levels:
+      <li><b>Visual Consistency:</b> Crosshairs, connection hints, and connection circles maintain appropriate visual thickness at all zoom levels:
         <ul>
           <li>Crosshairs remain 1 pixel wide regardless of zoom</li>
           <li>Connection hint lines remain 2 pixels wide regardless of zoom</li>
-          <li>Connection squares scale proportionally to reduce clutter when zoomed out</li>
+          <li>Connection circles scale proportionally to reduce clutter when zoomed out</li>
         </ul>
       </li>
     </ul>
@@ -482,7 +482,7 @@
       <li><b>Ortho mode for neatness:</b> Enable orthogonal wiring for cleaner schematics</li>
       <li><b>Use tracking:</b> Enable connection hints to easily align wires with existing endpoints</li>
       <li><b>Snap to wires:</b> Click anywhere along a wire to start a new connection (T-junction)</li>
-      <li><b>Connection squares:</b> Click green endpoint markers for precise connections - they show exactly where wires will connect</li>
+      <li><b>Connection circles:</b> Click green endpoint markers for precise connections - they show exactly where wires will connect</li>
       <li><b>Capacitor types:</b> Use <span class="kbd">C</span> for standard capacitors and <span class="kbd">Alt+C</span> for polarized capacitors</li>
       <li><b>Check connectivity:</b> Review the net list before export</li>
       <li><b>Save frequently:</b> Use Ctrl+S to save your work regularly</li>
