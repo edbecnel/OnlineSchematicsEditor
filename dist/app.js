@@ -12,17 +12,6 @@ import * as Utils from './utils.js';
 import * as Constants from './constants.js';
 import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
 (function () {
-    // --- DEBUG: Force console.debug to always print ---
-    const FORCE_DEBUG_OUTPUT = true;
-    if (FORCE_DEBUG_OUTPUT && typeof console !== 'undefined') {
-        const origDebug = console.debug;
-        console.debug = function (...args) {
-            origDebug.apply(console, args);
-            if (typeof console.log === 'function') {
-                console.log('[DEBUG]', ...args);
-            }
-        };
-    }
     // --- Add UI for Place/Delete Junction Dot ---
     // Note: button event listener setup is done after setMode is defined (see attachJunctionDotButtons)
     // ====== Module Imports (re-export for internal use) ======
@@ -460,14 +449,14 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
     // --- Theme & NetClasses (moved early so redraw() doesn't hit TDZ) ---
     const THEME = {
         wire: { width: 0.25, type: 'solid', color: cssToRGBA01(defaultWireColor) },
-        junction: { size: 1.2, color: cssToRGBA01('#FFFFFF') }
+        junction: { size: 0.762, color: cssToRGBA01('#FFFFFF') }
     };
     const NET_CLASSES = {
         default: {
             id: 'default',
             name: 'Default',
             wire: { width: 0.25, type: 'solid', color: cssToRGBA01(defaultWireColor) },
-            junction: { size: 1.2, color: cssToRGBA01('#FFFFFF') }
+            junction: { size: 0.762, color: cssToRGBA01('#FFFFFF') }
         }
     };
     function netClassForWire(w) {
@@ -959,13 +948,11 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         const deleteJunctionBtn = document.getElementById('deleteJunctionDotBtn');
         if (placeJunctionBtn) {
             placeJunctionBtn.addEventListener('click', () => {
-                console.log('[Junction] Place Junction Dot button clicked, setting mode to place-junction');
                 setMode('place-junction');
             });
         }
         if (deleteJunctionBtn) {
             deleteJunctionBtn.addEventListener('click', () => {
-                console.log('[Junction] Delete Junction Dot button clicked, setting mode to delete-junction');
                 setMode('delete-junction');
             });
         }
@@ -975,7 +962,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         if (drawing.active && drawing.points.length > 0) {
             finishWire();
         }
-        console.log(`[Mode] Switching to mode: ${m}`);
         mode = m;
         overlayMode.textContent = m[0].toUpperCase() + m.slice(1);
         $qa('#modeGroup button').forEach(b => {
@@ -1012,6 +998,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             if (selection.kind === 'wire') {
                 const w = wires.find(x => x.id === selection.id);
                 if (w) {
+                    removeJunctionsAtWireEndpoints(w);
                     pushUndo();
                     wires = wires.filter(x => x.id !== w.id);
                     selection = { kind: null, id: null, segIndex: null };
@@ -1845,6 +1832,28 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 addArrow(true);
                 lineEl(cx + 14, cy - 14, cx + 14, cy + 14);
                 break;
+            case 'tvs_uni':
+                // Unidirectional TVS: small angled lines from top and bottom of cathode bar (like wings)
+                lineEl(bx, cy - 16, bx - 8, cy - 22);
+                lineEl(bx, cy + 16, bx - 8, cy + 22);
+                break;
+            case 'tvs_bi':
+                // Bidirectional TVS: two triangles pointing at each other with cathode bars on outside
+                // Clear the default diode elements first by not drawing them
+                // Remove all current children and redraw
+                while (gg.firstChild)
+                    gg.removeChild(gg.firstChild);
+                // Left cathode bar
+                lineEl(ax, cy - 16, ax, cy + 16);
+                // Left triangle (pointing right)
+                pathEl(`M ${ax} ${cy} L ${ax + 16} ${cy - 16} L ${ax + 16} ${cy + 16} Z`);
+                // Right triangle (pointing left)
+                pathEl(`M ${bx} ${cy} L ${bx - 16} ${cy - 16} L ${bx - 16} ${cy + 16} Z`);
+                // Right cathode bar
+                lineEl(bx, cy - 16, bx, cy + 16);
+                // Horizontal line connecting the triangles
+                lineEl(ax + 16, cy, bx - 16, cy);
+                break;
             case 'generic':
             default:
                 // no extra marks
@@ -1938,15 +1947,17 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         if (showJunctionDots) {
             for (const j of junctions) {
                 const nc = NET_CLASSES[j.netId || 'default'] || NET_CLASSES.default;
-                let baseSizeMm = (j.size != null ? j.size : nc.junction.size);
-                // Apply size multiplier based on junctionDotSize setting
-                const sizeMultiplier = junctionDotSize === 'small' ? 1 : junctionDotSize === 'medium' ? 2 : 3;
-                const sizeMm = baseSizeMm * sizeMultiplier;
+                // Custom sizes for better visibility: Small=50mils, Medium=70mils, Large=90mils (diameter)
+                const sizeMils = junctionDotSize === 'small' ? 50 : junctionDotSize === 'medium' ? 70 : 90;
+                const diameterMm = sizeMils * 0.0254; // Convert mils to mm
+                const radiusMm = diameterMm / 2;
+                // Use fractional pixels for better differentiation (SVG supports sub-pixel rendering)
+                const radiusPx = Math.max(1, radiusMm * (100 / 25.4));
                 const color = j.color ? j.color : rgba01ToCss(nc.junction.color);
                 const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                 setAttr(dot, 'cx', j.at.x);
                 setAttr(dot, 'cy', j.at.y);
-                setAttr(dot, 'r', Math.max(2, Math.round(mmToPx(sizeMm) / 2)));
+                setAttr(dot, 'r', radiusPx);
                 dot.setAttribute('fill', color);
                 dot.setAttribute('stroke', 'var(--bg)');
                 dot.setAttribute('stroke-width', '1');
@@ -2014,10 +2025,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                         }
                         ev.preventDefault();
                         ev.stopPropagation();
-                        try {
-                            console.debug('[overlay] endpoint-click', { ep, wireId: wid });
-                        }
-                        catch (_) { }
                         if (mode === 'select') {
                             if (wid) {
                                 selection = { kind: 'wire', id: wid, segIndex: null };
@@ -2266,8 +2273,9 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         // For per-segment wires, deleting the clicked segment removes the whole wire object.
         if (!w)
             return;
-        pushUndo();
         if (w.points.length === 2) {
+            removeJunctionsAtWireEndpoints(w);
+            pushUndo();
             wires = wires.filter(x => x.id !== w.id);
             selection = { kind: null, id: null, segIndex: null };
             normalizeAllWires();
@@ -2279,6 +2287,8 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         const idx = nearestSegmentIndex(w.points, p);
         if (idx < 0 || idx >= w.points.length - 1)
             return;
+        removeJunctionsAtWireEndpoints(w);
+        pushUndo();
         removeWireSegment(w, idx);
     }
     function removeWireSegment(w, idx) {
@@ -2538,6 +2548,30 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             return !isBridge;
         });
     }
+    // Remove junction dots at wire endpoints when a wire is deleted
+    // Only remove if no other wires will be connected to that point after deletion
+    function removeJunctionsAtWireEndpoints(w) {
+        if (!w.points || w.points.length < 2)
+            return;
+        const EPS = 1e-3;
+        const firstPt = w.points[0];
+        const lastPt = w.points[w.points.length - 1];
+        junctions = junctions.filter(j => {
+            const atFirst = Math.abs(j.at.x - firstPt.x) < EPS && Math.abs(j.at.y - firstPt.y) < EPS;
+            const atLast = Math.abs(j.at.x - lastPt.x) < EPS && Math.abs(j.at.y - lastPt.y) < EPS;
+            if (!atFirst && !atLast)
+                return true; // Keep junction if not at this wire's endpoints
+            // Check if any OTHER wires are connected to this junction point
+            const jPt = j.at;
+            const otherWiresConnected = wires.some(other => {
+                if (other.id === w.id)
+                    return false; // Skip the wire being deleted
+                return other.points.some(pt => Math.abs(pt.x - jPt.x) < EPS && Math.abs(pt.y - jPt.y) < EPS);
+            });
+            // Keep the junction if other wires are still connected
+            return otherWiresConnected;
+        });
+    }
     // ================================================================================
     // ====== 6. CORE RENDERING ======
     // ================================================================================
@@ -2603,14 +2637,11 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
     function debugDumpAnchors() {
         try {
             console.groupCollapsed('DEBUG Anchors Dump');
-            console.log('collectAnchors()', collectAnchors());
             const rects = $qa('[data-endpoint]', gOverlay).map(r => ({
                 endpoint: r.endpoint || null,
                 wireId: r.wireId || null,
                 bbox: r.getBBox()
             }));
-            console.log('overlayRects', rects);
-            console.log('wires endpoints', wires.map(w => ({ id: w.id, start: w.points?.[0] || null, end: w.points?.[w.points.length - 1] || null })));
             console.groupEnd();
         }
         catch (err) {
@@ -2811,86 +2842,96 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             : (mode === 'wire') ? snapPointPreferAnchor({ x: p.x, y: p.y }) : { x: snap(p.x), y: snap(p.y) };
         const x = snapCandDown.x, y = snapCandDown.y;
         if (mode === 'place-junction' && e.button === 0) {
-            // Place a junction dot at the clicked location (endpoint, intersection, or pin)
-            // Use 50 mil tolerance for picking
-            console.log('[Junction] Placing junction dot at', { x: p.x, y: p.y });
+            // Place a junction dot at the clicked location
             const TOL = 50; // mils
-            const tol = TOL * (NM_PER_MIL ? NM_PER_MIL : 1) / PX_PER_MM; // fallback if units missing
-            // Find the nearest candidate (wire endpoint, intersection, or pin)
-            let bestDist = Infinity;
+            const tol = TOL * 0.0254 * (100 / 25.4); // Convert mils to mm, then mm to pixels
             let bestPt = null;
-            // Check wire endpoints
+            let bestDist = Infinity;
+            // Build all segments
+            const segments = [];
             for (const w of wires) {
-                if (w.points.length >= 2) {
-                    for (const pt of [w.points[0], w.points[w.points.length - 1]]) {
-                        const d = Math.hypot(pt.x - p.x, pt.y - p.y);
-                        if (d < bestDist && d <= tol) {
-                            bestDist = d;
-                            bestPt = pt;
-                        }
-                    }
+                for (let i = 0; i < w.points.length - 1; i++) {
+                    segments.push({ a: w.points[i], b: w.points[i + 1], wId: w.id });
                 }
             }
-            // Check component pins
-            for (const c of components) {
-                const pins = compPinPositions(c);
-                for (const pin of pins) {
-                    const d = Math.hypot(pin.x - p.x, pin.y - p.y);
-                    if (d < bestDist && d <= tol) {
-                        bestDist = d;
-                        bestPt = pin;
-                    }
+            // Helper: Find closest point on an axis-aligned segment to the click point
+            const closestPointOnSegment = (a, b, click) => {
+                if (a.x === b.x) {
+                    // Vertical segment - clamp y coordinate
+                    const y = Math.max(Math.min(a.y, b.y), Math.min(click.y, Math.max(a.y, b.y)));
+                    return { x: a.x, y };
                 }
-            }
-            // Check wire-to-wire intersections
-            // Helper to check if two axis-aligned segments cross
-            const checkSegIntersection = (s1a, s1b, s2a, s2b) => {
-                // Only axis-aligned segments
-                if (s1a.x === s1b.x && s2a.y === s2b.y) {
+                else if (a.y === b.y) {
+                    // Horizontal segment - clamp x coordinate
+                    const x = Math.max(Math.min(a.x, b.x), Math.min(click.x, Math.max(a.x, b.x)));
+                    return { x, y: a.y };
+                }
+                return a;
+            };
+            // Helper: Check if two axis-aligned segments intersect and return intersection point
+            const segmentIntersection = (s1, s2) => {
+                if (s1.a.x === s1.b.x && s2.a.y === s2.b.y) {
                     // s1 vertical, s2 horizontal
-                    if (Math.min(s1a.y, s1b.y) < s2a.y && s2a.y < Math.max(s1a.y, s1b.y) &&
-                        Math.min(s2a.x, s2b.x) < s1a.x && s1a.x < Math.max(s2a.x, s2b.x)) {
-                        return { x: s1a.x, y: s2a.y };
+                    const x = s1.a.x;
+                    const y = s2.a.y;
+                    if (Math.min(s1.a.y, s1.b.y) <= y && y <= Math.max(s1.a.y, s1.b.y) &&
+                        Math.min(s2.a.x, s2.b.x) <= x && x <= Math.max(s2.a.x, s2.b.x)) {
+                        return { x, y };
                     }
                 }
-                else if (s1a.y === s1b.y && s2a.x === s2b.x) {
+                else if (s1.a.y === s1.b.y && s2.a.x === s2.b.x) {
                     // s1 horizontal, s2 vertical
-                    if (Math.min(s2a.y, s2b.y) < s1a.y && s1a.y < Math.max(s2a.y, s2b.y) &&
-                        Math.min(s1a.x, s1b.x) < s2a.x && s2a.x < Math.max(s1a.x, s1b.x)) {
-                        return { x: s2a.x, y: s1a.y };
+                    const x = s2.a.x;
+                    const y = s1.a.y;
+                    if (Math.min(s1.a.x, s1.b.x) <= x && x <= Math.max(s1.a.x, s1.b.x) &&
+                        Math.min(s2.a.y, s2.b.y) <= y && y <= Math.max(s2.a.y, s2.b.y)) {
+                        return { x, y };
                     }
                 }
                 return null;
             };
-            for (let i = 0; i < wires.length; i++) {
-                const w1 = wires[i];
-                if (w1.points.length < 2)
-                    continue;
-                for (let s1 = 0; s1 < w1.points.length - 1; s1++) {
-                    const a1 = w1.points[s1];
-                    const b1 = w1.points[s1 + 1];
-                    for (let j = i + 1; j < wires.length; j++) {
-                        const w2 = wires[j];
-                        if (w2.points.length < 2)
-                            continue;
-                        for (let s2 = 0; s2 < w2.points.length - 1; s2++) {
-                            const a2 = w2.points[s2];
-                            const b2 = w2.points[s2 + 1];
-                            const intersection = checkSegIntersection(a1, b1, a2, b2);
-                            if (intersection) {
-                                const d = Math.hypot(intersection.x - p.x, intersection.y - p.y);
-                                if (d < bestDist && d <= tol) {
-                                    bestDist = d;
-                                    bestPt = intersection;
-                                }
-                            }
+            // Step 1: Check if you clicked within 50 mils of ANY intersection
+            let nearestIntersection = null;
+            let nearestIntersectionDist = Infinity;
+            for (let i = 0; i < segments.length; i++) {
+                for (let j = i + 1; j < segments.length; j++) {
+                    if (segments[i].wId === segments[j].wId)
+                        continue;
+                    const intersection = segmentIntersection(segments[i], segments[j]);
+                    if (intersection) {
+                        const distFromClick = Math.hypot(intersection.x - p.x, intersection.y - p.y);
+                        if (distFromClick < nearestIntersectionDist) {
+                            nearestIntersectionDist = distFromClick;
+                            nearestIntersection = intersection;
                         }
                     }
                 }
             }
-            // If nothing close, just use the snapped point
-            if (!bestPt)
-                bestPt = { x, y };
+            // If click is within 50 mils of an intersection, snap to it
+            if (nearestIntersection && nearestIntersectionDist <= tol) {
+                bestPt = nearestIntersection;
+            }
+            else {
+                // Step 2: Not near an intersection, so find closest point on any wire
+                let closestOnWire = null;
+                let closestWireDist = Infinity;
+                for (const seg of segments) {
+                    const closest = closestPointOnSegment(seg.a, seg.b, p);
+                    const d = Math.hypot(closest.x - p.x, closest.y - p.y);
+                    if (d < closestWireDist) {
+                        closestWireDist = d;
+                        closestOnWire = closest;
+                    }
+                }
+                // If within 50 mils of a wire, place it there
+                if (closestOnWire && closestWireDist <= tol) {
+                    bestPt = closestOnWire;
+                }
+                else {
+                    // Not near anything, use snapped click point
+                    bestPt = { x, y };
+                }
+            }
             // Add to junctions if not already present
             if (!junctions.some(j => Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3)) {
                 pushUndo();
@@ -2902,7 +2943,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         }
         if (mode === 'delete-junction' && e.button === 0) {
             // Delete a junction dot at the clicked location (within 50 mils)
-            console.log('[Junction] Deleting junction dot at', { x: p.x, y: p.y });
             const TOL = 50; // mils
             const tol = TOL * (NM_PER_MIL ? NM_PER_MIL : 1) / PX_PER_MM;
             let idx = -1;
@@ -3464,12 +3504,15 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 // Per-segment model: each segment is its own Wire object. Delete the selected segment wire.
                 const w = wires.find(x => x.id === selection.id);
                 if (w) {
+                    removeJunctionsAtWireEndpoints(w);
                     pushUndo();
                     wires = wires.filter(x => x.id !== w.id);
                     selection = { kind: null, id: null, segIndex: null };
                     normalizeAllWires();
                     unifyInlineWires();
                     redraw();
+                    // Force immediate visual update
+                    requestAnimationFrame(() => redrawCanvasOnly());
                 }
             }
         }
@@ -6078,7 +6121,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 // merge in this same scan mutated the array), skip this stale pair and
                 // continue. We'll recompute pairs on the next outer iteration.
                 if (idxA === -1 || idxB === -1) {
-                    console.debug('unifyInlineWires: stale pair skipped (wire ref missing)', { key, idxA, idxB, aId: a.w?.id, bId: b.w?.id });
                     continue;
                 }
                 const primary = (idxA <= idxB) ? a : b;
@@ -6099,7 +6141,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 const newStroke = strokeOfWire(primary.w);
                 const newColor = rgba01ToCss(newStroke.color);
                 const primaryId = primary.w.id;
-                console.debug('unifyInlineWires: attempting merge', { key, primaryId, primaryIdx: idxA, secondaryIdx: idxB, lPts, rPts, merged });
                 // Replace both wires with a single merged segment that uses the primary id
                 const countBefore = wires.length;
                 wires = wires.filter(w => w !== primary.w && w !== secondary.w);
@@ -6115,11 +6156,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                         key, primaryId, primaryIdx: idxA, secondaryIdx: idxB, countBefore, countAfter: wires.length,
                         primaryPts: primary.w.points.slice(), secondaryPts: secondary.w.points.slice(), mergedPts: merged, sigBefore: sig
                     });
-                    // Also dump current wires summary to console for deeper inspection
-                    try {
-                        console.debug('wires snapshot', wires.map(w => ({ id: w.id, start: w.points?.[0], end: w.points?.[w.points.length - 1], pts: w.points })));
-                    }
-                    catch (_) { }
                     break;
                 }
                 // restart scanning from fresh topology by breaking out of the inner loop so
@@ -6433,12 +6469,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
     // ====== Topology: nodes, edges, SWPs ======
     function rebuildTopology() {
         var _a;
-        // --- DEBUG: Log start of topology rebuild ---
-        console.debug('[Junction Debug] --- Rebuilding topology ---');
-        // Step 2.5: Debug log for detected intersections will be placed after intersectionPoints is declared
-        // Step 3.5: Debug log for wire splitting will be placed after insertMap is declared
-        // ...existing code...
-        // ...existing code...
         const nodes = new Map(); // key -> {x,y,edges:Set<edgeId>, axDeg:{x:number,y:number}}
         const edges = []; // {id, wireId, i, a:{x,y}, b:{x,y}, axis:'x'|'y'|null, akey, bkey}
         const axisOf = (a, b) => (a.y === b.y) ? 'x' : (a.x === b.x) ? 'y' : null;
@@ -6515,10 +6545,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         }
         // Remove duplicates
         intersectionPoints = Array.from(new Set(intersectionPoints));
-        // DEBUG: Log all detected intersection points after declaration
-        console.debug('[Junction Debug] Detected intersection points:', intersectionPoints);
-        // DEBUG: Log all detected intersection points after declaration
-        console.debug('[Junction Debug] Detected intersection points:', intersectionPoints);
         // Step 3: Split wire polylines at all intersection points
         // Build a map: wireId -> array of points to insert (as {x, y})
         const insertMap = new Map();
@@ -6533,12 +6559,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                         insertMap.set(s.w.id, []);
                     insertMap.get(s.w.id).push({ x: ix, y: iy });
                 }
-            }
-        }
-        // DEBUG: Log all wire splits after insertMap is built
-        for (const [wid, ptsToInsert] of insertMap.entries()) {
-            if (ptsToInsert.length) {
-                console.debug(`[Junction Debug] Will split wire ${wid} at:`, ptsToInsert);
             }
         }
         // For each wire, insert all intersection points into its polyline, then sort
@@ -6583,10 +6603,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             const [x, y] = k.split(',').map(Number);
             addNode({ x, y });
         }
-        // DEBUG: Log all node keys after node creation
-        console.debug('[Junction Debug] All node keys:', Array.from(nodes.keys()));
-        // DEBUG: Log all node keys after node creation
-        console.debug('[Junction Debug] All node keys:', Array.from(nodes.keys()));
         // Step 5: Build edges, splitting segments at intersection points
         for (const w of wires) {
             const pts = w.points || [];
@@ -6845,12 +6861,8 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                     size: nc.junction.size,
                     color: rgba01ToCss(nc.junction.color)
                 });
-                // DEBUG: Log each junction as it is added
-                console.debug('[Junction Debug] Added junction:', { x: node.x, y: node.y, netId });
             }
         }
-        // DEBUG: Log all final junctions
-        console.debug('[Junction Debug] Final junctions array:', junctions);
     }
     // ---- SWP Move: collapse current SWP to a single straight wire, constrain move, rebuild on finish ----
     function findSwpById(id) { return topology.swps.find(s => s.id === id); }

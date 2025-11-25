@@ -315,7 +315,9 @@
         <option value="photo">Photo</option>
         <option value="tunnel">Tunnel</option>
         <option value="varactor">Varactor / Varicap</option>
-        <option value="laser">Laser</option>
+        <option value="laser">Laser diode</option>
+        <option value="tvs_uni" title="Unidirectional Transient Voltage Suppressor diode">TVS Unidirectional</option>
+        <option value="tvs_bi" title="Bidirectional Transient Voltage Suppressor diode">TVS Bidirectional</option>
       </select>
       <div class="capacitor-subtypes">
         <button id="capacitorStandard" data-subtype="standard" title="Standard Capacitor">
@@ -458,21 +460,21 @@
         <div class="row"><label>Junction Dot Size</label></div>
         <div class="row">
           <div id="junctionDotSizeSelect" class="junction-size-selector">
-            <button type="button" class="junction-size-option selected" data-size="small" title="Small (1.2mm)">
+            <button type="button" class="junction-size-option selected" data-size="small" title="Small (30 mils / 0.762mm)">
               <svg width="32" height="20" viewBox="0 0 32 20">
-                <circle cx="16" cy="10" r="2.4" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
+                <circle cx="16" cy="10" r="3.0" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
               </svg>
               <span>Small</span>
             </button>
-            <button type="button" class="junction-size-option" data-size="medium" title="Medium (2.4mm)">
+            <button type="button" class="junction-size-option" data-size="medium" title="Medium (40 mils / 1.016mm)">
               <svg width="32" height="20" viewBox="0 0 32 20">
-                <circle cx="16" cy="10" r="4.8" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
+                <circle cx="16" cy="10" r="4.0" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
               </svg>
               <span>Medium</span>
             </button>
-            <button type="button" class="junction-size-option" data-size="large" title="Large (3.6mm)">
+            <button type="button" class="junction-size-option" data-size="large" title="Large (50 mils / 1.27mm)">
               <svg width="32" height="20" viewBox="0 0 32 20">
-                <circle cx="16" cy="10" r="7.2" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
+                <circle cx="16" cy="10" r="5.0" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
               </svg>
               <span>Large</span>
             </button>

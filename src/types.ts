@@ -30,7 +30,7 @@ export type Selection =
 
 // ====== Component Types ======
 
-export type DiodeSubtype = 'generic' | 'schottky' | 'zener' | 'led' | 'photo' | 'tunnel' | 'varactor' | 'laser';
+export type DiodeSubtype = 'generic' | 'schottky' | 'zener' | 'led' | 'photo' | 'tunnel' | 'varactor' | 'laser' | 'tvs_uni' | 'tvs_bi';
 export type ResistorStyle = 'ansi' | 'iec';
 export type CapacitorSubtype = 'standard' | 'polarized';
 
