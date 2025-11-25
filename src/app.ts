@@ -2199,9 +2199,9 @@ let marquee: {
   }
 
   function redraw(){
+    rebuildTopology();
     redrawCanvasOnly();
     renderInspector();
-    rebuildTopology();
   }
 
   // Update selection styling (no circle; tint symbol graphics via CSS)
@@ -3710,7 +3710,59 @@ let marquee: {
     pl.setAttribute('points', pts.map(p=>`${p.x},${p.y}`).join(' '));
     gDrawing.appendChild(pl);
     
-    // Do not draw junction dots at each placed point during wire placement. Junctions are only drawn from the global junctions array after topology rebuild.
+    // Draw temporary junction dots where the in-progress wire crosses existing wires
+    if (pts.length >= 2 && showJunctionDots) {
+      const segments: Array<{a: Point, b: Point}> = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        segments.push({ a: pts[i], b: pts[i + 1] });
+      }
+      
+      // Check intersections with existing wires
+      for (const w of wires) {
+        for (let i = 0; i < w.points.length - 1; i++) {
+          const wa = w.points[i];
+          const wb = w.points[i + 1];
+          
+          for (const seg of segments) {
+            // Check for intersection
+            let intersection: Point | null = null;
+            if (seg.a.x === seg.b.x && wa.y === wb.y) {
+              // drawing segment vertical, wire horizontal
+              const x = seg.a.x;
+              const y = wa.y;
+              if (Math.min(seg.a.y, seg.b.y) <= y && y <= Math.max(seg.a.y, seg.b.y) &&
+                  Math.min(wa.x, wb.x) <= x && x <= Math.max(wa.x, wb.x)) {
+                intersection = { x, y };
+              }
+            } else if (seg.a.y === seg.b.y && wa.x === wb.x) {
+              // drawing segment horizontal, wire vertical
+              const x = wa.x;
+              const y = seg.a.y;
+              if (Math.min(seg.a.x, seg.b.x) <= x && x <= Math.max(seg.a.x, seg.b.x) &&
+                  Math.min(wa.y, wb.y) <= y && y <= Math.max(wa.y, wb.y)) {
+                intersection = { x, y };
+              }
+            }
+            
+            if (intersection) {
+              const sizeMils = junctionDotSize === 'small' ? 50 : junctionDotSize === 'medium' ? 70 : 90;
+              const diameterMm = sizeMils * 0.0254;
+              const radiusMm = diameterMm / 2;
+              const radiusPx = Math.max(1, radiusMm * (100 / 25.4));
+              
+              const dot = document.createElementNS('http://www.w3.org/2000/svg','circle');
+              setAttr(dot, 'cx', intersection.x);
+              setAttr(dot, 'cy', intersection.y);
+              setAttr(dot, 'r', radiusPx);
+              dot.setAttribute('fill', drawColor);
+              dot.setAttribute('stroke', 'var(--bg)');
+              dot.setAttribute('stroke-width', '1');
+              gDrawing.appendChild(dot);
+            }
+          }
+        }
+      }
+    }
     
     // keep endpoint marker in sync with in-progress color
     const dot = document.querySelector('#dot circle');
