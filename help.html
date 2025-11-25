@@ -234,6 +234,24 @@
       <li>Automatically adjusts contrast for light and dark themes for optimal readability</li>
     </ul>
 
+    <h3>Coordinate Input</h3>
+    <p>For precise placement, you can type exact coordinates instead of clicking:</p>
+    <ul>
+      <li><b>Location:</b> X and Y input boxes appear in the status bar during Wire, Place, and Junction modes</li>
+      <li><b>Real-time Updates:</b> Input boxes automatically display current mouse coordinates as you move</li>
+      <li><b>Keyboard Activation:</b> Press <span class="kbd">Ctrl+L</span> to focus the X input without moving the mouse
+        <ul>
+          <li>Your current mouse position coordinates are preserved</li>
+          <li>Start typing immediately to replace the X value</li>
+        </ul>
+      </li>
+      <li><b>Navigation:</b> Press <span class="kbd">Tab</span> to move from X to Y input</li>
+      <li><b>Unit Support:</b> Include units after values (e.g., "100 mils", "2.54 mm", "0.1 in") or use current display units if omitted</li>
+      <li><b>Accepting Coordinates:</b> Press <span class="kbd">Enter</span> to place a wire point, component, or junction dot at the exact typed coordinates</li>
+      <li><b>Cancel:</b> Press <span class="kbd">Esc</span> to exit input mode without placing</li>
+    </ul>
+    <p class="tip"><i>Tip:</i> Use coordinate input for precise grid-aligned placement or when matching dimensions from a schematic reference.</p>
+
     <h3>Connection Circles</h3>
     <ul>
       <li><b>Visual Indicators:</b> Green circles appear at all wire endpoints and component pins during Select, Wire, and Place modes</li>
@@ -529,8 +547,10 @@
       <li><span class="kbd">G</span> — Cycle grid display (Lines → Dots → Off)</li>
       <li><span class="kbd">X</span> — Cycle crosshair style (+ → Full → Off)</li>
       <li><span class="kbd">T</span> — Toggle connection tracking on/off</li>
-      <li><span class="kbd">Esc</span> — Cancel drawing / Deselect / Exit mode</li>
-      <li><span class="kbd">Enter</span> — Finish wire drawing / Exit junction dot mode</li>
+      <li><span class="kbd">Ctrl+L</span> — Activate coordinate input (in Wire, Place, or Junction modes)</li>
+      <li><span class="kbd">Tab</span> — Switch between X and Y coordinate inputs</li>
+      <li><span class="kbd">Esc</span> — Cancel drawing / Deselect / Exit mode / Cancel coordinate input</li>
+      <li><span class="kbd">Enter</span> — Finish wire drawing / Exit junction dot mode / Accept coordinate input</li>
       <li><span class="kbd">Delete</span> — Delete selected component or wire</li>
       <li><span class="kbd">Shift</span> — Hold while wiring for temporary orthogonal mode</li>
       <li><span class="kbd">Right-click</span> — Finish wire drawing / Exit junction dot mode</li>

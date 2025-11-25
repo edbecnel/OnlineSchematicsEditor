@@ -67,6 +67,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     const countsEl = $q('#counts');
     const overlayMode = $q('#modeLabel');
     const coordDisplay = $q('#coordDisplay');
+    const coordInputGroup = $q('#coordInputGroup');
+    const coordInputX = $q('#coordInputX');
+    const coordInputY = $q('#coordInputY');
     let gridMode = localStorage.getItem('grid.mode') || 'line';
     // Junction dots visibility toggle state (persisted)
     let showJunctionDots = (localStorage.getItem('junctionDots.visible') !== 'false');
@@ -3375,12 +3378,15 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         else {
             clearGhost();
         }
-        // Update coordinate display when placing wire or components
-        if (mode === 'wire' || mode === 'place') {
+        // Update coordinate display and input boxes when placing wire or components
+        if (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction') {
             updateCoordinateDisplay(x, y);
+            updateCoordinateInputs(x, y);
+            showCoordinateInputs();
         }
         else {
             hideCoordinateDisplay();
+            hideCoordinateInputs();
         }
         // crosshair overlay while in wire mode (even if not actively drawing)
         // Use raw mouse position (p) for crosshair, not snapped position (x, y)
@@ -3554,6 +3560,16 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
             e.preventDefault();
             clearAll();
+        }
+        // Coordinate input activation shortcut (Ctrl+L or Space when in wire/place mode)
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction')) {
+            e.preventDefault();
+            if (coordInputX && coordInputGroup) {
+                coordInputActive = true;
+                coordInputX.focus();
+                coordInputX.select();
+            }
+            return;
         }
         // Component placement shortcuts
         if (e.key.toLowerCase() === 'c' && !isEditingKeystrokesTarget(e)) {
@@ -3958,6 +3974,287 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         if (!coordDisplay)
             return;
         coordDisplay.style.display = 'none';
+    }
+    // ----- Coordinate input boxes -----
+    let coordInputActive = false;
+    let lastMouseX = 0, lastMouseY = 0; // Track last mouse position for input boxes
+    function updateCoordinateInputs(x, y) {
+        if (!coordInputX || !coordInputY || !coordInputGroup)
+            return;
+        // Store current mouse position
+        lastMouseX = x;
+        lastMouseY = y;
+        // Don't update if user is actively typing
+        if (coordInputActive)
+            return;
+        // Convert to current units and format
+        const xNm = pxToNm(x);
+        const yNm = pxToNm(y);
+        const xVal = nmToUnit(xNm, globalUnits);
+        const yVal = nmToUnit(yNm, globalUnits);
+        let precision = 2;
+        if (globalUnits === 'mils')
+            precision = 0;
+        if (globalUnits === 'mm')
+            precision = 2;
+        if (globalUnits === 'in')
+            precision = 4;
+        coordInputX.value = xVal.toFixed(precision);
+        coordInputY.value = yVal.toFixed(precision);
+    }
+    function showCoordinateInputs() {
+        if (!coordInputGroup)
+            return;
+        coordInputGroup.style.display = 'flex';
+    }
+    function hideCoordinateInputs() {
+        if (!coordInputGroup)
+            return;
+        coordInputGroup.style.display = 'none';
+        coordInputActive = false;
+    }
+    function acceptCoordinateInput() {
+        if (!coordInputX || !coordInputY)
+            return null;
+        // Parse X and Y with unit support
+        const xParsed = parseDimInput(coordInputX.value, globalUnits);
+        const yParsed = parseDimInput(coordInputY.value, globalUnits);
+        if (!xParsed || !yParsed)
+            return null;
+        // Convert to pixels
+        const xPx = nmToPx(xParsed.nm);
+        const yPx = nmToPx(yParsed.nm);
+        coordInputActive = false;
+        coordInputX.blur();
+        coordInputY.blur();
+        return { x: xPx, y: yPx };
+    }
+    // Set up coordinate input event handlers
+    if (coordInputX && coordInputY) {
+        // Handle Tab key to switch between X and Y
+        coordInputX.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                coordInputY.focus();
+                coordInputY.select();
+            }
+            else if (e.key === 'Enter') {
+                e.preventDefault();
+                const point = acceptCoordinateInput();
+                if (point) {
+                    // Simulate a click at the specified coordinate
+                    handleCoordinateInputClick(point);
+                }
+            }
+            else if (e.key === 'Escape') {
+                coordInputActive = false;
+                coordInputX.blur();
+                coordInputY.blur();
+            }
+        });
+        coordInputY.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                if (e.shiftKey) {
+                    coordInputX.focus();
+                    coordInputX.select();
+                }
+                else {
+                    // Tab from Y wraps to X
+                    coordInputX.focus();
+                    coordInputX.select();
+                }
+            }
+            else if (e.key === 'Enter') {
+                e.preventDefault();
+                const point = acceptCoordinateInput();
+                if (point) {
+                    handleCoordinateInputClick(point);
+                }
+            }
+            else if (e.key === 'Escape') {
+                coordInputActive = false;
+                coordInputX.blur();
+                coordInputY.blur();
+            }
+        });
+        // Mark as active when user focuses
+        coordInputX.addEventListener('focus', () => { coordInputActive = true; });
+        coordInputY.addEventListener('focus', () => { coordInputActive = true; });
+        // When user clicks away or blurs, deactivate
+        coordInputX.addEventListener('blur', () => {
+            setTimeout(() => {
+                if (document.activeElement !== coordInputY)
+                    coordInputActive = false;
+            }, 100);
+        });
+        coordInputY.addEventListener('blur', () => {
+            setTimeout(() => {
+                if (document.activeElement !== coordInputX)
+                    coordInputActive = false;
+            }, 100);
+        });
+    }
+    // Handle coordinate input click - place component or add wire point
+    function handleCoordinateInputClick(point) {
+        const x = snap(point.x);
+        const y = snap(point.y);
+        const snapPt = { x, y };
+        if (mode === 'wire') {
+            if (!drawing.active) {
+                // Start wire at typed coordinate
+                drawing.active = true;
+                drawing.points = [snapPt];
+                connectionHint = null;
+                renderDrawing();
+            }
+            else {
+                // Add point to active wire
+                drawing.points.push(snapPt);
+                rebuildTopology();
+                renderDrawing();
+            }
+            updateCoordinateInputs(snapPt.x, snapPt.y);
+        }
+        else if (mode === 'place' && placeType) {
+            // Place component at typed coordinate
+            const id = uid(placeType);
+            const labelPrefix = { resistor: 'R', capacitor: 'C', inductor: 'L', diode: 'D', npn: 'Q', pnp: 'Q', ground: 'GND', battery: 'BT', ac: 'AC' }[placeType] || 'X';
+            const comp = {
+                id, type: placeType, x: snapPt.x, y: snapPt.y, rot: 0, label: `${labelPrefix}${counters[placeType] - 1}`, value: '',
+                props: {}
+            };
+            if (placeType === 'diode') {
+                comp.props.subtype = diodeSubtype;
+            }
+            if (placeType === 'resistor') {
+                comp.props.resistorStyle = defaultResistorStyle;
+            }
+            if (placeType === 'capacitor') {
+                comp.props.capacitorSubtype = capacitorSubtype;
+                if (capacitorSubtype === 'polarized') {
+                    comp.props.capacitorStyle = defaultResistorStyle;
+                }
+            }
+            components.push(comp);
+            breakWiresForComponent(comp);
+            deleteBridgeBetweenPins(comp);
+            setMode('select');
+            placeType = null;
+            pushUndo();
+            rebuildTopology();
+            redraw();
+            updateCoordinateInputs(snapPt.x, snapPt.y);
+        }
+        else if (mode === 'place-junction') {
+            // Place junction at typed coordinate (reuse existing junction placement logic)
+            const TOL = 50;
+            const tol = TOL * 0.0254 * (100 / 25.4);
+            let bestPt = null;
+            let bestDist = Infinity;
+            // Build all segments
+            const segments = [];
+            for (const w of wires) {
+                for (let i = 0; i < w.points.length - 1; i++) {
+                    segments.push({ a: w.points[i], b: w.points[i + 1], wId: w.id });
+                }
+            }
+            // Find intersections and wire points within tolerance
+            const allWireIntersections = [];
+            for (let i = 0; i < segments.length; i++) {
+                for (let j = i + 1; j < segments.length; j++) {
+                    const s1 = segments[i], s2 = segments[j];
+                    const intersect = segmentIntersectionPoint(s1, s2);
+                    if (intersect)
+                        allWireIntersections.push(intersect);
+                }
+            }
+            // Check intersections
+            for (const pt of allWireIntersections) {
+                const d = Math.sqrt((pt.x - snapPt.x) ** 2 + (pt.y - snapPt.y) ** 2);
+                if (d < tol && d < bestDist) {
+                    bestPt = pt;
+                    bestDist = d;
+                }
+            }
+            // If no intersection found within tolerance, find closest point on any wire
+            if (!bestPt) {
+                for (const seg of segments) {
+                    const closest = closestPointOnAxisAlignedSegment(seg.a, seg.b, snapPt);
+                    const d = Math.sqrt((closest.x - snapPt.x) ** 2 + (closest.y - snapPt.y) ** 2);
+                    if (d < bestDist) {
+                        bestPt = closest;
+                        bestDist = d;
+                    }
+                }
+            }
+            if (bestPt) {
+                // Check if junction already exists at this location
+                const existing = junctions.find(j => Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3);
+                if (!existing) {
+                    junctions.push({ at: bestPt, manual: true });
+                    pushUndo();
+                    rebuildTopology();
+                    requestAnimationFrame(() => { redrawCanvasOnly(); });
+                }
+            }
+            updateCoordinateInputs(snapPt.x, snapPt.y);
+        }
+        else if (mode === 'delete-junction') {
+            // Delete junction at typed coordinate
+            const TOL = 50;
+            const tol = TOL * 0.0254 * (100 / 25.4);
+            const idx = junctions.findIndex(j => {
+                const dx = Math.abs(j.at.x - snapPt.x);
+                const dy = Math.abs(j.at.y - snapPt.y);
+                return Math.sqrt(dx * dx + dy * dy) < tol;
+            });
+            if (idx !== -1) {
+                const junction = junctions[idx];
+                if (!junction.manual) {
+                    junctions[idx] = { at: junction.at, manual: true, suppressed: true };
+                }
+                else {
+                    junctions.splice(idx, 1);
+                }
+                pushUndo();
+                rebuildTopology();
+                requestAnimationFrame(() => { redrawCanvasOnly(); });
+            }
+            updateCoordinateInputs(snapPt.x, snapPt.y);
+        }
+    }
+    // Helper: Check if two axis-aligned segments intersect and return intersection point
+    function segmentIntersectionPoint(s1, s2) {
+        if (s1.a.x === s1.b.x && s2.a.y === s2.b.y) {
+            const x = s1.a.x;
+            const y = s2.a.y;
+            if (Math.min(s1.a.y, s1.b.y) <= y && y <= Math.max(s1.a.y, s1.b.y) &&
+                Math.min(s2.a.x, s2.b.x) <= x && x <= Math.max(s2.a.x, s2.b.x)) {
+                return { x, y };
+            }
+        }
+        else if (s1.a.y === s1.b.y && s2.a.x === s2.b.x) {
+            const x = s2.a.x;
+            const y = s1.a.y;
+            if (Math.min(s1.a.x, s1.b.x) <= x && x <= Math.max(s1.a.x, s1.b.x) &&
+                Math.min(s2.a.y, s2.b.y) <= y && y <= Math.max(s2.a.y, s2.b.y)) {
+                return { x, y };
+            }
+        }
+        return null;
+    }
+    // Helper: Find closest point on an axis-aligned segment
+    function closestPointOnAxisAlignedSegment(a, b, click) {
+        if (a.x === b.x) {
+            const y = Math.max(Math.min(a.y, b.y), Math.min(click.y, Math.max(a.y, b.y)));
+            return { x: a.x, y };
+        }
+        else if (a.y === b.y) {
+            const x = Math.max(Math.min(a.x, b.x), Math.min(click.x, Math.max(a.x, b.x)));
+            return { x, y: a.y };
+        }
+        return a;
     }
     // ----- Placement ghost -----
     let ghostEl = null;

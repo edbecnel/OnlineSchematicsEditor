@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -8,506 +9,1067 @@
   <link rel="icon" type="image/svg+xml" href="assets/schematics-favicon.svg">
   <link rel="mask-icon" href="assets/schematics-mask.svg" color="#0ea5e9">
   <style>
-    :root{
-      --bg:#0f1115; --panel:#161a22; --ink:#e6e6e6; --muted:#a5adbb; --accent:#61dafb; --danger:#ff6b6b; --ok:#4ade80;
-      --grid:#2a2f3a; --grid-bold:#3a4150; --wire:#ffffff; --select:#f59e0b; --pin:#93c5fd; --component:#e2e8f0; --ghost:#64748b;
+    :root {
+      --bg: #0f1115;
+      --panel: #161a22;
+      --ink: #e6e6e6;
+      --muted: #a5adbb;
+      --accent: #61dafb;
+      --danger: #ff6b6b;
+      --ok: #4ade80;
+      --grid: #2a2f3a;
+      --grid-bold: #3a4150;
+      --wire: #ffffff;
+      --select: #f59e0b;
+      --pin: #93c5fd;
+      --component: #e2e8f0;
+      --ghost: #64748b;
     }
+
     /* Light theme */
-    [data-theme="light"]{
-      --bg:#e8e8e8; --panel:#f5f5f5; --ink:#333333; --muted:#666666; --accent:#0ea5e9; --danger:#dc2626; --ok:#059669;
-      --grid:#c8ccd0; --grid-bold:#9ca3af; --wire:#000000; --select:#f59e0b; --pin:#3b82f6; --component:#1f2937; --ghost:#6b7280;
+    [data-theme="light"] {
+      --bg: #e8e8e8;
+      --panel: #f5f5f5;
+      --ink: #333333;
+      --muted: #666666;
+      --accent: #0ea5e9;
+      --danger: #dc2626;
+      --ok: #059669;
+      --grid: #c8ccd0;
+      --grid-bold: #9ca3af;
+      --wire: #000000;
+      --select: #f59e0b;
+      --pin: #3b82f6;
+      --component: #1f2937;
+      --ghost: #6b7280;
     }
-    html, body {height:100%;}
-    body{margin:0; font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color:var(--ink); background:var(--bg);}
-    .app{display:flex; flex-direction:column; height:100%;}
-    .app-body{display:flex; flex:1; overflow:hidden; min-height:0;}
-    .center-column{display:flex; flex-direction:column; flex:1; min-width:400px; min-height:0;}
-  header{display:flex; align-items:center; gap:.25rem; padding:.5rem .75rem; background:var(--panel); border-bottom:1px solid #22262f; z-index:3; flex-shrink:0;}
-    [data-theme="light"] header{border-bottom:1px solid #d1d5db;}
+
+    html,
+    body {
+      height: 100%;
+    }
+
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      color: var(--ink);
+      background: var(--bg);
+    }
+
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .app-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .center-column {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 400px;
+      min-height: 0;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: .25rem;
+      padding: .5rem .75rem;
+      background: var(--panel);
+      border-bottom: 1px solid #22262f;
+      z-index: 3;
+      flex-shrink: 0;
+    }
+
+    [data-theme="light"] header {
+      border-bottom: 1px solid #d1d5db;
+    }
+
     /* Keep everything on one row (no wrap); we'll popup sub-types absolutely */
-    header{ flex-wrap: nowrap; align-items: center; }
-  /* Thin vertical separator between mode buttons and components */
-  .vsep{ width:1px; height:32px; background:#22262f; margin:0 .125rem; border-radius:1px; }
-    /* Sub-type popup: small, only as wide as content, positioned under the Diode button */
-    #paletteRow2{
-      position:absolute;
-      display:none;
-      width:max-content;            /* only as wide as its contents */
-      pointer-events:auto;
-      z-index:5;                    /* above header background */
+    header {
+      flex-wrap: nowrap;
+      align-items: center;
     }
-    #paletteRow2 select{ width:auto; white-space:nowrap; }
+
+    /* Thin vertical separator between mode buttons and components */
+    .vsep {
+      width: 1px;
+      height: 32px;
+      background: #22262f;
+      margin: 0 .125rem;
+      border-radius: 1px;
+    }
+
+    /* Sub-type popup: small, only as wide as content, positioned under the Diode button */
+    #paletteRow2 {
+      position: absolute;
+      display: none;
+      width: max-content;
+      /* only as wide as its contents */
+      pointer-events: auto;
+      z-index: 5;
+      /* above header background */
+    }
+
+    #paletteRow2 select {
+      width: auto;
+      white-space: nowrap;
+    }
+
     /* Capacitor subtype buttons */
-    .capacitor-subtypes{ display: flex; gap: .25rem; }
-    .capacitor-subtypes button{ padding: .35rem .5rem; min-width: 48px; }
-    .capacitor-subtypes button svg{ width: 32px; height: 16px; }
+    .capacitor-subtypes {
+      display: flex;
+      gap: .25rem;
+    }
+
+    .capacitor-subtypes button {
+      padding: .35rem .5rem;
+      min-width: 48px;
+    }
+
+    .capacitor-subtypes button svg {
+      width: 32px;
+      height: 16px;
+    }
+
     /* Junction dot buttons - match text button dimensions */
-    #junctionDotGroup button{ padding: .45rem .5rem; min-width: 38px; }
-    #junctionDotGroup button svg{ width: 18px; height: 18px; display: block; }
+    #junctionDotGroup button {
+      padding: .45rem .5rem;
+      min-width: 38px;
+    }
+
+    #junctionDotGroup button svg {
+      width: 18px;
+      height: 18px;
+      display: block;
+    }
+
     /* Undo/Redo buttons - match text button dimensions */
-    #undoBtn, #redoBtn{ padding: .45rem .5rem; min-width: 38px; }
-    #undoBtn svg, #redoBtn svg{ width: 18px; height: 18px; display: block; }
+    #undoBtn,
+    #redoBtn {
+      padding: .45rem .5rem;
+      min-width: 38px;
+    }
+
+    #undoBtn svg,
+    #redoBtn svg {
+      width: 18px;
+      height: 18px;
+      display: block;
+    }
+
     /* Junction dot size selector */
-    .junction-size-selector{ display: flex; gap: .25rem; width: 100%; }
-    .junction-size-option{ 
-      flex: 1; 
-      display: flex; 
-      flex-direction: column; 
-      align-items: center; 
-      gap: .25rem; 
-      padding: .4rem .3rem; 
+    .junction-size-selector {
+      display: flex;
+      gap: .25rem;
+      width: 100%;
+    }
+
+    .junction-size-option {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .25rem;
+      padding: .4rem .3rem;
       min-width: 0;
       font-size: .8rem;
     }
-    .junction-size-option svg{ display: block; margin: 0 auto; }
-    .junction-size-option.selected{ 
-      border-color: var(--accent); 
-      background: rgba(97, 218, 251, 0.1); 
+
+    .junction-size-option svg {
+      display: block;
+      margin: 0 auto;
     }
-    [data-theme="light"] .junction-size-option.selected{ 
-      background: rgba(59, 130, 246, 0.1); 
+
+    .junction-size-option.selected {
+      border-color: var(--accent);
+      background: rgba(97, 218, 251, 0.1);
     }
-  header .group{display:flex; gap:.15rem; align-items:center; background:#0e1219; padding:.22rem; border-radius:10px; border:1px solid #1e2430; position:relative}
-    [data-theme="light"] header .group{background:#e5e7eb; border:1px solid #d1d5db;}
-    button{appearance:none; background:#0e1219; border:1px solid #273042; color:var(--ink); padding:.45rem .6rem; border-radius:8px; cursor:pointer; font-size:.92rem}
-    [data-theme="light"] button{background:#f9fafb; border:1px solid #d1d5db;}
-    button:hover{border-color:#3a4a68}
-    [data-theme="light"] button:hover{border-color:#9ca3af;}
-    button:disabled{opacity:0.4; cursor:not-allowed; border-color:#1e2430;}
-    button:disabled:hover{border-color:#1e2430;}
-    [data-theme="light"] button:disabled{opacity:0.4; border-color:#d1d5db;}
-    [data-theme="light"] button:disabled:hover{border-color:#d1d5db;}
-    button.active{outline:2px solid var(--accent);}
-    button.danger{border-color:#623; color:#ffb3c7}
-    button.ok{border-color:#1b3; color:var(--ok)}
-    button svg{display:block;}
+
+    [data-theme="light"] .junction-size-option.selected {
+      background: rgba(59, 130, 246, 0.1);
+    }
+
+    header .group {
+      display: flex;
+      gap: .15rem;
+      align-items: center;
+      background: #0e1219;
+      padding: .22rem;
+      border-radius: 10px;
+      border: 1px solid #1e2430;
+      position: relative
+    }
+
+    [data-theme="light"] header .group {
+      background: #e5e7eb;
+      border: 1px solid #d1d5db;
+    }
+
+    button {
+      appearance: none;
+      background: #0e1219;
+      border: 1px solid #273042;
+      color: var(--ink);
+      padding: .45rem .6rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: .92rem
+    }
+
+    [data-theme="light"] button {
+      background: #f9fafb;
+      border: 1px solid #d1d5db;
+    }
+
+    button:hover {
+      border-color: #3a4a68
+    }
+
+    [data-theme="light"] button:hover {
+      border-color: #9ca3af;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      border-color: #1e2430;
+    }
+
+    button:disabled:hover {
+      border-color: #1e2430;
+    }
+
+    [data-theme="light"] button:disabled {
+      opacity: 0.4;
+      border-color: #d1d5db;
+    }
+
+    [data-theme="light"] button:disabled:hover {
+      border-color: #d1d5db;
+    }
+
+    button.active {
+      outline: 2px solid var(--accent);
+    }
+
+    button.danger {
+      border-color: #623;
+      color: #ffb3c7
+    }
+
+    button.ok {
+      border-color: #1b3;
+      color: var(--ok)
+    }
+
+    button svg {
+      display: block;
+    }
+
     /* Resizable panels */
-    .panel{background:var(--panel); display:flex; flex-direction:column; overflow:hidden; position:relative; transition:width 0.2s ease; min-height:0;}
-    .panel.collapsed{overflow:hidden; min-width:40px !important; flex-shrink:0;}
-    .panel-header{display:flex; align-items:center; justify-content:space-between; padding:.5rem .75rem; background:var(--panel); border-bottom:1px solid #22262f; overflow:hidden;}
-    [data-theme="light"] .panel-header{border-bottom:1px solid #d1d5db;}
-    .panel.collapsed .panel-header{border-bottom:none; flex-direction:column; gap:.2rem; padding:.3rem .3rem; align-items:center;}
-    .panel-header h2{margin:0; font-size:1.05rem; color:#cbd5e1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-    .panel.collapsed .panel-header h2{font-size:1.2rem; font-weight:bold;}
-    .panel-toggle{background:none; border:1px solid #273042; color:var(--muted); padding:.25rem .4rem; border-radius:6px; cursor:pointer; font-size:.75rem; min-width:24px; flex-shrink:0;}
-    .panel-toggle:hover{border-color:#3a4a68; color:var(--ink);}
-    .panel-content{flex:1; padding:.75rem; overflow:auto;}
-    .panel.collapsed .panel-content{display:none; visibility:hidden; opacity:0;}
-    #left{border-right:1px solid #22262f; width:320px; max-width:600px;}
-    [data-theme="light"] #left{border-right:1px solid #d1d5db;}
-    #left:not(.collapsed){min-width:200px;}
-    #right{border-left:1px solid #22262f; width:320px; max-width:600px;}
-    [data-theme="light"] #right{border-left:1px solid #d1d5db;}
-    #right:not(.collapsed){min-width:200px;}
-    .resizer{width:6px; background:transparent; cursor:col-resize; flex-shrink:0; position:relative; z-index:10;}
-    .resizer:hover{background:rgba(97, 218, 251, 0.2);}
-    .resizer.resizing{background:rgba(97, 218, 251, 0.4);}
-    #center{flex:1; display:flex; flex-direction:column; min-height:0;}
-    h2{margin:.25rem 0 .5rem; font-size:1.05rem; color:#cbd5e1}
-    [data-theme="light"] h2{color:#333333;}
-    .row{display:flex; gap:.5rem; align-items:center; margin:.4rem 0}
-    label{color:var(--muted); font-size:.9rem}
-    input[type="text"], select, input[type="number"]{width:100%; background:#0e1219; color:var(--ink); border:1px solid #273042; border-radius:8px; padding:.4rem .5rem}
-    [data-theme="light"] input[type="text"], [data-theme="light"] select, [data-theme="light"] input[type="number"]{background:#ffffff; color:#333333; border:1px solid #666666;}
-    input[type="file"]{width:100%}
-    .hint{color:#9aa3b2; font-size:.85rem;}
-    .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; padding:.05rem .35rem; background:#0b0f16; border:1px solid #273042; border-radius:6px}
-    [data-theme="light"] .kbd{background:#e5e7eb; border:1px solid #9ca3af; color:#333333;}
-    #editorWrap{position:relative; flex:1; display:flex; flex-direction:column; min-height:0;}
-    #svg{width:100%; height:100%; display:block; background:var(--bg); flex:1;}
-    .overlayTip{position:absolute; left:10px; top:10px; background:rgba(14,18,25,.75); border:1px solid #273042; padding:.35rem .5rem; border-radius:8px; font-size:.85rem; z-index:10;}
-    [data-theme="light"] .overlayTip{background:rgba(255,255,255,.9); border:1px solid #9ca3af; color:#333333;}
-    #coordDisplay{top:10px !important; left:10px !important; bottom:auto !important;}
-    /* Hover cues for hit-testing feedback */
-    .wire-stroke{transition:stroke .08s ease, filter .08s ease}
-    .wire-stroke.hover{stroke:var(--select); filter:drop-shadow(0 0 2px rgba(245,158,11,.6))}
-    /* Selected component: tint only its symbol graphics (not pins/text/hitbox) */
-    #components g.comp.selected > g line,
-    #components g.comp.selected > g path,
-    #components g.comp.selected > g polyline,
-    #components g.comp.selected > g circle,
-    #components g.comp.selected > g rect {
-      stroke: var(--select) !important;
-      filter: drop-shadow(0 0 2px rgba(245,158,11,.6));
+    .panel {
+      background: var(--panel);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+      transition: width 0.2s ease;
+      min-height: 0;
     }
+
+    .panel.collapsed {
+      overflow: hidden;
+      min-width: 40px !important;
+      flex-shrink: 0;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .5rem .75rem;
+      background: var(--panel);
+      border-bottom: 1px solid #22262f;
+      overflow: hidden;
+    }
+
+    [data-theme="light"] .panel-header {
+      border-bottom: 1px solid #d1d5db;
+    }
+
+    .panel.collapsed .panel-header {
+      border-bottom: none;
+      flex-direction: column;
+      gap: .2rem;
+      padding: .3rem .3rem;
+      align-items: center;
+    }
+
+    .panel-header h2 {
+      margin: 0;
+      font-size: 1.05rem;
+      color: #cbd5e1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .panel.collapsed .panel-header h2 {
+      font-size: 1.2rem;
+      font-weight: bold;
+    }
+
+    .panel-toggle {
+      background: none;
+      border: 1px solid #273042;
+      color: var(--muted);
+      padding: .25rem .4rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: .75rem;
+      min-width: 24px;
+      flex-shrink: 0;
+    }
+
+    .panel-toggle:hover {
+      border-color: #3a4a68;
+      color: var(--ink);
+    }
+
+    .panel-content {
+      flex: 1;
+      padding: .75rem;
+      overflow: auto;
+    }
+
+    .panel.collapsed .panel-content {
+      display: none;
+      visibility: hidden;
+      opacity: 0;
+    }
+
+    #left {
+      border-right: 1px solid #22262f;
+      width: 320px;
+      max-width: 600px;
+    }
+
+    [data-theme="light"] #left {
+      border-right: 1px solid #d1d5db;
+    }
+
+    #left:not(.collapsed) {
+      min-width: 200px;
+    }
+
+    #right {
+      border-left: 1px solid #22262f;
+      width: 320px;
+      max-width: 600px;
+    }
+
+    [data-theme="light"] #right {
+      border-left: 1px solid #d1d5db;
+    }
+
+    #right:not(.collapsed) {
+      min-width: 200px;
+    }
+
+    .resizer {
+      width: 6px;
+      background: transparent;
+      cursor: col-resize;
+      flex-shrink: 0;
+      position: relative;
+      z-index: 10;
+    }
+
+    .resizer:hover {
+      background: rgba(97, 218, 251, 0.2);
+    }
+
+    .resizer.resizing {
+      background: rgba(97, 218, 251, 0.4);
+    }
+
+    #center {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    h2 {
+      margin: .25rem 0 .5rem;
+      font-size: 1.05rem;
+      color: #cbd5e1
+    }
+
+    [data-theme="light"] h2 {
+      color: #333333;
+    }
+
+    .row {
+      display: flex;
+      gap: .5rem;
+      align-items: center;
+      margin: .4rem 0
+    }
+
+    label {
+      color: var(--muted);
+      font-size: .9rem
+    }
+
+    input[type="text"],
+    select,
+    input[type="number"] {
+      width: 100%;
+      background: #0e1219;
+      color: var(--ink);
+      border: 1px solid #273042;
+      border-radius: 8px;
+      padding: .4rem .5rem
+    }
+
+    [data-theme="light"] input[type="text"],
+    [data-theme="light"] select,
+    [data-theme="light"] input[type="number"] {
+      background: #ffffff;
+      color: #333333;
+      border: 1px solid #666666;
+    }
+
+    input[type="file"] {
+      width: 100%
+    }
+
+    .hint {
+      color: #9aa3b2;
+      font-size: .85rem;
+    }
+
+    .kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      padding: .05rem .35rem;
+      background: #0b0f16;
+      border: 1px solid #273042;
+      border-radius: 6px
+    }
+
+    [data-theme="light"] .kbd {
+      background: #e5e7eb;
+      border: 1px solid #9ca3af;
+      color: #333333;
+    }
+
+    #editorWrap {
+      position: relative;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    #svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: var(--bg);
+      flex: 1;
+    }
+
+    .overlayTip {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      background: rgba(14, 18, 25, .75);
+      border: 1px solid #273042;
+      padding: .35rem .5rem;
+      border-radius: 8px;
+      font-size: .85rem;
+      z-index: 10;
+    }
+
+    [data-theme="light"] .overlayTip {
+      background: rgba(255, 255, 255, .9);
+      border: 1px solid #9ca3af;
+      color: #333333;
+    }
+
+    #coordDisplay {
+      top: 10px !important;
+      left: 10px !important;
+      bottom: auto !important;
+    }
+
+    /* Hover cues for hit-testing feedback */
+    .wire-stroke {
+      transition: stroke .08s ease, filter .08s ease
+    }
+
+    .wire-stroke.hover {
+      stroke: var(--select);
+      filter: drop-shadow(0 0 2px rgba(245, 158, 11, .6))
+    }
+
+    /* Selected component: tint only its symbol graphics (not pins/text/hitbox) */
+    #components g.comp.selected>g line,
+    #components g.comp.selected>g path,
+    #components g.comp.selected>g polyline,
+    #components g.comp.selected>g circle,
+    #components g.comp.selected>g rect {
+      stroke: var(--select) !important;
+      filter: drop-shadow(0 0 2px rgba(245, 158, 11, .6));
+    }
+
     /* If a symbol element is filled (e.g., transistor arrow), color its fill too */
-    #components g.comp.selected > g [fill="var(--component)"] {
+    #components g.comp.selected>g [fill="var(--component)"] {
       fill: var(--select) !important;
     }
-    
+
     /* Keep strokes visually consistent when zooming the SVG viewBox */
-    svg line, svg path, svg polyline, svg circle { vector-effect: non-scaling-stroke; }
+    svg line,
+    svg path,
+    svg polyline,
+    svg circle {
+      vector-effect: non-scaling-stroke;
+    }
+
     /* Crosshair overlay while wiring */
-    body.mode-wire #svg{ cursor: crosshair; }
+    body.mode-wire #svg {
+      cursor: crosshair;
+    }
+
     /* Pan cursors */
-    body.mode-pan #svg{ cursor: grab; }
-    body.mode-pan.panning #svg{ cursor: grabbing; }
+    body.mode-pan #svg {
+      cursor: grab;
+    }
+
+    body.mode-pan.panning #svg {
+      cursor: grabbing;
+    }
+
     /* Also show grabbing during mid-mouse pan even if not in Pan mode */
-    body.panning #svg{ cursor: grabbing; }
+    body.panning #svg {
+      cursor: grabbing;
+    }
+
     /* Crosshair styles are now set inline via JavaScript based on mode */
     /* Marquee selection box (drawn in #overlay) */
     #overlay rect.marquee {
-      fill: rgba(245, 158, 11, 0.12);   /* subtle fill */
+      fill: rgba(245, 158, 11, 0.12);
+      /* subtle fill */
       stroke: var(--select);
       stroke-width: 2;
       stroke-dasharray: 6 4;
       pointer-events: none;
     }
+
     /* Inspector value + units on a single line, no wrapping */
-    #inspector .hstack{ display:flex; gap:8px; align-items:center; }
-    #inspector .hstack input[type="text"]{ flex:1 1 0; min-width:0; }     /* wide value box */
+    #inspector .hstack {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    #inspector .hstack input[type="text"] {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
+    /* wide value box */
     /* Units dropdown: measure to content via JS, but cap visually via CSS too */
-    #inspector .hstack select{
-      flex:0 0 auto;
-      min-width:72px;
-      max-width:50%;                 /* hard cap: never exceed half the row */
-      white-space:nowrap;
-      width:auto;                    /* prevent global select{width:100%} */
+    #inspector .hstack select {
+      flex: 0 0 auto;
+      min-width: 72px;
+      max-width: 50%;
+      /* hard cap: never exceed half the row */
+      white-space: nowrap;
+      width: auto;
+      /* prevent global select{width:100%} */
     }
+
     /* Swatch-only dropdowns */
-    #wireColorGroup{ position:relative; }
-    .palette{
-      position:absolute; top:100%; left:0; margin-top:6px;
-      background:var(--panel); border:1px solid #273042; padding:6px;
-      border-radius:8px; display:grid; grid-template-columns: repeat(7, 20px);
-      gap:6px; z-index:7;
+    #wireColorGroup {
+      position: relative;
     }
-    [data-theme="light"] .palette{background:var(--panel); border:1px solid #d1d5db;}
-    .palette .swatch-btn{
-      width:20px; height:20px; border:1px solid #273042; border-radius:4px; cursor:pointer;
+
+    .palette {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      margin-top: 6px;
+      background: var(--panel);
+      border: 1px solid #273042;
+      padding: 6px;
+      border-radius: 8px;
+      display: grid;
+      grid-template-columns: repeat(7, 20px);
+      gap: 6px;
+      z-index: 7;
     }
-    [data-theme="light"] .palette .swatch-btn{border:1px solid #d1d5db;}
-    .palette .swatch-btn.selected{ outline:2px solid var(--accent); }
-    #wireColorBtn .swatch{ width:16px; height:16px; }
+
+    [data-theme="light"] .palette {
+      background: var(--panel);
+      border: 1px solid #d1d5db;
+    }
+
+    .palette .swatch-btn {
+      width: 20px;
+      height: 20px;
+      border: 1px solid #273042;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    [data-theme="light"] .palette .swatch-btn {
+      border: 1px solid #d1d5db;
+    }
+
+    .palette .swatch-btn.selected {
+      outline: 2px solid var(--accent);
+    }
+
+    #wireColorBtn .swatch {
+      width: 16px;
+      height: 16px;
+    }
+
     /* Inspector wire-color holder must be relative for its palette */
-    .inspector-color{ position:relative; }
-    .inspector-color .palette{ top:calc(100% + 6px); left:0; }    
+    .inspector-color {
+      position: relative;
+    }
+
+    .inspector-color .palette {
+      top: calc(100% + 6px);
+      left: 0;
+    }
+
     /* Grid button dim/off visual */
-    .group button.dim{ color:var(--muted); opacity:0.75; font-weight:400 }
+    .group button.dim {
+      color: var(--muted);
+      opacity: 0.75;
+      font-weight: 400
+    }
+
     /* Grid ON: green outline */
-    .group button.grid-on{ box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.15), inset 0 0 0 1px var(--ok); }
+    .group button.grid-on {
+      box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.15), inset 0 0 0 1px var(--ok);
+    }
+
     /* Grid OFF: red outline */
-    .group button.grid-off{ box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.12), inset 0 0 0 1px var(--danger); }
-    
+    .group button.grid-off {
+      box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.12), inset 0 0 0 1px var(--danger);
+    }
+
     /* Status bar in center column */
-    #statusBar{
-      display:flex; 
-      align-items:center; 
-      gap:.5rem; 
-      padding:.4rem .75rem; 
-      background:var(--panel); 
-      border-top:1px solid #22262f; 
-      font-size:.85rem;
-      z-index:3;
-      flex-shrink:0;
+    #statusBar {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .4rem .75rem;
+      background: var(--panel);
+      border-top: 1px solid #22262f;
+      font-size: .85rem;
+      z-index: 3;
+      flex-shrink: 0;
     }
-    [data-theme="light"] #statusBar{border-top:1px solid #d1d5db;}
-    #statusBar .status-group{
-      display:flex; 
-      gap:.25rem; 
-      align-items:center; 
-      background:#0e1219; 
-      padding:.15rem .3rem; 
-      border-radius:8px; 
-      border:1px solid #1e2430;
+
+    [data-theme="light"] #statusBar {
+      border-top: 1px solid #d1d5db;
     }
-    [data-theme="light"] #statusBar .status-group{background:#e5e7eb; border:1px solid #d1d5db;}
-    #statusBar button{
-      padding:.3rem .5rem; 
-      font-size:.82rem;
-      min-width:unset;
+
+    #statusBar .status-group {
+      display: flex;
+      gap: .25rem;
+      align-items: center;
+      background: #0e1219;
+      padding: .15rem .3rem;
+      border-radius: 8px;
+      border: 1px solid #1e2430;
     }
-    #statusBar select{
-      padding:.3rem .4rem; 
-      font-size:.82rem;
-      width:auto;
-      min-width:60px;
+
+    [data-theme="light"] #statusBar .status-group {
+      background: #e5e7eb;
+      border: 1px solid #d1d5db;
     }
-    #statusBar .status-info{
-      margin-left:auto; 
-      color:#9aa3b2;
-      display:flex;
-      align-items:center;
-      gap:.5rem;
+
+    #statusBar button {
+      padding: .3rem .5rem;
+      font-size: .82rem;
+      min-width: unset;
     }
+
+    #statusBar select {
+      padding: .3rem .4rem;
+      font-size: .82rem;
+      width: auto;
+      min-width: 60px;
+    }
+
+    #statusBar .status-info {
+      margin-left: auto;
+      color: #9aa3b2;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+
     /* Apply same status button styles as header buttons */
-    #statusBar .status-group button.dim{ color:var(--muted); opacity:0.75; font-weight:400 }
-    #statusBar .status-group button.grid-on{ box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.15), inset 0 0 0 1px var(--ok); }
-    #statusBar .status-group button.grid-off{ box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.12), inset 0 0 0 1px var(--danger); }
+    #statusBar .status-group button.dim {
+      color: var(--muted);
+      opacity: 0.75;
+      font-weight: 400
+    }
+
+    #statusBar .status-group button.grid-on {
+      box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.15), inset 0 0 0 1px var(--ok);
+    }
+
+    #statusBar .status-group button.grid-off {
+      box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.12), inset 0 0 0 1px var(--danger);
+    }
+
+    #statusBar .coord-input-group {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      padding: 0 8px;
+      font-size: 13px;
+    }
+
+    #statusBar .coord-input-group label {
+      font-weight: 500;
+      color: var(--fg);
+      margin-right: 2px;
+    }
+
+    #statusBar .coord-input-group input {
+      width: 80px;
+      padding: 2px 6px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--fg);
+      font-size: 12px;
+      font-family: 'SF Mono', Monaco, monospace;
+      text-align: right;
+    }
+
+    #statusBar .coord-input-group input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+    }
+
+    [data-theme="light"] #statusBar .coord-input-group input {
+      background: #fff;
+      border-color: #d1d5db;
+    }
   </style>
 </head>
+
 <body>
-<div class="app">
-  <header id="mainHeader">
-    <div class="group" id="modeGroup">
-      <button data-mode="select" class="active" title="Select/Move (V)">Select</button>
-      <button data-mode="wire" title="Wire (W)">Wire</button>
-      <button data-mode="delete" title="Delete (Del)">Delete</button>
-      <button data-mode="pan" title="Pan (P or MMB drag)">Pan</button>
-      <button data-mode="move" title="Move selected (M / Arrow keys)">Move</button>
-    </div>
-    <div class="group" id="junctionDotGroup">
-      <button id="placeJunctionDotBtn" title="Place Junction Dot">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <!-- Plus/crosshair -->
-          <line x1="12" y1="6" x2="12" y2="10" />
-          <line x1="12" y1="14" x2="12" y2="18" />
-          <line x1="6" y1="12" x2="10" y2="12" />
-          <line x1="14" y1="12" x2="18" y2="12" />
-          <!-- Center dot (filled) -->
-          <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
-        </svg>
-      </button>
-      <button id="deleteJunctionDotBtn" title="Delete Junction Dot">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <!-- Center dot (filled) -->
-          <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
-          <!-- X over it -->
-          <line x1="6" y1="6" x2="18" y2="18" />
-          <line x1="18" y1="6" x2="6" y2="18" />
-        </svg>
-      </button>
-    </div>
-    <div class="group">
-      <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 14L4 9L9 4" />
-          <path d="M20 20V14.5C20 11.4624 17.5376 9 14.5 9H4" />
-        </svg>
-      </button>
-      <button id="redoBtn" title="Redo (Ctrl+Y)" disabled>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M15 14L20 9L15 4" />
-          <path d="M4 20V14.5C4 11.4624 6.46243 9 9.5 9H20" />
-        </svg>
-      </button>
-    </div>
-    <div class="vsep"></div> 
-  <div class="group" id="paletteRow1">
-      <button data-tool="resistor" title="Place Resistor (R)">
-        <svg width="32" height="12" viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M2 12H10L14 6L22 18L30 6L38 18L46 6L54 18L58 12H62" />
-        </svg>
-      </button>
-      <button data-tool="capacitor" title="Place Capacitor (C)">
-        <svg width="32" height="12" viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M2 12H26" />
-          <path d="M26 4V20" />
-          <path d="M38 4V20" />
-          <path d="M38 12H62" />
-        </svg>
-      </button>
-      <button data-tool="inductor" title="Place Inductor (L)">Inductor</button>
-      <button data-tool="diode" title="Place Diode (D)">Diode</button>
-      <button data-tool="npn" title="Place NPN">NPN</button>
-      <button data-tool="pnp" title="Place PNP">PNP</button>
-      <button data-tool="ground" title="Place Ground">GND</button>
-      <button data-tool="battery" title="Place Battery">Battery</button>
-      <button data-tool="ac" title="Place AC Source">AC Source</button>
-    </div>
-    <!-- Sub-type row (appears when a type with subtypes is active; for: Diode, Capacitor) -->
-    <div class="group" id="paletteRow2" style="display:none">
-      <select id="diodeSelect" title="Diode subtype">
-        <option value="generic" selected>Generic</option>
-        <option value="schottky">Schottky</option>
-        <option value="zener">Zener</option>
-        <option value="led">Light-emitting (LED)</option>
-        <option value="photo">Photo</option>
-        <option value="tunnel">Tunnel</option>
-        <option value="varactor">Varactor / Varicap</option>
-        <option value="laser">Laser diode</option>
-        <option value="tvs_uni" title="Unidirectional Transient Voltage Suppressor diode">TVS Unidirectional</option>
-        <option value="tvs_bi" title="Bidirectional Transient Voltage Suppressor diode">TVS Bidirectional</option>
-      </select>
-      <div class="capacitor-subtypes">
-        <button id="capacitorStandard" data-subtype="standard" title="Standard Capacitor">
-          <svg viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2">
+  <div class="app">
+    <header id="mainHeader">
+      <div class="group" id="modeGroup">
+        <button data-mode="select" class="active" title="Select/Move (V)">Select</button>
+        <button data-mode="wire" title="Wire (W)">Wire</button>
+        <button data-mode="delete" title="Delete (Del)">Delete</button>
+        <button data-mode="pan" title="Pan (P or MMB drag)">Pan</button>
+        <button data-mode="move" title="Move selected (M / Arrow keys)">Move</button>
+      </div>
+      <div class="group" id="junctionDotGroup">
+        <button id="placeJunctionDotBtn" title="Place Junction Dot">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <!-- Plus/crosshair -->
+            <line x1="12" y1="6" x2="12" y2="10" />
+            <line x1="12" y1="14" x2="12" y2="18" />
+            <line x1="6" y1="12" x2="10" y2="12" />
+            <line x1="14" y1="12" x2="18" y2="12" />
+            <!-- Center dot (filled) -->
+            <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+        <button id="deleteJunctionDotBtn" title="Delete Junction Dot">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <!-- Center dot (filled) -->
+            <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
+            <!-- X over it -->
+            <line x1="6" y1="6" x2="18" y2="18" />
+            <line x1="18" y1="6" x2="6" y2="18" />
+          </svg>
+        </button>
+      </div>
+      <div class="group">
+        <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 14L4 9L9 4" />
+            <path d="M20 20V14.5C20 11.4624 17.5376 9 14.5 9H4" />
+          </svg>
+        </button>
+        <button id="redoBtn" title="Redo (Ctrl+Y)" disabled>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 14L20 9L15 4" />
+            <path d="M4 20V14.5C4 11.4624 6.46243 9 9.5 9H20" />
+          </svg>
+        </button>
+      </div>
+      <div class="vsep"></div>
+      <div class="group" id="paletteRow1">
+        <button data-tool="resistor" title="Place Resistor (R)">
+          <svg width="32" height="12" viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 12H10L14 6L22 18L30 6L38 18L46 6L54 18L58 12H62" />
+          </svg>
+        </button>
+        <button data-tool="capacitor" title="Place Capacitor (C)">
+          <svg width="32" height="12" viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
             <path d="M2 12H26" />
             <path d="M26 4V20" />
             <path d="M38 4V20" />
             <path d="M38 12H62" />
           </svg>
         </button>
-        <button id="capacitorPolarized" data-subtype="polarized" title="Polarized Capacitor">
-          <svg viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M2 12H26" />
-            <path d="M26 4V20" />
-            <path d="M38 4 Q 32 12 38 20" />
-            <path d="M38 12H62" />
-          </svg>
+        <button data-tool="inductor" title="Place Inductor (L)">Inductor</button>
+        <button data-tool="diode" title="Place Diode (D)">Diode</button>
+        <button data-tool="npn" title="Place NPN">NPN</button>
+        <button data-tool="pnp" title="Place PNP">PNP</button>
+        <button data-tool="ground" title="Place Ground">GND</button>
+        <button data-tool="battery" title="Place Battery">Battery</button>
+        <button data-tool="ac" title="Place AC Source">AC Source</button>
+      </div>
+      <!-- Sub-type row (appears when a type with subtypes is active; for: Diode, Capacitor) -->
+      <div class="group" id="paletteRow2" style="display:none">
+        <select id="diodeSelect" title="Diode subtype">
+          <option value="generic" selected>Generic</option>
+          <option value="schottky">Schottky</option>
+          <option value="zener">Zener</option>
+          <option value="led">Light-emitting (LED)</option>
+          <option value="photo">Photo</option>
+          <option value="tunnel">Tunnel</option>
+          <option value="varactor">Varactor / Varicap</option>
+          <option value="laser">Laser diode</option>
+          <option value="tvs_uni" title="Unidirectional Transient Voltage Suppressor diode">TVS Unidirectional</option>
+          <option value="tvs_bi" title="Bidirectional Transient Voltage Suppressor diode">TVS Bidirectional</option>
+        </select>
+        <div class="capacitor-subtypes">
+          <button id="capacitorStandard" data-subtype="standard" title="Standard Capacitor">
+            <svg viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M2 12H26" />
+              <path d="M26 4V20" />
+              <path d="M38 4V20" />
+              <path d="M38 12H62" />
+            </svg>
+          </button>
+          <button id="capacitorPolarized" data-subtype="polarized" title="Polarized Capacitor">
+            <svg viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M2 12H26" />
+              <path d="M26 4V20" />
+              <path d="M38 4 Q 32 12 38 20" />
+              <path d="M38 12H62" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="group">
+        <button id="rotateBtn" title="Rotate 90° (R)">Rotate</button>
+        <button id="clearBtn" class="danger" title="Clear (Ctrl+K)">Clear</button>
+      </div>
+      <div class="group" id="wireColorGroup" title="Wire color (new wires only)">
+        <button id="wireColorBtn" title="Wire color">
+          <span style="color:#9aa3b2;margin-right:.25rem">Wire</span>
+          <span id="wireColorSwatch" class="swatch"></span>
         </button>
+        <div id="wireColorMenu" class="palette" style="display:none"></div>
       </div>
-    </div>    
-    <div class="group">
-      <button id="rotateBtn" title="Rotate 90° (R)">Rotate</button>
-      <button id="clearBtn" class="danger" title="Clear (Ctrl+K)">Clear</button>
-    </div>
-    <div class="group" id="wireColorGroup" title="Wire color (new wires only)">
-      <button id="wireColorBtn" title="Wire color">
-        <span style="color:#9aa3b2;margin-right:.25rem">Wire</span>
-        <span id="wireColorSwatch" class="swatch"></span>
-      </button>
-      <div id="wireColorMenu" class="palette" style="display:none"></div>
-    </div>    
-    <div class="group">
-      <button id="zoomOutBtn" title="Zoom Out (−)">−</button>
-      <button id="zoomInBtn" title="Zoom In (+)">+</button>
-      <button id="zoomResetBtn" title="Reset Zoom (1:1)">100%</button>
-      <input id="zoomPct" type="text" value="100%" title="Zoom % (editable)" style="width:6ch;text-align:right" />      
-    </div>    
-    <div class="group">
-      <button id="saveBtn" class="ok" title="Save JSON (Ctrl+S)">Save</button>
-      <button id="loadBtn" title="Load JSON">Load</button>
-      <input id="fileInput" type="file" accept="application/json" style="display:none" />
-    </div>
-    <div class="group">
-      <button id="helpBtn" title="Help & Documentation" onclick="window.open('help.html', '_blank')">Help</button>
-    </div>
-  </header>
-  <div class="app-body">
-    <aside id="left" class="panel">
-      <div class="panel-header">
-        <h2>Inspector</h2>
-        <button class="panel-toggle" data-panel="left" title="Collapse/Expand">◀</button>
+      <div class="group">
+        <button id="zoomOutBtn" title="Zoom Out (−)">−</button>
+        <button id="zoomInBtn" title="Zoom In (+)">+</button>
+        <button id="zoomResetBtn" title="Reset Zoom (1:1)">100%</button>
+        <input id="zoomPct" type="text" value="100%" title="Zoom % (editable)" style="width:6ch;text-align:right" />
       </div>
-      <div class="panel-content">
-        <div id="inspectorNone" class="hint">Select a component or wire to edit its properties.</div>
-        <div id="inspector"></div>
-        <hr style="border-color:#22262f; margin:1rem 0" />
-        <h2>Tips</h2>
-        <ul class="hint" style="line-height:1.5">
-          <li><span class="kbd">V</span> Select/Move · <span class="kbd">W</span> Wire · <span class="kbd">Del</span> Delete</li>
-          <li>Click grid to place selected part. Drag to move. <span class="kbd">R</span> rotates a part.</li>
-          <li>Wiring: click start → click turns → double‑click or <span class="kbd">Enter</span> to finish. <span class="kbd">Esc</span> to cancel.</li>
-          <li>Select: click-drag on empty space to draw a marquee window. Release to select (by default, the nearest <em>wire segment</em> in the box). Hold <span class="kbd">Shift</span> while dragging to prefer <em>components</em> instead. Click empty space to clear.</li>
-          <li>Delete: click a wire <em>segment</em> or component to remove.</li>
-        </ul>
+      <div class="group">
+        <button id="saveBtn" class="ok" title="Save JSON (Ctrl+S)">Save</button>
+        <button id="loadBtn" title="Load JSON">Load</button>
+        <input id="fileInput" type="file" accept="application/json" style="display:none" />
       </div>
-    </aside>
-    <div class="resizer" data-resizer="left"></div>
-    <div class="center-column">
-      <main id="center">
-        <div id="editorWrap">
-          <svg id="svg" viewBox="0 0 1600 1000" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
-            <path d="M24 0H0V24" fill="none" stroke="var(--grid)" stroke-width="1" />
-          </pattern>
-          <pattern id="gridBold" width="120" height="120" patternUnits="userSpaceOnUse">
-            <rect width="120" height="120" fill="url(#grid)"/>
-            <path d="M120 0H0V120" fill="none" stroke="var(--grid-bold)" stroke-width="1.5" />
-          </pattern>
-          <!-- Marker for wire endpoints when drawing -->
-          <marker id="dot" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5">
-            <circle cx="5" cy="5" r="3" fill="var(--wire)" />
-          </marker>
-        </defs>
-        <rect id="gridRect" x="0" y="0" width="1600" height="1000" fill="url(#gridBold)" />
-        <g id="dotGrid"></g>
-        <g id="wires"></g>
-        <g id="junctions"></g>
-        <g id="components"></g>
-        <g id="drawing"></g>
-        <g id="overlay" class="crosshair"></g>
-      </svg>
-          <div class="overlayTip" id="coordDisplay" style="display: none;"></div>
-        </div>
-      </main>
-      <footer id="statusBar">
-        <div class="status-group">
-          <button id="orthoToggleBtn" title="Ortho mode (O)">Ortho</button>
-          <button id="snapToggleBtn" title="Snap mode (S)">50mil</button>
-          <button id="gridToggleBtn" title="Toggle Grid (G)">Grid</button>
-        </div>
-        <div class="status-group">
-          <button id="crosshairToggleBtn" title="Toggle Crosshair Length (X)">+</button>
-          <button id="junctionDotsBtn" title="Toggle Junction Dots">.</button>
-          <button id="trackingToggleBtn" title="Toggle Tracking (T)">- -</button>
-        </div>
-        <div class="status-group">
-          <button id="themeToggleBtn" title="Toggle Dark/Light Theme">☀</button>
-          <select id="unitsSelect" title="Display Units">
-            <option value="mm">mm</option>
-            <option value="in">in</option>
-            <option value="mils" selected>mils</option>
-          </select>
-        </div>
-        <div class="status-info">
-          Mode: <b id="modeLabel">Select</b> · Grid: <span id="gridSizeKbd" class="kbd">24px</span> · Snap: <span id="snapKbd" class="kbd">on</span>
-        </div>
-      </footer>
-    </div>
-    <div class="resizer" data-resizer="right"></div>
-    <aside id="right" class="panel">
-      <div class="panel-header">
-        <h2>Project</h2>
-        <button class="panel-toggle" data-panel="right" title="Collapse/Expand">▶</button>
+      <div class="group">
+        <button id="helpBtn" title="Help & Documentation" onclick="window.open('help.html', '_blank')">Help</button>
       </div>
-      <div class="panel-content">
-        <div class="row"><label>Title</label></div>
-        <div class="row"><input id="projTitle" type="text" placeholder="Untitled schematic" /></div>
-        <div class="row hint">Saved into JSON</div>
-        <hr style="border-color:#22262f; margin:1rem 0" />
-        <h2>Settings</h2>
-        <div class="row"><label>Schematic Standard</label></div>
-        <div class="row">
-          <select id="defaultResistorStyleSelect">
-            <option value="ansi" selected>ANSI/IEEE (US)</option>
-            <option value="iec">IEC (International)</option>
-          </select>
+    </header>
+    <div class="app-body">
+      <aside id="left" class="panel">
+        <div class="panel-header">
+          <h2>Inspector</h2>
+          <button class="panel-toggle" data-panel="left" title="Collapse/Expand">◀</button>
         </div>
-        <div class="row hint">Default for new components</div>
-        <div class="row"><label>Junction Dot Size</label></div>
-        <div class="row">
-          <div id="junctionDotSizeSelect" class="junction-size-selector">
-            <button type="button" class="junction-size-option selected" data-size="small" title="Small (30 mils / 0.762mm)">
-              <svg width="32" height="20" viewBox="0 0 32 20">
-                <circle cx="16" cy="10" r="3.0" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
-              </svg>
-              <span>Small</span>
-            </button>
-            <button type="button" class="junction-size-option" data-size="medium" title="Medium (40 mils / 1.016mm)">
-              <svg width="32" height="20" viewBox="0 0 32 20">
-                <circle cx="16" cy="10" r="4.0" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
-              </svg>
-              <span>Medium</span>
-            </button>
-            <button type="button" class="junction-size-option" data-size="large" title="Large (50 mils / 1.27mm)">
-              <svg width="32" height="20" viewBox="0 0 32 20">
-                <circle cx="16" cy="10" r="5.0" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
-              </svg>
-              <span>Large</span>
-            </button>
+        <div class="panel-content">
+          <div id="inspectorNone" class="hint">Select a component or wire to edit its properties.</div>
+          <div id="inspector"></div>
+          <hr style="border-color:#22262f; margin:1rem 0" />
+          <h2>Tips</h2>
+          <ul class="hint" style="line-height:1.5">
+            <li><span class="kbd">V</span> Select/Move · <span class="kbd">W</span> Wire · <span class="kbd">Del</span>
+              Delete</li>
+            <li>Click grid to place selected part. Drag to move. <span class="kbd">R</span> rotates a part.</li>
+            <li>Wiring: click start → click turns → double‑click or <span class="kbd">Enter</span> to finish. <span
+                class="kbd">Esc</span> to cancel.</li>
+            <li>Select: click-drag on empty space to draw a marquee window. Release to select (by default, the nearest
+              <em>wire segment</em> in the box). Hold <span class="kbd">Shift</span> while dragging to prefer
+              <em>components</em> instead. Click empty space to clear.</li>
+            <li>Delete: click a wire <em>segment</em> or component to remove.</li>
+          </ul>
+        </div>
+      </aside>
+      <div class="resizer" data-resizer="left"></div>
+      <div class="center-column">
+        <main id="center">
+          <div id="editorWrap">
+            <svg id="svg" viewBox="0 0 1600 1000" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+                  <path d="M24 0H0V24" fill="none" stroke="var(--grid)" stroke-width="1" />
+                </pattern>
+                <pattern id="gridBold" width="120" height="120" patternUnits="userSpaceOnUse">
+                  <rect width="120" height="120" fill="url(#grid)" />
+                  <path d="M120 0H0V120" fill="none" stroke="var(--grid-bold)" stroke-width="1.5" />
+                </pattern>
+                <!-- Marker for wire endpoints when drawing -->
+                <marker id="dot" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5">
+                  <circle cx="5" cy="5" r="3" fill="var(--wire)" />
+                </marker>
+              </defs>
+              <rect id="gridRect" x="0" y="0" width="1600" height="1000" fill="url(#gridBold)" />
+              <g id="dotGrid"></g>
+              <g id="wires"></g>
+              <g id="junctions"></g>
+              <g id="components"></g>
+              <g id="drawing"></g>
+              <g id="overlay" class="crosshair"></g>
+            </svg>
+            <div class="overlayTip" id="coordDisplay" style="display: none;"></div>
           </div>
-        </div>
-        <div class="row hint">Visual size of junction dots</div>
-        <hr style="border-color:#22262f; margin:1rem 0" />
-        <h2>Nets</h2>
-        <div id="netList" class="hint">—</div>
-        <button id="addNetBtn" style="margin-top:0.5rem; width:100%">Add Net</button>
-        <hr style="border-color:#22262f; margin:1rem 0" />
-        <h2>Counts</h2>
-        <div class="hint" id="counts">—</div>
+        </main>
+        <footer id="statusBar">
+          <div class="status-group">
+            <button id="orthoToggleBtn" title="Ortho mode (O)">Ortho</button>
+            <button id="snapToggleBtn" title="Snap mode (S)">50mil</button>
+            <button id="gridToggleBtn" title="Toggle Grid (G)">Grid</button>
+          </div>
+          <div class="status-group">
+            <button id="crosshairToggleBtn" title="Toggle Crosshair Length (X)">+</button>
+            <button id="junctionDotsBtn" title="Toggle Junction Dots">.</button>
+            <button id="trackingToggleBtn" title="Toggle Tracking (T)">- -</button>
+          </div>
+          <div class="status-group">
+            <button id="themeToggleBtn" title="Toggle Dark/Light Theme">☀</button>
+            <select id="unitsSelect" title="Display Units">
+              <option value="mm">mm</option>
+              <option value="in">in</option>
+              <option value="mils" selected>mils</option>
+            </select>
+          </div>
+          <div class="coord-input-group" id="coordInputGroup" style="display: none;">
+            <label for="coordInputX">X:</label>
+            <input type="text" id="coordInputX" title="X coordinate (type to enter, Tab for Y, Enter to accept)" />
+            <label for="coordInputY">Y:</label>
+            <input type="text" id="coordInputY" title="Y coordinate (Tab/Shift+Tab to switch, Enter to accept)" />
+          </div>
+          <div class="status-info">
+            Mode: <b id="modeLabel">Select</b> · Grid: <span id="gridSizeKbd" class="kbd">24px</span> · Snap: <span
+              id="snapKbd" class="kbd">on</span>
+          </div>
+        </footer>
       </div>
-    </aside>
+      <div class="resizer" data-resizer="right"></div>
+      <aside id="right" class="panel">
+        <div class="panel-header">
+          <h2>Project</h2>
+          <button class="panel-toggle" data-panel="right" title="Collapse/Expand">▶</button>
+        </div>
+        <div class="panel-content">
+          <div class="row"><label>Title</label></div>
+          <div class="row"><input id="projTitle" type="text" placeholder="Untitled schematic" /></div>
+          <div class="row hint">Saved into JSON</div>
+          <hr style="border-color:#22262f; margin:1rem 0" />
+          <h2>Settings</h2>
+          <div class="row"><label>Schematic Standard</label></div>
+          <div class="row">
+            <select id="defaultResistorStyleSelect">
+              <option value="ansi" selected>ANSI/IEEE (US)</option>
+              <option value="iec">IEC (International)</option>
+            </select>
+          </div>
+          <div class="row hint">Default for new components</div>
+          <div class="row"><label>Junction Dot Size</label></div>
+          <div class="row">
+            <div id="junctionDotSizeSelect" class="junction-size-selector">
+              <button type="button" class="junction-size-option selected" data-size="small"
+                title="Small (30 mils / 0.762mm)">
+                <svg width="32" height="20" viewBox="0 0 32 20">
+                  <circle cx="16" cy="10" r="3.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+                </svg>
+                <span>Small</span>
+              </button>
+              <button type="button" class="junction-size-option" data-size="medium" title="Medium (40 mils / 1.016mm)">
+                <svg width="32" height="20" viewBox="0 0 32 20">
+                  <circle cx="16" cy="10" r="4.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+                </svg>
+                <span>Medium</span>
+              </button>
+              <button type="button" class="junction-size-option" data-size="large" title="Large (50 mils / 1.27mm)">
+                <svg width="32" height="20" viewBox="0 0 32 20">
+                  <circle cx="16" cy="10" r="5.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+                </svg>
+                <span>Large</span>
+              </button>
+            </div>
+          </div>
+          <div class="row hint">Visual size of junction dots</div>
+          <hr style="border-color:#22262f; margin:1rem 0" />
+          <h2>Nets</h2>
+          <div id="netList" class="hint">—</div>
+          <button id="addNetBtn" style="margin-top:0.5rem; width:100%">Add Net</button>
+          <hr style="border-color:#22262f; margin:1rem 0" />
+          <h2>Counts</h2>
+          <div class="hint" id="counts">—</div>
+        </div>
+      </aside>
+    </div>
   </div>
-</div>
 
-<!-- NEW: works from file:// (classic) and http(s) (module) -->
-<script>
-(function () {
-  var s = document.createElement('script');
-  if (location.protocol === 'file:') {
-    // Classic script works when opened directly from disk (avoids CORS on module scripts)
-    s.src = 'dist/app.js';
-  } else {
-    // Keep ESM when served over http(s)
-    s.type = 'module';
-    s.src = 'dist/app.js';
-  }
-  document.currentScript.replaceWith(s);
-})();
-</script>
+  <!-- NEW: works from file:// (classic) and http(s) (module) -->
+  <script>
+    (function () {
+      var s = document.createElement('script');
+      if (location.protocol === 'file:') {
+        // Classic script works when opened directly from disk (avoids CORS on module scripts)
+        s.src = 'dist/app.js';
+      } else {
+        // Keep ESM when served over http(s)
+        s.type = 'module';
+        s.src = 'dist/app.js';
+      }
+      document.currentScript.replaceWith(s);
+    })();
+  </script>
 
 </body>
+
 </html>
