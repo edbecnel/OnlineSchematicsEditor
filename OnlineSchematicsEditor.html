@@ -41,6 +41,32 @@
     .capacitor-subtypes{ display: flex; gap: .25rem; }
     .capacitor-subtypes button{ padding: .35rem .5rem; min-width: 48px; }
     .capacitor-subtypes button svg{ width: 32px; height: 16px; }
+    /* Junction dot buttons - match text button dimensions */
+    #junctionDotGroup button{ padding: .45rem .5rem; min-width: 38px; }
+    #junctionDotGroup button svg{ width: 18px; height: 18px; display: block; }
+    /* Undo/Redo buttons - match text button dimensions */
+    #undoBtn, #redoBtn{ padding: .45rem .5rem; min-width: 38px; }
+    #undoBtn svg, #redoBtn svg{ width: 18px; height: 18px; display: block; }
+    /* Junction dot size selector */
+    .junction-size-selector{ display: flex; gap: .25rem; width: 100%; }
+    .junction-size-option{ 
+      flex: 1; 
+      display: flex; 
+      flex-direction: column; 
+      align-items: center; 
+      gap: .25rem; 
+      padding: .4rem .3rem; 
+      min-width: 0;
+      font-size: .8rem;
+    }
+    .junction-size-option svg{ display: block; margin: 0 auto; }
+    .junction-size-option.selected{ 
+      border-color: var(--accent); 
+      background: rgba(97, 218, 251, 0.1); 
+    }
+    [data-theme="light"] .junction-size-option.selected{ 
+      background: rgba(59, 130, 246, 0.1); 
+    }
   header .group{display:flex; gap:.15rem; align-items:center; background:#0e1219; padding:.22rem; border-radius:10px; border:1px solid #1e2430; position:relative}
     [data-theme="light"] header .group{background:#e5e7eb; border:1px solid #d1d5db;}
     button{appearance:none; background:#0e1219; border:1px solid #273042; color:var(--ink); padding:.45rem .6rem; border-radius:8px; cursor:pointer; font-size:.92rem}
@@ -221,8 +247,26 @@
       <button data-mode="move" title="Move selected (M / Arrow keys)">Move</button>
     </div>
     <div class="group" id="junctionDotGroup">
-      <button id="placeJunctionDotBtn" title="Place Junction Dot (J)">+.</button>
-      <button id="deleteJunctionDotBtn" title="Delete Junction Dot (Shift+J)">x.</button>
+      <button id="placeJunctionDotBtn" title="Place Junction Dot">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <!-- Plus/crosshair -->
+          <line x1="12" y1="6" x2="12" y2="10" />
+          <line x1="12" y1="14" x2="12" y2="18" />
+          <line x1="6" y1="12" x2="10" y2="12" />
+          <line x1="14" y1="12" x2="18" y2="12" />
+          <!-- Center dot (filled) -->
+          <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
+        </svg>
+      </button>
+      <button id="deleteJunctionDotBtn" title="Delete Junction Dot">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <!-- Center dot (filled) -->
+          <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
+          <!-- X over it -->
+          <line x1="8" y1="8" x2="16" y2="16" />
+          <line x1="16" y1="8" x2="8" y2="16" />
+        </svg>
+      </button>
     </div>
     <div class="group">
       <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>
@@ -411,6 +455,30 @@
           </select>
         </div>
         <div class="row hint">Default for new components</div>
+        <div class="row"><label>Junction Dot Size</label></div>
+        <div class="row">
+          <div id="junctionDotSizeSelect" class="junction-size-selector">
+            <button type="button" class="junction-size-option selected" data-size="small" title="Small (1.2mm)">
+              <svg width="32" height="20" viewBox="0 0 32 20">
+                <circle cx="16" cy="10" r="2.4" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
+              </svg>
+              <span>Small</span>
+            </button>
+            <button type="button" class="junction-size-option" data-size="medium" title="Medium (2.4mm)">
+              <svg width="32" height="20" viewBox="0 0 32 20">
+                <circle cx="16" cy="10" r="4.8" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
+              </svg>
+              <span>Medium</span>
+            </button>
+            <button type="button" class="junction-size-option" data-size="large" title="Large (3.6mm)">
+              <svg width="32" height="20" viewBox="0 0 32 20">
+                <circle cx="16" cy="10" r="7.2" fill="currentColor" stroke="var(--bg)" stroke-width="1"/>
+              </svg>
+              <span>Large</span>
+            </button>
+          </div>
+        </div>
+        <div class="row hint">Visual size of junction dots</div>
         <hr style="border-color:#22262f; margin:1rem 0" />
         <h2>Nets</h2>
         <div id="netList" class="hint">—</div>

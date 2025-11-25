@@ -115,6 +115,7 @@ const inspector = $q<HTMLElement>('#inspector');
 const inspectorNone = $q<HTMLElement>('#inspectorNone');
 const projTitle = $q<HTMLInputElement>('#projTitle'); // uses .value later
 const defaultResistorStyleSelect = $q<HTMLSelectElement>('#defaultResistorStyleSelect');
+const junctionDotSizeSelect = $q<HTMLElement>('#junctionDotSizeSelect');
 const countsEl = $q<HTMLElement>('#counts');
 const overlayMode = $q<HTMLElement>('#modeLabel');
 const coordDisplay = $q<HTMLElement>('#coordDisplay');
@@ -125,6 +126,8 @@ let gridMode: GridMode = (localStorage.getItem('grid.mode') as GridMode) || 'lin
 
 // Junction dots visibility toggle state (persisted)
 let showJunctionDots = (localStorage.getItem('junctionDots.visible') !== 'false');
+// Junction dot size setting (persisted): 'small' | 'medium' | 'large'
+let junctionDotSize: 'small' | 'medium' | 'large' = (localStorage.getItem('junctionDots.size') as any) || 'small';
 
 // Tracking mode: when true, connection hints are enabled (persisted)
 let trackingMode = (localStorage.getItem('tracking.mode') !== 'false');
@@ -423,6 +426,7 @@ let marquee: {
   interface EditorState {
     components: Component[];
     wires: Wire[];
+    junctions: typeof junctions;
     selection: typeof selection;
     counters: typeof counters;
     nets: Set<string>;
@@ -440,6 +444,7 @@ let marquee: {
     return {
       components: JSON.parse(JSON.stringify(components)),
       wires: JSON.parse(JSON.stringify(wires)),
+      junctions: JSON.parse(JSON.stringify(junctions)),
       selection: { ...selection },
       counters: { ...counters },
       nets: new Set(nets),
@@ -454,6 +459,7 @@ let marquee: {
     // Restore all state from snapshot
     components = JSON.parse(JSON.stringify(state.components));
     wires = JSON.parse(JSON.stringify(state.wires));
+    junctions = JSON.parse(JSON.stringify(state.junctions));
     selection = { ...state.selection };
     counters = { ...state.counters };
     nets = new Set(state.nets);
@@ -1983,7 +1989,10 @@ let marquee: {
     if (showJunctionDots) {
       for (const j of junctions){
         const nc = NET_CLASSES[j.netId || 'default'] || NET_CLASSES.default;
-        const sizeMm = (j.size!=null ? j.size : nc.junction.size);
+        let baseSizeMm = (j.size!=null ? j.size : nc.junction.size);
+        // Apply size multiplier based on junctionDotSize setting
+        const sizeMultiplier = junctionDotSize === 'small' ? 1 : junctionDotSize === 'medium' ? 2 : 3;
+        const sizeMm = baseSizeMm * sizeMultiplier;
         const color = j.color ? j.color : rgba01ToCss(nc.junction.color);
         const dot = document.createElementNS('http://www.w3.org/2000/svg','circle');
         setAttr(dot, 'cx', j.at.x); setAttr(dot, 'cy', j.at.y);
@@ -2832,6 +2841,7 @@ let marquee: {
           if (!bestPt) bestPt = { x, y };
           // Add to junctions if not already present
           if (!junctions.some(j => Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3)) {
+            pushUndo();
             junctions.push({ at: { x: bestPt.x, y: bestPt.y }, manual: true });
             redraw();
           }
@@ -2854,6 +2864,7 @@ let marquee: {
             }
           }
           if (idx !== -1) {
+            pushUndo();
             junctions.splice(idx, 1);
             redraw();
           }
@@ -4655,6 +4666,25 @@ let marquee: {
       updateCapacitorButtonIcon();
       updateCapacitorSubtypeButtons();
       // Note: Don't redraw canvas - only affects newly placed resistors
+    });
+    
+    // Junction dot size selector (custom button-based selector)
+    const updateJunctionSizeSelection = (size: 'small' | 'medium' | 'large') => {
+      junctionDotSizeSelect.querySelectorAll('.junction-size-option').forEach(btn => {
+        btn.classList.toggle('selected', btn.getAttribute('data-size') === size);
+      });
+    };
+    updateJunctionSizeSelection(junctionDotSize);
+    junctionDotSizeSelect.addEventListener('click', (e)=>{
+      const target = (e.target as HTMLElement).closest('.junction-size-option') as HTMLElement;
+      if(!target) return;
+      const size = target.getAttribute('data-size') as 'small' | 'medium' | 'large';
+      if(size) {
+        junctionDotSize = size;
+        localStorage.setItem('junctionDots.size', size);
+        updateJunctionSizeSelection(size);
+        redraw(); // Redraw to apply new junction dot size immediately
+      }
     });
   })();
 

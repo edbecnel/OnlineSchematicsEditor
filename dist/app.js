@@ -74,12 +74,15 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
     const inspectorNone = $q('#inspectorNone');
     const projTitle = $q('#projTitle'); // uses .value later
     const defaultResistorStyleSelect = $q('#defaultResistorStyleSelect');
+    const junctionDotSizeSelect = $q('#junctionDotSizeSelect');
     const countsEl = $q('#counts');
     const overlayMode = $q('#modeLabel');
     const coordDisplay = $q('#coordDisplay');
     let gridMode = localStorage.getItem('grid.mode') || 'line';
     // Junction dots visibility toggle state (persisted)
     let showJunctionDots = (localStorage.getItem('junctionDots.visible') !== 'false');
+    // Junction dot size setting (persisted): 'small' | 'medium' | 'large'
+    let junctionDotSize = localStorage.getItem('junctionDots.size') || 'small';
     // Tracking mode: when true, connection hints are enabled (persisted)
     let trackingMode = (localStorage.getItem('tracking.mode') !== 'false');
     // Default resistor style for project: 'ansi' (US zigzag) or 'iec' (rectangle) - persisted
@@ -372,6 +375,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         return {
             components: JSON.parse(JSON.stringify(components)),
             wires: JSON.parse(JSON.stringify(wires)),
+            junctions: JSON.parse(JSON.stringify(junctions)),
             selection: { ...selection },
             counters: { ...counters },
             nets: new Set(nets),
@@ -385,6 +389,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         // Restore all state from snapshot
         components = JSON.parse(JSON.stringify(state.components));
         wires = JSON.parse(JSON.stringify(state.wires));
+        junctions = JSON.parse(JSON.stringify(state.junctions));
         selection = { ...state.selection };
         counters = { ...state.counters };
         nets = new Set(state.nets);
@@ -1933,7 +1938,10 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         if (showJunctionDots) {
             for (const j of junctions) {
                 const nc = NET_CLASSES[j.netId || 'default'] || NET_CLASSES.default;
-                const sizeMm = (j.size != null ? j.size : nc.junction.size);
+                let baseSizeMm = (j.size != null ? j.size : nc.junction.size);
+                // Apply size multiplier based on junctionDotSize setting
+                const sizeMultiplier = junctionDotSize === 'small' ? 1 : junctionDotSize === 'medium' ? 2 : 3;
+                const sizeMm = baseSizeMm * sizeMultiplier;
                 const color = j.color ? j.color : rgba01ToCss(nc.junction.color);
                 const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                 setAttr(dot, 'cx', j.at.x);
@@ -2885,6 +2893,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 bestPt = { x, y };
             // Add to junctions if not already present
             if (!junctions.some(j => Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3)) {
+                pushUndo();
                 junctions.push({ at: { x: bestPt.x, y: bestPt.y }, manual: true });
                 redraw();
             }
@@ -2907,6 +2916,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 }
             }
             if (idx !== -1) {
+                pushUndo();
                 junctions.splice(idx, 1);
                 redraw();
             }
@@ -4747,6 +4757,25 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             updateCapacitorButtonIcon();
             updateCapacitorSubtypeButtons();
             // Note: Don't redraw canvas - only affects newly placed resistors
+        });
+        // Junction dot size selector (custom button-based selector)
+        const updateJunctionSizeSelection = (size) => {
+            junctionDotSizeSelect.querySelectorAll('.junction-size-option').forEach(btn => {
+                btn.classList.toggle('selected', btn.getAttribute('data-size') === size);
+            });
+        };
+        updateJunctionSizeSelection(junctionDotSize);
+        junctionDotSizeSelect.addEventListener('click', (e) => {
+            const target = e.target.closest('.junction-size-option');
+            if (!target)
+                return;
+            const size = target.getAttribute('data-size');
+            if (size) {
+                junctionDotSize = size;
+                localStorage.setItem('junctionDots.size', size);
+                updateJunctionSizeSelection(size);
+                redraw(); // Redraw to apply new junction dot size immediately
+            }
         });
     })();
     function renderInspector() {

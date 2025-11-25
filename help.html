@@ -436,6 +436,38 @@
       </li>
       <li><b>Precise Placement:</b> Junction dots snap to exact intersection points, not endpoints</li>
       <li><b>50 Mil Tolerance:</b> Click within 50 mils of a valid point to place or delete junction dots</li>
+      <li><b>Undo/Redo Support:</b> Junction dot placement and deletion operations can be undone (<span class="kbd">Ctrl+Z</span>) and redone (<span class="kbd">Ctrl+Y</span>)</li>
+    </ul>
+    
+    <h4>Junction Dot Size</h4>
+    <p>Control the visual size of junction dots in the Project Settings panel:</p>
+    <ul>
+      <li><b>Small:</b> 1.2mm diameter (default) — subtle and unobtrusive</li>
+      <li><b>Medium:</b> 2.4mm diameter — better visibility for complex schematics</li>
+      <li><b>Large:</b> 3.6mm diameter — maximum visibility</li>
+      <li>Size setting applies to all junction dots (both automatic and manual)</li>
+      <li>Visual previews shown in the selector help you choose the right size</li>
+    </ul>
+
+    <h2>Project Settings</h2>
+    <p>The Project panel (right side) contains global settings that affect the entire schematic:</p>
+    
+    <h3>Schematic Standard</h3>
+    <ul>
+      <li><b>ANSI/IEEE (US):</b> Uses zigzag resistor symbols (American style)</li>
+      <li><b>IEC (International):</b> Uses rectangular resistor symbols (European style)</li>
+      <li>Setting applies to newly placed resistors and polarized capacitors</li>
+      <li>Existing components retain their style until manually changed</li>
+    </ul>
+    
+    <h3>Junction Dot Size</h3>
+    <ul>
+      <li><b>Small:</b> 1.2mm diameter (default)</li>
+      <li><b>Medium:</b> 2.4mm diameter</li>
+      <li><b>Large:</b> 3.6mm diameter</li>
+      <li>Visual selector with dot previews at actual rendered size</li>
+      <li>Changes apply immediately to all junction dots</li>
+      <li>Setting is saved in browser localStorage</li>
     </ul>
 
     <h2>File Operations</h2>
