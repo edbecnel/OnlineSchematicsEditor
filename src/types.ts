@@ -143,6 +143,8 @@ export interface Junction {
   size?: number;
   color?: string;    // explicit override; otherwise follows netclass/theme
   netId?: string | null;
+  manual?: boolean;  // true if manually placed by user
+  suppressed?: boolean; // true if automatic junction was manually deleted
 }
 
 // ====== Topology Types ======

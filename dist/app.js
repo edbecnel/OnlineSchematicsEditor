@@ -10,7 +10,7 @@
 // ================================================================================
 import * as Utils from './utils.js';
 import * as Constants from './constants.js';
-import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
+import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
 (function () {
     // --- Add UI for Place/Delete Junction Dot ---
     // Note: button event listener setup is done after setMode is defined (see attachJunctionDotButtons)
@@ -1946,6 +1946,9 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         gJunctions.replaceChildren();
         if (showJunctionDots) {
             for (const j of junctions) {
+                // Skip suppressed junctions (invisible markers for deleted automatic junctions)
+                if (j.suppressed)
+                    continue;
                 const nc = NET_CLASSES[j.netId || 'default'] || NET_CLASSES.default;
                 // Custom sizes for better visibility: Small=50mils, Medium=70mils, Large=90mils (diameter)
                 const sizeMils = junctionDotSize === 'small' ? 50 : junctionDotSize === 'medium' ? 70 : 90;
@@ -2944,7 +2947,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         if (mode === 'delete-junction' && e.button === 0) {
             // Delete a junction dot at the clicked location (within 50 mils)
             const TOL = 50; // mils
-            const tol = TOL * (NM_PER_MIL ? NM_PER_MIL : 1) / PX_PER_MM;
+            const tol = TOL * 0.0254 * (100 / 25.4); // Convert mils to mm, then mm to pixels
             let idx = -1;
             let minDist = Infinity;
             for (let i = 0; i < junctions.length; ++i) {
@@ -2956,8 +2959,19 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 }
             }
             if (idx !== -1) {
+                const junction = junctions[idx];
                 pushUndo();
-                junctions.splice(idx, 1);
+                // If it's a manual junction, just remove it
+                // If it's an automatic junction, mark the location as suppressed
+                if (junction.manual) {
+                    junctions.splice(idx, 1);
+                }
+                else {
+                    // Remove the automatic junction and add a suppressed marker at this location
+                    junctions.splice(idx, 1);
+                    // Add a manual junction with suppressed flag to prevent auto-recreation
+                    junctions.push({ at: junction.at, manual: true, suppressed: true });
+                }
                 redraw();
             }
             // Stay in delete-junction mode to allow deleting multiple dots
@@ -6893,23 +6907,27 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             // Only add a junction if two or more wires meet here,
             // and at least one of them passes through (not an endpoint)
             if (wireIds.size >= 2 && hasMidSegment) {
-                // Use the netId of the first wire found, or 'default'
-                let netId = 'default';
-                for (const wid of wireIds) {
-                    const w = wires.find(w => w.id === wid);
-                    if (w && w.netId) {
-                        netId = w.netId;
-                        break;
+                // Check if this location has been manually suppressed
+                const isSuppressed = manualJunctions.some(j => j.suppressed && Math.abs(j.at.x - node.x) < 1e-3 && Math.abs(j.at.y - node.y) < 1e-3);
+                if (!isSuppressed) {
+                    // Use the netId of the first wire found, or 'default'
+                    let netId = 'default';
+                    for (const wid of wireIds) {
+                        const w = wires.find(w => w.id === wid);
+                        if (w && w.netId) {
+                            netId = w.netId;
+                            break;
+                        }
                     }
+                    // Use the default size/color from the net class
+                    const nc = NET_CLASSES[netId] || NET_CLASSES.default;
+                    junctions.push({
+                        at: { x: node.x, y: node.y },
+                        netId,
+                        size: nc.junction.size,
+                        color: rgba01ToCss(nc.junction.color)
+                    });
                 }
-                // Use the default size/color from the net class
-                const nc = NET_CLASSES[netId] || NET_CLASSES.default;
-                junctions.push({
-                    at: { x: node.x, y: node.y },
-                    netId,
-                    size: nc.junction.size,
-                    color: rgba01ToCss(nc.junction.color)
-                });
             }
         }
     }
