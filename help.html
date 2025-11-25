@@ -397,9 +397,45 @@
 
     <h3>Junction Dots</h3>
     <ul>
-      <li>Appear automatically where three or more wire segments meet</li>
-      <li>Indicate electrical connection</li>
-      <li>Toggle visibility with the <b>Junctions</b> button</li>
+      <li>Appear automatically where three or more wire segments meet (T-junctions)</li>
+      <li>Indicate electrical connection at wire intersections</li>
+      <li>Toggle visibility with the <b>Junctions (.)</b> button in the status bar</li>
+    </ul>
+
+    <h3>Manual Junction Dot Placement</h3>
+    <p>You can manually place or delete junction dots at any location:</p>
+    
+    <h4>Placing Junction Dots</h4>
+    <ol>
+      <li>Click the <b>+.</b> button in the toolbar to enter place-junction mode</li>
+      <li>Move your cursor to the desired location (wire endpoint, intersection, or component pin)</li>
+      <li>Green connection circles appear at valid placement points</li>
+      <li>Click to place a junction dot at the nearest valid point within 50 mils</li>
+      <li>Continue clicking to place multiple junction dots</li>
+      <li>Press <span class="kbd">Enter</span> or right-click to exit and return to Select mode</li>
+    </ol>
+    
+    <h4>Deleting Junction Dots</h4>
+    <ol>
+      <li>Click the <b>x.</b> button in the toolbar to enter delete-junction mode</li>
+      <li>Click on any junction dot within 50 mils to remove it</li>
+      <li>Continue clicking to delete multiple junction dots</li>
+      <li>Press <span class="kbd">Enter</span> or right-click to exit and return to Select mode</li>
+    </ol>
+    
+    <h4>Junction Dot Behavior</h4>
+    <ul>
+      <li><b>Automatic Junctions:</b> Created where wire segments form T-junctions (one wire's endpoint touches another wire's interior)</li>
+      <li><b>Manual Junctions:</b> User-placed junctions remain in place and are never automatically removed</li>
+      <li><b>Smart Snapping:</b> When placing junctions, the editor finds the nearest valid point:
+        <ul>
+          <li>Wire endpoints (highest priority)</li>
+          <li>Component pins</li>
+          <li>Wire-to-wire intersection points</li>
+        </ul>
+      </li>
+      <li><b>Precise Placement:</b> Junction dots snap to exact intersection points, not endpoints</li>
+      <li><b>50 Mil Tolerance:</b> Click within 50 mils of a valid point to place or delete junction dots</li>
     </ul>
 
     <h2>File Operations</h2>
@@ -462,9 +498,10 @@
       <li><span class="kbd">X</span> — Cycle crosshair style (+ → Full → Off)</li>
       <li><span class="kbd">T</span> — Toggle connection tracking on/off</li>
       <li><span class="kbd">Esc</span> — Cancel drawing / Deselect / Exit mode</li>
-      <li><span class="kbd">Enter</span> — Finish wire drawing</li>
+      <li><span class="kbd">Enter</span> — Finish wire drawing / Exit junction dot mode</li>
       <li><span class="kbd">Delete</span> — Delete selected component or wire</li>
       <li><span class="kbd">Shift</span> — Hold while wiring for temporary orthogonal mode</li>
+      <li><span class="kbd">Right-click</span> — Finish wire drawing / Exit junction dot mode</li>
     </ul>
 
     <h3>File Operations</h3>
