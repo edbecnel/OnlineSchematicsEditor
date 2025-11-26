@@ -991,6 +991,12 @@
             <label for="coordInputY">Y:</label>
             <input type="text" id="coordInputY" title="Y coordinate (Tab/Shift+Tab to switch, Enter to accept)" />
           </div>
+          <div class="coord-input-group" id="polarInputGroup" style="display: none;">
+            <label for="coordInputLength">L:</label>
+            <input type="text" id="coordInputLength" title="Length from previous point (Tab for angle, Enter to accept)" />
+            <label for="coordInputAngle">∠:</label>
+            <input type="text" id="coordInputAngle" title="Angle in degrees (0° = right, 90° = up, Tab for length, Enter to accept)" />
+          </div>
           <div class="status-info">
             Mode: <b id="modeLabel">Select</b> · Grid: <span id="gridSizeKbd" class="kbd">24px</span> · Snap: <span
               id="snapKbd" class="kbd">on</span>

@@ -196,7 +196,9 @@
       <li><b>Net assignment:</b> Which net this wire belongs to</li>
       <li><b>Width:</b> Visual line width in mm</li>
       <li><b>Style:</b> Solid or dashed</li>
+      <li><b>Length:</b> Total length of the wire segment (read-only) displayed in current units</li>
     </ul>
+    <p class="tip"><i>Note:</i> Each wire segment is treated as a separate object. Multi-segment paths will show individual segment lengths.</p>
 
     <h2>Grid &amp; Snapping</h2>
     <h3>Grid Display</h3>
@@ -250,7 +252,31 @@
       <li><b>Accepting Coordinates:</b> Press <span class="kbd">Enter</span> to place a wire point, component, or junction dot at the exact typed coordinates</li>
       <li><b>Cancel:</b> Press <span class="kbd">Esc</span> to exit input mode without placing</li>
     </ul>
-    <p class="tip"><i>Tip:</i> Use coordinate input for precise grid-aligned placement or when matching dimensions from a schematic reference.</p>
+
+    <h3>Polar Coordinate Input (Wire Drawing)</h3>
+    <p>After placing the first point of a wire, polar coordinate inputs (Length and Angle) appear alongside X/Y inputs:</p>
+    <ul>
+      <li><b>Length Input:</b> Specify the distance from the previous wire point
+        <ul>
+          <li>Supports units: "100 mils", "2.54 mm", "0.1 in"</li>
+          <li>Uses current display units if no unit specified</li>
+        </ul>
+      </li>
+      <li><b>Angle Input:</b> Specify the direction in degrees
+        <ul>
+          <li>0° = Right (positive X direction)</li>
+          <li>90° = Up (positive Y direction)</li>
+          <li>180° = Left (negative X direction)</li>
+          <li>270° = Down (negative Y direction)</li>
+          <li>Accepts any angle value (e.g., 45°, -30°, 135°)</li>
+        </ul>
+      </li>
+      <li><b>Real-time Display:</b> Length and angle update as you move the mouse, showing distance and direction from the previous point</li>
+      <li><b>Keyboard Navigation:</b> Press <span class="kbd">Ctrl+L</span> to cycle through X, Y, Length, and Angle inputs</li>
+      <li><b>Placement:</b> Press <span class="kbd">Enter</span> after typing length and angle to place the wire point at the calculated position</li>
+      <li><b>Combined with Cartesian:</b> You can switch between X/Y and Length/Angle inputs freely — both control the same point</li>
+    </ul>
+    <p class="tip"><i>Tip:</i> Use polar coordinates for precise angles and distances (e.g., "100 mils" at "45°"), or Cartesian coordinates for grid-aligned placement.</p>
 
     <h3>Connection Circles</h3>
     <ul>
@@ -547,8 +573,8 @@
       <li><span class="kbd">G</span> — Cycle grid display (Lines → Dots → Off)</li>
       <li><span class="kbd">X</span> — Cycle crosshair style (+ → Full → Off)</li>
       <li><span class="kbd">T</span> — Toggle connection tracking on/off</li>
-      <li><span class="kbd">Ctrl+L</span> — Activate coordinate input (in Wire, Place, or Junction modes)</li>
-      <li><span class="kbd">Tab</span> — Switch between X and Y coordinate inputs</li>
+      <li><span class="kbd">Ctrl+L</span> — Activate coordinate input (cycles through X, Y, Length, Angle when wire drawing)</li>
+      <li><span class="kbd">Tab</span> — Switch between coordinate input fields (X → Y → Length → Angle)</li>
       <li><span class="kbd">Esc</span> — Cancel drawing / Deselect / Exit mode / Cancel coordinate input</li>
       <li><span class="kbd">Enter</span> — Finish wire drawing / Exit junction dot mode / Accept coordinate input</li>
       <li><span class="kbd">Delete</span> — Delete selected component or wire</li>
@@ -573,6 +599,8 @@
       <li><b>Snap to wires:</b> Click anywhere along a wire to start a new connection (T-junction)</li>
       <li><b>Connection circles:</b> Click green endpoint markers for precise connections - they show exactly where wires will connect</li>
       <li><b>Capacitor types:</b> Use <span class="kbd">C</span> for standard capacitors and <span class="kbd">Alt+C</span> for polarized capacitors</li>
+      <li><b>Polar coordinates:</b> When drawing wires, use Length and Angle inputs for precise diagonal or angular routing</li>
+      <li><b>Wire lengths:</b> Check the Inspector panel to see the exact length of selected wire segments</li>
       <li><b>Check connectivity:</b> Review the net list before export</li>
       <li><b>Save frequently:</b> Use Ctrl+S to save your work regularly</li>
       <li><b>Use wire colors:</b> Color-code power, ground, and signal wires for readability</li>

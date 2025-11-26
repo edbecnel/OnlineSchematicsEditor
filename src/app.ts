@@ -111,6 +111,9 @@ import {
   const coordInputGroup = $q<HTMLElement>('#coordInputGroup');
   const coordInputX = $q<HTMLInputElement>('#coordInputX');
   const coordInputY = $q<HTMLInputElement>('#coordInputY');
+  const polarInputGroup = $q<HTMLElement>('#polarInputGroup');
+  const coordInputLength = $q<HTMLInputElement>('#coordInputLength');
+  const coordInputAngle = $q<HTMLInputElement>('#coordInputAngle');
 
   // Grid mode: 'line' (line grid), 'dot' (dot grid), 'off' (no grid) - persisted
   type GridMode = 'line' | 'dot' | 'off';
@@ -3362,9 +3365,18 @@ import {
       updateCoordinateDisplay(x, y);
       updateCoordinateInputs(x, y);
       showCoordinateInputs();
+      
+      // Show polar inputs only when actively drawing a wire (after first point)
+      if (mode === 'wire' && drawing.active && drawing.points.length > 0) {
+        updatePolarInputs(x, y);
+        showPolarInputs();
+      } else {
+        hidePolarInputs();
+      }
     } else {
       hideCoordinateDisplay();
       hideCoordinateInputs();
+      hidePolarInputs();
     }
 
     // crosshair overlay while in wire mode (even if not actively drawing)
@@ -3499,10 +3511,16 @@ import {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveJSON(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); clearAll(); }
 
-    // Coordinate input activation shortcut (Ctrl+L or Space when in wire/place mode)
+    // Coordinate input activation shortcut (Ctrl+L for cartesian, Ctrl+Shift+L for polar when drawing wire)
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction')) {
       e.preventDefault();
-      if (coordInputX && coordInputGroup) {
+      
+      // Use polar input if Shift is held and we're actively drawing a wire
+      if (e.shiftKey && mode === 'wire' && drawing.active && drawing.points.length > 0 && coordInputLength && polarInputGroup) {
+        coordInputActive = true;
+        coordInputLength.focus();
+        coordInputLength.select();
+      } else if (coordInputX && coordInputGroup) {
         coordInputActive = true;
         coordInputX.focus();
         coordInputX.select();
@@ -3910,7 +3928,21 @@ import {
 
     const xStr = xVal.toFixed(precision);
     const yStr = yVal.toFixed(precision);
-    coordDisplay.textContent = `${xStr}, ${yStr} ${globalUnits}`;
+    
+    // If actively drawing a wire and have at least one point, show distance from last point
+    let displayText = `${xStr}, ${yStr} ${globalUnits}`;
+    if (mode === 'wire' && drawing.active && drawing.points.length > 0) {
+      const lastPt = drawing.points[drawing.points.length - 1];
+      const dx = x - lastPt.x;
+      const dy = y - lastPt.y;
+      const distPx = Math.sqrt(dx * dx + dy * dy);
+      const distNm = pxToNm(distPx);
+      const distVal = nmToUnit(distNm, globalUnits);
+      const distStr = distVal.toFixed(precision);
+      displayText = `${xStr}, ${yStr} ${globalUnits} · L: ${distStr}`;
+    }
+    
+    coordDisplay.textContent = displayText;
     coordDisplay.style.display = '';
   }
 
@@ -4037,6 +4069,138 @@ import {
     coordInputY.addEventListener('blur', () => {
       setTimeout(() => {
         if (document.activeElement !== coordInputX) coordInputActive = false;
+      }, 100);
+    });
+  }
+
+  // ----- Polar coordinate input (length/angle) -----
+  function updatePolarInputs(x: number, y: number) {
+    if (!coordInputLength || !coordInputAngle || !polarInputGroup) return;
+    
+    // Don't update if user is actively typing
+    if (coordInputActive) return;
+    
+    // Only show polar inputs if actively drawing a wire
+    if (!drawing.active || drawing.points.length === 0) return;
+    
+    // Calculate length and angle from last point
+    const lastPt = drawing.points[drawing.points.length - 1];
+    const dx = x - lastPt.x;
+    const dy = y - lastPt.y;
+    const lengthPx = Math.sqrt(dx * dx + dy * dy);
+    const lengthNm = pxToNm(lengthPx);
+    const lengthVal = nmToUnit(lengthNm, globalUnits);
+    
+    // Calculate angle: 0° = right (+X), 90° = up (-Y in screen coordinates, but we want +Y)
+    // Note: screen Y increases downward, so we negate dy for standard math convention
+    let angleDeg = Math.atan2(-dy, dx) * (180 / Math.PI);
+    if (angleDeg < 0) angleDeg += 360; // Normalize to 0-360
+    
+    let precision = 2;
+    if (globalUnits === 'mils') precision = 0;
+    if (globalUnits === 'mm') precision = 2;
+    if (globalUnits === 'in') precision = 4;
+    
+    coordInputLength.value = lengthVal.toFixed(precision);
+    coordInputAngle.value = angleDeg.toFixed(1);
+  }
+  
+  function showPolarInputs() {
+    if (!polarInputGroup) return;
+    polarInputGroup.style.display = 'flex';
+  }
+  
+  function hidePolarInputs() {
+    if (!polarInputGroup) return;
+    polarInputGroup.style.display = 'none';
+    coordInputActive = false;
+  }
+  
+  function acceptPolarInput() {
+    if (!coordInputLength || !coordInputAngle || !drawing.active || drawing.points.length === 0) return null;
+    
+    // Parse length with unit support
+    const lengthParsed = parseDimInput(coordInputLength.value, globalUnits);
+    if (!lengthParsed) return null;
+    
+    // Parse angle in degrees
+    const angleDeg = parseFloat(coordInputAngle.value);
+    if (isNaN(angleDeg)) return null;
+    
+    // Get last point
+    const lastPt = drawing.points[drawing.points.length - 1];
+    
+    // Convert polar to cartesian
+    // Angle: 0° = right (+X), 90° = up (-Y in screen coords)
+    const angleRad = angleDeg * (Math.PI / 180);
+    const lengthPx = nmToPx(lengthParsed.nm);
+    const dx = lengthPx * Math.cos(angleRad);
+    const dy = -lengthPx * Math.sin(angleRad); // Negative because screen Y goes down
+    
+    const x = lastPt.x + dx;
+    const y = lastPt.y + dy;
+    
+    coordInputActive = false;
+    coordInputLength.blur();
+    coordInputAngle.blur();
+    
+    return { x, y };
+  }
+  
+  // Set up polar coordinate input event handlers
+  if (coordInputLength && coordInputAngle) {
+    coordInputLength.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        coordInputAngle.focus();
+        coordInputAngle.select();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const point = acceptPolarInput();
+        if (point) {
+          handleCoordinateInputClick(point);
+        }
+      } else if (e.key === 'Escape') {
+        coordInputActive = false;
+        coordInputLength.blur();
+        coordInputAngle.blur();
+      }
+    });
+    
+    coordInputAngle.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          coordInputLength.focus();
+          coordInputLength.select();
+        } else {
+          coordInputLength.focus();
+          coordInputLength.select();
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const point = acceptPolarInput();
+        if (point) {
+          handleCoordinateInputClick(point);
+        }
+      } else if (e.key === 'Escape') {
+        coordInputActive = false;
+        coordInputLength.blur();
+        coordInputAngle.blur();
+      }
+    });
+    
+    coordInputLength.addEventListener('focus', () => { coordInputActive = true; });
+    coordInputAngle.addEventListener('focus', () => { coordInputActive = true; });
+    
+    coordInputLength.addEventListener('blur', () => {
+      setTimeout(() => {
+        if (document.activeElement !== coordInputAngle) coordInputActive = false;
+      }, 100);
+    });
+    coordInputAngle.addEventListener('blur', () => {
+      setTimeout(() => {
+        if (document.activeElement !== coordInputLength) coordInputActive = false;
       }, 100);
     });
   }
@@ -5287,6 +5451,18 @@ import {
         const A = w.points[0], B = w.points[w.points.length - 1];
         wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(A.x), globalUnits)}, ${formatDimForDisplay(pxToNm(A.y), globalUnits)}`, true)));
         wrap.appendChild(rowPair('Wire End', text(`${formatDimForDisplay(pxToNm(B.x), globalUnits)}, ${formatDimForDisplay(pxToNm(B.y), globalUnits)}`, true)));
+      }
+
+      // ---- Wire Length (read-only) ----
+      if (w && w.points && w.points.length >= 2) {
+        let totalLength = 0;
+        for (let i = 1; i < w.points.length; i++) {
+          const dx = w.points[i].x - w.points[i - 1].x;
+          const dy = w.points[i].y - w.points[i - 1].y;
+          totalLength += Math.sqrt(dx * dx + dy * dy);
+        }
+        const lengthNm = pxToNm(totalLength);
+        wrap.appendChild(rowPair('Wire Length', text(formatDimForDisplay(lengthNm, globalUnits), true)));
       }
 
       // ---- Net Assignment (includes Net Class selection) ----
