@@ -54,6 +54,7 @@
       font-family: ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
       color: var(--ink);
       background: var(--bg);
+      overflow: hidden;
     }
 
     .app {
@@ -347,7 +348,9 @@
     .panel-content {
       flex: 1;
       padding: .75rem;
-      overflow: auto;
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-gutter: stable both-edges;
     }
 
     .panel.collapsed .panel-content {

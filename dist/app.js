@@ -10,6 +10,14 @@
 // ================================================================================
 import * as Utils from './utils.js';
 import * as Constants from './constants.js';
+import * as Geometry from './geometry.js';
+import * as State from './state.js';
+import * as Components from './components.js';
+import * as Rendering from './rendering.js';
+import * as Netlist from './netlist.js';
+import * as Inspector from './inspector.js';
+import * as FileIO from './fileio.js';
+import * as Move from './move.js';
 import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
 (function () {
     // --- Add UI for Place/Delete Junction Dot ---
@@ -28,31 +36,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // ================================================================================
     const svg = $q('#svg');
     // Ensure required SVG layer <g> elements exist; create them if missing.
-    function ensureSvgGroup(id) {
-        const existing = document.getElementById(id);
-        if (existing) {
-            if (existing instanceof SVGGElement) {
-                return existing;
-            }
-            // If an element with this id exists but isn’t an <g>, replace it with a proper SVG <g>.
-            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            g.setAttribute('id', id);
-            existing.replaceWith(g);
-            return g;
-        }
-        if (!svg)
-            throw new Error(`Missing <svg id="svg"> root; cannot create #${id}`);
-        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        g.setAttribute('id', id);
-        svg.appendChild(g);
-        return g;
-    }
     // Layers (and enforce visual stacking order)
-    const gWires = ensureSvgGroup('wires');
-    const gComps = ensureSvgGroup('components');
-    const gJunctions = ensureSvgGroup('junctions');
-    const gDrawing = ensureSvgGroup('drawing');
-    const gOverlay = ensureSvgGroup('overlay');
+    const gWires = Utils.ensureSvgGroup(svg, 'wires');
+    const gComps = Utils.ensureSvgGroup(svg, 'components');
+    const gJunctions = Utils.ensureSvgGroup(svg, 'junctions');
+    const gDrawing = Utils.ensureSvgGroup(svg, 'drawing');
+    const gOverlay = Utils.ensureSvgGroup(svg, 'overlay');
     // Keep desired order: wires → components → junctions → drawing (ghost/rubber-band) → overlay (marquee/crosshair)
     (function ensureLayerOrder() {
         if (!svg)
@@ -465,18 +454,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             junction: { size: 0.762, color: cssToRGBA01('#FFFFFF') }
         }
     };
-    function netClassForWire(w) {
-        // Use wire's assigned netId if present
-        if (w.netId) {
-            return NET_CLASSES[w.netId] || NET_CLASSES.default;
-        }
-        // If wire is using netclass defaults (width=0, type=default) but no netId, use active net class
-        if (w.stroke && w.stroke.width <= 0 && w.stroke.type === 'default') {
-            return NET_CLASSES[activeNetClass] || NET_CLASSES.default;
-        }
-        // Fallback to default
-        return NET_CLASSES.default;
-    }
     let currentWireColorMode = 'auto';
     function resolveWireColor(mode) {
         const map = {
@@ -590,7 +567,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const snapUnits = baseSnapUser(); // Returns 5 for 50 mil spacing
         return Math.round(v / snapUnits) * snapUnits;
     };
-    const uid = (prefix) => `${prefix}${counters[prefix]++}`;
     function updateCounts() {
         countsEl.textContent = `Components: ${components.length} · Wires: ${wires.length}`;
     }
@@ -648,7 +624,29 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             editBtn.style.cursor = 'pointer';
             editBtn.title = 'Edit net properties';
             editBtn.onclick = () => {
-                showNetPropertiesDialog(netName);
+                Netlist.showNetPropertiesDialog({
+                    netName,
+                    netClass: NET_CLASSES[netName],
+                    globalUnits,
+                    NM_PER_MM,
+                    formatDimForDisplay,
+                    parseDimInput,
+                    colorToHex,
+                    rgba01ToCss,
+                    onSave: (updates) => {
+                        pushUndo();
+                        NET_CLASSES[netName].wire.width = updates.width;
+                        NET_CLASSES[netName].wire.type = updates.type;
+                        NET_CLASSES[netName].wire.color = updates.color;
+                        wires.forEach(w => {
+                            if (w.netId === netName && w.stroke && w.stroke.type === 'default') {
+                                w.color = rgba01ToCss(NET_CLASSES[netName].wire.color);
+                            }
+                        });
+                        renderNetList();
+                        redraw();
+                    }
+                });
             };
             li.appendChild(nameSpan);
             li.appendChild(editBtn);
@@ -699,254 +697,29 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         nets.add(trimmed);
         renderNetList();
         // Show properties dialog for new net
-        showNetPropertiesDialog(trimmed);
-    }
-    function showNetPropertiesDialog(netName) {
-        const netClass = NET_CLASSES[netName];
-        if (!netClass)
-            return;
-        // Create modal overlay
-        const overlay = document.createElement('div');
-        overlay.style.position = 'fixed';
-        overlay.style.top = '0';
-        overlay.style.left = '0';
-        overlay.style.width = '100%';
-        overlay.style.height = '100%';
-        overlay.style.backgroundColor = 'rgba(0,0,0,0.6)';
-        overlay.style.zIndex = '1000';
-        overlay.style.display = 'flex';
-        overlay.style.alignItems = 'center';
-        overlay.style.justifyContent = 'center';
-        // Create dialog
-        const dialog = document.createElement('div');
-        dialog.style.background = 'var(--panel)';
-        dialog.style.border = '1px solid #273042';
-        dialog.style.borderRadius = '12px';
-        dialog.style.padding = '1.5rem';
-        dialog.style.minWidth = '400px';
-        dialog.style.maxWidth = '500px';
-        dialog.style.boxShadow = '0 8px 32px rgba(0,0,0,0.4)';
-        // Title
-        const title = document.createElement('h2');
-        title.textContent = `Net Properties: ${netName}`;
-        title.style.marginTop = '0';
-        title.style.marginBottom = '1rem';
-        dialog.appendChild(title);
-        // Width control
-        const widthRow = document.createElement('div');
-        widthRow.className = 'row';
-        widthRow.style.marginBottom = '1rem';
-        const widthLabel = document.createElement('label');
-        widthLabel.textContent = `Wire Width (${globalUnits})`;
-        widthLabel.style.display = 'block';
-        widthLabel.style.marginBottom = '0.3rem';
-        const widthInput = document.createElement('input');
-        widthInput.type = 'text';
-        const widthNm = Math.round((netClass.wire.width || 0) * NM_PER_MM);
-        widthInput.value = formatDimForDisplay(widthNm, globalUnits);
-        widthRow.appendChild(widthLabel);
-        widthRow.appendChild(widthInput);
-        dialog.appendChild(widthRow);
-        // Line style control
-        const styleRow = document.createElement('div');
-        styleRow.className = 'row';
-        styleRow.style.marginBottom = '1rem';
-        const styleLabel = document.createElement('label');
-        styleLabel.textContent = 'Line Style';
-        styleLabel.style.display = 'block';
-        styleLabel.style.marginBottom = '0.3rem';
-        const styleSelect = document.createElement('select');
-        ['default', 'solid', 'dash', 'dot', 'dash_dot', 'dash_dot_dot'].forEach(v => {
-            const o = document.createElement('option');
-            o.value = v;
-            o.textContent = v.replace(/_/g, '·');
-            styleSelect.appendChild(o);
+        Netlist.showNetPropertiesDialog({
+            netName: trimmed,
+            netClass: NET_CLASSES[trimmed],
+            globalUnits,
+            NM_PER_MM,
+            formatDimForDisplay,
+            parseDimInput,
+            colorToHex,
+            rgba01ToCss,
+            onSave: (updates) => {
+                pushUndo();
+                NET_CLASSES[trimmed].wire.width = updates.width;
+                NET_CLASSES[trimmed].wire.type = updates.type;
+                NET_CLASSES[trimmed].wire.color = updates.color;
+                wires.forEach(w => {
+                    if (w.netId === trimmed && w.stroke && w.stroke.type === 'default') {
+                        w.color = rgba01ToCss(NET_CLASSES[trimmed].wire.color);
+                    }
+                });
+                renderNetList();
+                redraw();
+            }
         });
-        styleSelect.value = netClass.wire.type;
-        styleRow.appendChild(styleLabel);
-        styleRow.appendChild(styleSelect);
-        dialog.appendChild(styleRow);
-        // Color control
-        const colorRow = document.createElement('div');
-        colorRow.className = 'row';
-        colorRow.style.marginBottom = '1rem';
-        const colorLabel = document.createElement('label');
-        colorLabel.textContent = 'Wire Color';
-        colorLabel.style.display = 'block';
-        colorLabel.style.marginBottom = '0.3rem';
-        const colorInputsRow = document.createElement('div');
-        colorInputsRow.style.display = 'flex';
-        colorInputsRow.style.gap = '0.5rem';
-        colorInputsRow.style.alignItems = 'center';
-        const colorInput = document.createElement('input');
-        colorInput.type = 'color';
-        colorInput.title = 'Pick color';
-        const rgbCss = `rgba(${Math.round(netClass.wire.color.r * 255)},${Math.round(netClass.wire.color.g * 255)},${Math.round(netClass.wire.color.b * 255)},${netClass.wire.color.a})`;
-        colorInput.value = colorToHex(rgbCss);
-        const alphaInput = document.createElement('input');
-        alphaInput.type = 'range';
-        alphaInput.min = '0';
-        alphaInput.max = '1';
-        alphaInput.step = '0.05';
-        alphaInput.style.flex = '1';
-        alphaInput.value = String(netClass.wire.color.a);
-        alphaInput.title = 'Opacity';
-        const alphaLabel = document.createElement('span');
-        alphaLabel.textContent = `${Math.round(netClass.wire.color.a * 100)}%`;
-        alphaLabel.style.minWidth = '3ch';
-        alphaLabel.style.fontSize = '0.9rem';
-        alphaLabel.style.color = 'var(--muted)';
-        alphaInput.oninput = () => {
-            alphaLabel.textContent = `${Math.round(parseFloat(alphaInput.value) * 100)}%`;
-        };
-        // Color swatch toggle button
-        const swatchToggle = document.createElement('button');
-        swatchToggle.type = 'button';
-        swatchToggle.title = 'Show color swatches';
-        swatchToggle.style.marginLeft = '6px';
-        swatchToggle.style.width = '22px';
-        swatchToggle.style.height = '22px';
-        swatchToggle.style.borderRadius = '4px';
-        swatchToggle.style.display = 'inline-flex';
-        swatchToggle.style.alignItems = 'center';
-        swatchToggle.style.justifyContent = 'center';
-        swatchToggle.style.padding = '0';
-        swatchToggle.style.fontSize = '12px';
-        swatchToggle.innerHTML = '<svg width="12" height="8" viewBox="0 0 12 8" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1 1l5 5 5-5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-        colorInputsRow.appendChild(colorInput);
-        colorInputsRow.appendChild(alphaInput);
-        colorInputsRow.appendChild(alphaLabel);
-        colorInputsRow.appendChild(swatchToggle);
-        colorRow.appendChild(colorLabel);
-        colorRow.appendChild(colorInputsRow);
-        dialog.appendChild(colorRow);
-        // Color swatch palette popover
-        const swatches = [
-            ['black', '#000000'],
-            ['red', '#FF0000'], ['green', '#00FF00'], ['blue', '#0000FF'],
-            ['cyan', '#00FFFF'], ['magenta', '#FF00FF'], ['yellow', '#FFFF00']
-        ];
-        const popover = document.createElement('div');
-        popover.style.position = 'absolute';
-        popover.style.display = 'none';
-        popover.style.zIndex = '10001';
-        popover.style.background = 'var(--panel)';
-        popover.style.padding = '8px';
-        popover.style.borderRadius = '6px';
-        popover.style.border = '1px solid #273042';
-        popover.style.boxShadow = '0 6px 18px rgba(0,0,0,0.3)';
-        const pal = document.createElement('div');
-        pal.style.display = 'grid';
-        pal.style.gridTemplateColumns = `repeat(${swatches.length}, 18px)`;
-        pal.style.gap = '8px';
-        swatches.forEach(([name, col]) => {
-            const b = document.createElement('button');
-            b.title = String(name).toUpperCase();
-            b.type = 'button';
-            if (col === '#000000') {
-                b.style.background = 'linear-gradient(to bottom right, #000000 0%, #000000 49%, #ffffff 51%, #ffffff 100%)';
-                b.style.border = '1px solid #666666';
-                b.title = 'BLACK/WHITE';
-            }
-            else {
-                b.style.background = String(col);
-                b.style.border = '1px solid rgba(0,0,0,0.12)';
-            }
-            b.style.width = '18px';
-            b.style.height = '18px';
-            b.style.borderRadius = '4px';
-            b.style.padding = '0';
-            b.style.cursor = 'pointer';
-            b.onclick = (e) => {
-                e.stopPropagation();
-                colorInput.value = String(col);
-                alphaInput.value = '1';
-                alphaLabel.textContent = '100%';
-                popover.style.display = 'none';
-            };
-            pal.appendChild(b);
-        });
-        popover.appendChild(pal);
-        dialog.appendChild(popover);
-        const showSwatchPopover = () => {
-            const rect = swatchToggle.getBoundingClientRect();
-            popover.style.left = `${rect.left}px`;
-            popover.style.top = `${rect.bottom + 6}px`;
-            popover.style.display = 'block';
-        };
-        const hideSwatchPopover = () => {
-            popover.style.display = 'none';
-        };
-        swatchToggle.onclick = (e) => {
-            e.stopPropagation();
-            if (popover.style.display === 'block') {
-                hideSwatchPopover();
-            }
-            else {
-                showSwatchPopover();
-            }
-        };
-        // Buttons
-        const buttonRow = document.createElement('div');
-        buttonRow.style.display = 'flex';
-        buttonRow.style.gap = '0.5rem';
-        buttonRow.style.justifyContent = 'flex-end';
-        buttonRow.style.marginTop = '1.5rem';
-        const cancelBtn = document.createElement('button');
-        cancelBtn.textContent = 'Cancel';
-        cancelBtn.onclick = () => {
-            document.body.removeChild(overlay);
-        };
-        const saveBtn = document.createElement('button');
-        saveBtn.textContent = 'Save';
-        saveBtn.className = 'ok';
-        saveBtn.onclick = () => {
-            // Parse width
-            const parsed = parseDimInput(widthInput.value || '0', globalUnits);
-            const nm = parsed ? parsed.nm : 0;
-            const valMm = nm / NM_PER_MM;
-            // Parse color
-            const hex = colorInput.value || '#ffffff';
-            const m = hex.replace('#', '');
-            const r = parseInt(m.slice(0, 2), 16);
-            const g = parseInt(m.slice(2, 4), 16);
-            const b = parseInt(m.slice(4, 6), 16);
-            const a = Math.max(0, Math.min(1, parseFloat(alphaInput.value) || 1));
-            // Update net class
-            pushUndo();
-            netClass.wire.width = valMm;
-            netClass.wire.type = styleSelect.value;
-            netClass.wire.color = { r: r / 255, g: g / 255, b: b / 255, a };
-            // Update any wires using this net
-            wires.forEach(w => {
-                if (w.netId === netName && w.stroke && w.stroke.type === 'default') {
-                    // If wire is using netclass defaults, redraw to pick up changes
-                    w.color = rgba01ToCss(netClass.wire.color);
-                }
-            });
-            document.body.removeChild(overlay);
-            renderNetList();
-            redraw();
-        };
-        buttonRow.appendChild(cancelBtn);
-        buttonRow.appendChild(saveBtn);
-        dialog.appendChild(buttonRow);
-        overlay.appendChild(dialog);
-        document.body.appendChild(overlay);
-        // Close on overlay click
-        overlay.onclick = (e) => {
-            if (e.target === overlay) {
-                document.body.removeChild(overlay);
-            }
-        };
-        // Close on Escape key
-        const escHandler = (e) => {
-            if (e.key === 'Escape' && document.body.contains(overlay)) {
-                document.body.removeChild(overlay);
-                document.removeEventListener('keydown', escHandler);
-            }
-        };
-        document.addEventListener('keydown', escHandler);
     }
     // Wire up junction dot buttons now that setMode is defined
     (function attachJunctionDotButtons() {
@@ -967,6 +740,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // Finalize any active wire drawing before mode change
         if (drawing.active && drawing.points.length > 0) {
             finishWire();
+        }
+        // Finalize any active SWP move when leaving Move mode
+        if (mode === 'move' && m !== 'move') {
+            ensureFinishSwpMove();
         }
         mode = m;
         overlayMode.textContent = m[0].toUpperCase() + m.slice(1);
@@ -1327,54 +1104,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             themeBtn.addEventListener('click', toggleTheme);
         }
     })(); // ====== Component Drawing ======
-    /**
-     * Get absolute pin positions for a component.
-     * Supports both legacy (calculated from type) and new (arbitrary pin definitions) modes.
-     *
-     * For backward compatibility: if c.pins is undefined, calculates pins from component type.
-     * If c.pins is defined, transforms the pin positions by component rotation and position.
-     */
-    function compPinPositions(c) {
-        // NEW: If component has explicit pin definitions, use those
-        if (c.pins && c.pins.length > 0) {
-            const r = ((c.rot % 360) + 360) % 360;
-            return c.pins.map(pin => {
-                // Transform pin position from component-relative to absolute coordinates
-                const rotated = rotatePoint({ x: c.x + pin.x, y: c.y + pin.y }, { x: c.x, y: c.y }, r);
-                return {
-                    x: rotated.x,
-                    y: rotated.y,
-                    name: pin.name || pin.id,
-                    id: pin.id,
-                    electricalType: pin.electricalType
-                };
-            });
-        }
-        // LEGACY: Calculate pin positions from component type (backward compatible)
-        const r = ((c.rot % 360) + 360) % 360;
-        if (c.type === 'npn' || c.type === 'pnp') {
-            // base at center; collector top; emitter bottom (before rotation)
-            const pins = [
-                { name: 'B', id: 'B', x: c.x, y: c.y, electricalType: 'input' },
-                { name: 'C', id: 'C', x: c.x, y: c.y - 2 * GRID, electricalType: 'passive' },
-                { name: 'E', id: 'E', x: c.x, y: c.y + 2 * GRID, electricalType: 'passive' }
-            ];
-            return pins.map(p => ({ ...rotatePoint(p, { x: c.x, y: c.y }, r), name: p.name, id: p.id, electricalType: p.electricalType }));
-        }
-        else if (c.type === 'ground') {
-            // single pin at top of ground symbol
-            return [{ name: 'G', id: 'G', x: c.x, y: c.y - 2, electricalType: 'power_in' }];
-        }
-        else {
-            // Generic 2-pin (resistor, capacitor, inductor, diode, battery, ac)
-            const L = 2 * GRID;
-            const rad = r * Math.PI / 180;
-            const ux = Math.cos(rad), uy = Math.sin(rad);
-            const a = { x: c.x - L * ux, y: c.y - L * uy, name: '1', id: '1', electricalType: 'passive' };
-            const b = { x: c.x + L * ux, y: c.y + L * uy, name: '2', id: '2', electricalType: 'passive' };
-            return [a, b];
-        }
-    }
     function drawComponent(c) {
         if (!c.props)
             c.props = {};
@@ -1420,7 +1149,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             // persist selection until user clicks elsewhere
             selection = { kind: 'component', id: c.id, segIndex: null };
             renderInspector();
-            updateSelectionOutline();
+            Rendering.updateSelectionOutline(selection);
             // If switching to a different component while in Move mode, finalize the prior SWP first.
             if (mode === 'move' && moveCollapseCtx && moveCollapseCtx.kind === 'swp' && lastMoveCompId && lastMoveCompId !== c.id) {
                 ensureFinishSwpMove();
@@ -1441,12 +1170,14 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 dragging = true;
                 slideCtx = null; // ensure we use SWP move
                 g.classList.add('moving');
+                moveCollapseCtx = swpCtx;
+                lastMoveCompId = c.id;
             }
             else {
                 // fallback to legacy slide along adjacent wires (if no SWP)
                 slideCtx = buildSlideContext(c);
             }
-            const pins0 = compPinPositions(c).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
+            const pins0 = Components.compPinPositions(c).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
             const wsA = wiresEndingAt(pins0[0]);
             const wsB = wiresEndingAt(pins0[1] || pins0[0]);
             dragStart = {
@@ -1504,6 +1235,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         return;
                     c.x = candX;
                     c.y = candY;
+                    updateComponentDOM(c);
                 }
                 else {
                     let ny = snap(p.y + dragOff.y);
@@ -1513,14 +1245,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         c.y = candY;
                         c.x = candX;
                     }
-                    const pinsNow = compPinPositions(c).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
-                    adjustWireEnd(slideCtx.wA, slideCtx.pinAStart, pinsNow[0]);
-                    adjustWireEnd(slideCtx.wB, slideCtx.pinBStart, pinsNow[1]);
-                    slideCtx.pinAStart = pinsNow[0];
-                    slideCtx.pinBStart = pinsNow[1];
                     updateComponentDOM(c);
-                    updateWireDOM(slideCtx.wA);
-                    updateWireDOM(slideCtx.wB);
                 }
             }
             else {
@@ -1548,6 +1273,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 // If we were doing an SWP-constrained move, rebuild segments for that SWP
                 if (moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
                     finishSwpMove(c);
+                    moveCollapseCtx = null;
+                    lastMoveCompId = null;
                     g.classList.remove('moving');
                     dragStart = null;
                     return;
@@ -1577,10 +1304,13 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         }
                     }
                     else {
-                        updateComponentDOM(c);
-                        if (slideCtx) {
-                            updateWireDOM(slideCtx.wA);
-                            updateWireDOM(slideCtx.wB);
+                        const didBreak = breakWiresForComponent(c);
+                        if (didBreak) {
+                            deleteBridgeBetweenPins(c);
+                            redraw();
+                        }
+                        else {
+                            updateComponentDOM(c);
                         }
                     }
                 }
@@ -1589,282 +1319,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         });
         g.addEventListener('pointercancel', () => { dragging = false; });
         // draw symbol via helper
-        g.appendChild(buildSymbolGroup(c));
+        g.appendChild(Rendering.buildSymbolGroup(c, GRID, defaultResistorStyle));
         return g;
-    }
-    // Build a fresh SVG group for a component’s symbol and label text.
-    function buildSymbolGroup(c) {
-        const gg = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        gg.setAttribute('transform', `rotate(${c.rot} ${c.x} ${c.y})`);
-        const add = (el) => { gg.appendChild(el); return el; };
-        const line = (x1, y1, x2, y2) => { const ln = document.createElementNS('http://www.w3.org/2000/svg', 'line'); ln.setAttribute('x1', x1); ln.setAttribute('y1', y1); ln.setAttribute('x2', x2); ln.setAttribute('y2', y2); ln.setAttribute('stroke', 'var(--component)'); ln.setAttribute('stroke-width', '2'); return add(ln); };
-        const path = (d) => { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', d); p.setAttribute('fill', 'none'); p.setAttribute('stroke', 'var(--component)'); p.setAttribute('stroke-width', '2'); return add(p); };
-        // Lead stubs removed - components now draw directly to pin positions (±48)
-        if (c.type === 'resistor') {
-            // Determine resistor style: component override or project default
-            const style = (c.props?.resistorStyle) || defaultResistorStyle;
-            const y = c.y, x = c.x;
-            const ax = c.x - 50, bx = c.x + 50;
-            if (style === 'iec') {
-                // IEC rectangular resistor symbol with lead wires
-                const rectWidth = 60; // Rectangle width
-                const rectLeft = x - rectWidth / 2;
-                const rectRight = x + rectWidth / 2;
-                // Lead wires from pins to rectangle
-                line(ax, y, rectLeft, y); // left lead
-                line(rectRight, y, bx, y); // right lead
-                // Rectangle body
-                const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                rect.setAttribute('x', String(rectLeft));
-                rect.setAttribute('y', String(y - 12));
-                rect.setAttribute('width', String(rectWidth));
-                rect.setAttribute('height', '24');
-                rect.setAttribute('rx', '1');
-                rect.setAttribute('stroke', 'var(--component)');
-                rect.setAttribute('stroke-width', '2');
-                rect.setAttribute('fill', 'none');
-                add(rect);
-            }
-            else {
-                // US/ANSI zigzag resistor spanning full width to pins (no lead wires)
-                // Zigzag pattern extends from pin to pin
-                path(`M ${ax} ${y} H ${x - 39} L ${x - 33} ${y - 12} L ${x - 21} ${y + 12} L ${x - 9} ${y - 12} L ${x + 3} ${y + 12} L ${x + 15} ${y - 12} L ${x + 27} ${y + 12} L ${x + 33} ${y} H ${bx}`);
-            }
-        }
-        if (c.type === 'capacitor') {
-            const subtype = (c.props?.capacitorSubtype) || 'standard';
-            const y = c.y, x = c.x;
-            const ax = c.x - 50, bx = c.x + 50;
-            if (subtype === 'polarized') {
-                // Polarized capacitor - style depends on schematic standard
-                const style = (c.props?.capacitorStyle) || defaultResistorStyle;
-                if (style === 'iec') {
-                    // IEC polarized: two straight plates with +/- marks
-                    const x1 = x - 6, x2 = x + 6;
-                    line(x - 48, y, x1, y); // left wire from pin to left plate
-                    line(x1, y - 16, x1, y + 16); // left plate (positive) - doubled height
-                    line(x2, y - 16, x2, y + 16); // right plate (negative) - doubled height
-                    line(x2, y, x + 48, y); // right plate to right wire pin
-                    // Plus sign near positive plate (doubled size, moved further from plate)
-                    line(x - 18, y - 24, x - 18, y - 12); // vertical (12px tall)
-                    line(x - 24, y - 18, x - 12, y - 18); // horizontal (12px wide)
-                    // Minus sign near negative plate (doubled size, moved further from plate)
-                    line(x + 12, y - 18, x + 24, y - 18); // horizontal bar (12px wide)
-                }
-                else {
-                    // ANSI polarized: straight positive plate + curved negative plate
-                    const x1 = x - 8, x2 = x + 8;
-                    line(x - 48, y, x1, y); // left wire from pin to positive plate
-                    line(x1, y - 16, x1, y + 16); // positive plate (straight) - doubled height
-                    // Curved negative plate (using quadratic bezier) - doubled height
-                    const curveLeft = x2 - 6;
-                    path(`M ${x2} ${y - 16} Q ${curveLeft} ${y} ${x2} ${y + 16}`);
-                    line(x2, y, x + 48, y); // negative plate to right wire pin
-                    // Plus sign near positive plate (doubled size, moved further from plate)
-                    line(x - 20, y - 24, x - 20, y - 12); // vertical (12px tall)
-                    line(x - 26, y - 18, x - 14, y - 18); // horizontal (12px wide)
-                }
-            }
-            else {
-                // Standard non-polarized capacitor with longer plates (no gaps)
-                const x1 = x - 6, x2 = x + 6;
-                line(x - 48, y, x1, y); // left wire from pin to left plate
-                line(x1, y - 16, x1, y + 16); // left plate - doubled height
-                line(x2, y - 16, x2, y + 16); // right plate - doubled height
-                line(x2, y, x + 48, y); // right plate to right wire pin
-            }
-        }
-        if (c.type === 'inductor') {
-            // Inductor coils spanning full width to pins
-            const y = c.y, ax = c.x - 50, bx = c.x + 50;
-            const totalWidth = 100; // bx - ax
-            const r = 8; // coil radius
-            const numCoils = 6;
-            const coilWidth = totalWidth / numCoils;
-            let d = `M ${ax} ${y}`;
-            for (let i = 0; i < numCoils; i++) {
-                d += ` q ${coilWidth / 2} -${r} ${coilWidth} 0`;
-            }
-            path(d);
-        }
-        if (c.type === 'diode') {
-            // subtype-aware diode rendering
-            drawDiodeInto(gg, c, (c.props && c.props.subtype) ? c.props.subtype : 'generic');
-        }
-        if (c.type === 'battery') {
-            // Battery symbol: negative terminal (long line) on left, positive terminal (short line) on right
-            // Pins are at x ± 2*GRID (x ± 50), so draw lines extending toward the pins
-            const y = c.y;
-            const pinOffset = 2 * GRID; // 50px
-            // Negative terminal (long line) - left side
-            const xNeg = c.x - 10;
-            line(xNeg, y - 18, xNeg, y + 18);
-            // Connection line from negative terminal to left pin
-            line(xNeg, y, c.x - pinOffset, y);
-            // Positive terminal (short line) - right side
-            const xPos = c.x + 10;
-            line(xPos, y - 12, xPos, y + 12);
-            // Connection line from positive terminal to right pin
-            line(xPos, y, c.x + pinOffset, y);
-            // Add polarity symbols - offset above the centerline for better visibility
-            const plusText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            plusText.setAttribute('x', String(xPos + 16));
-            plusText.setAttribute('y', String(y - 8));
-            plusText.setAttribute('text-anchor', 'start');
-            plusText.setAttribute('font-size', '16');
-            plusText.setAttribute('font-weight', 'bold');
-            plusText.setAttribute('fill', 'var(--component)');
-            plusText.textContent = '+';
-            gg.appendChild(plusText);
-            const minusText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            minusText.setAttribute('x', String(xNeg - 16));
-            minusText.setAttribute('y', String(y - 8));
-            minusText.setAttribute('text-anchor', 'end');
-            minusText.setAttribute('font-size', '16');
-            minusText.setAttribute('font-weight', 'bold');
-            minusText.setAttribute('fill', 'var(--component)');
-            minusText.textContent = '−';
-            gg.appendChild(minusText);
-        }
-        if (c.type === 'ac') {
-            const ax = c.x - 50, bx = c.x + 50, y = c.y;
-            // Circle spanning most of width with minimal leads
-            const radius = 40;
-            // Minimal leads
-            line(ax, y, c.x - radius, y);
-            line(c.x + radius, y, bx, y);
-            // Circle
-            const circ = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-            setAttr(circ, 'cx', c.x);
-            setAttr(circ, 'cy', c.y);
-            setAttr(circ, 'r', radius);
-            circ.setAttribute('fill', 'none');
-            circ.setAttribute('stroke', 'var(--component)');
-            circ.setAttribute('stroke-width', '2');
-            gg.appendChild(circ);
-            // Sine wave inside circle (scaled up)
-            path(`M ${c.x - 30} ${c.y} q 15 -20 30 0 q 15 20 30 0`);
-        }
-        if (c.type === 'npn' || c.type === 'pnp') {
-            const x = c.x, y = c.y, arrowOut = c.type === 'npn';
-            line(x, y - 28, x, y + 28); // base
-            line(x, y - 10, x + 30, y - 30); // collector
-            line(x, y + 10, x + 30, y + 30); // emitter
-            const arr = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            const dx = arrowOut ? 8 : -8;
-            arr.setAttribute('d', `M ${x + 30} ${y + 30} l ${-dx} -6 l 0 12 Z`);
-            arr.setAttribute('fill', 'var(--component)');
-            gg.appendChild(arr);
-        }
-        if (c.type === 'ground') {
-            const y = c.y, x = c.x;
-            line(x - 16, y, x + 16, y);
-            line(x - 10, y + 6, x + 10, y + 6);
-            line(x - 4, y + 12, x + 4, y + 12);
-        }
-        // label (and optional voltage line)
-        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        label.setAttribute('x', c.x);
-        label.setAttribute('y', c.y + 46);
-        label.setAttribute('text-anchor', 'middle');
-        label.setAttribute('font-size', '12');
-        label.setAttribute('fill', 'var(--ink)');
-        const valText = formatValue(c);
-        label.textContent = valText ? `${c.label} (${valText})` : c.label;
-        gg.appendChild(label);
-        if (c.type === 'battery' || c.type === 'ac') {
-            const vtxt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            vtxt.setAttribute('x', c.x);
-            vtxt.setAttribute('y', c.y + 62);
-            vtxt.setAttribute('text-anchor', 'middle');
-            vtxt.setAttribute('font-size', '12');
-            vtxt.setAttribute('fill', 'var(--ink)');
-            const v = (c.props && (c.props.voltage ?? '') !== '') ? `${c.props.voltage} V` : '';
-            vtxt.textContent = v;
-            gg.appendChild(vtxt);
-        }
-        return gg;
-    }
-    // Draw diode into existing symbol group 'gg' honoring rotation already set on gg.
-    function drawDiodeInto(gg, c, subtype) {
-        const stroke = 'var(--component)';
-        const sw = 2;
-        const add = (el) => { gg.appendChild(el); return el; };
-        const mk = (tag) => document.createElementNS('http://www.w3.org/2000/svg', tag);
-        const lineEl = (x1, y1, x2, y2, w = sw) => { const ln = mk('line'); ln.setAttribute('x1', x1); ln.setAttribute('y1', y1); ln.setAttribute('x2', x2); ln.setAttribute('y2', y2); ln.setAttribute('stroke', stroke); ln.setAttribute('stroke-width', w); ln.setAttribute('fill', 'none'); return add(ln); };
-        const pathEl = (d, w = sw) => { const p = mk('path'); p.setAttribute('d', d); p.setAttribute('stroke', stroke); p.setAttribute('stroke-width', w); p.setAttribute('fill', 'none'); return add(p); };
-        // Diode spanning full width (no lead wires)
-        const y = c.y, ax = c.x - 50, bx = c.x + 50;
-        // Triangle from left pin to center
-        pathEl(`M ${ax} ${y} L ${ax} ${y - 16} L ${c.x} ${y} L ${ax} ${y + 16} Z`);
-        // Cathode bar at right pin
-        lineEl(bx, y - 16, bx, y + 16);
-        // Horizontal line from triangle tip to cathode
-        lineEl(c.x, y, bx, y);
-        // Subtype adorners near cathode side
-        const cx = c.x + 8, cy = y;
-        const addArrow = (outward = true) => {
-            const dir = outward ? 1 : -1, ax = cx + (outward ? 10 : -10);
-            pathEl(`M ${ax} ${cy - 10} l ${6 * dir} -6 m -6 6 l ${6 * dir} 6`);
-            pathEl(`M ${ax} ${cy + 10} l ${6 * dir} -6 m -6 6 l ${6 * dir} 6`);
-        };
-        switch (String(subtype || 'generic').toLowerCase()) {
-            case 'zener':
-                // Bent cathode: two short slanted ticks into bar
-                lineEl(cx - 14, cy - 6, cx, cy);
-                lineEl(cx - 14, cy + 6, cx, cy);
-                break;
-            case 'schottky':
-                // Schottky: small second bar close to cathode
-                lineEl(cx - 6, cy - 12, cx - 6, cy + 12);
-                break;
-            case 'led':
-                addArrow(true);
-                break;
-            case 'photo':
-                addArrow(false);
-                break;
-            case 'tunnel':
-                // Tunnel/Esaki: extra vertical bar near cathode
-                lineEl(cx - 10, cy - 12, cx - 10, cy + 12);
-                break;
-            case 'varactor':
-            case 'varicap':
-                // Varactor: parallel plate near cathode (capacitor-like)
-                lineEl(cx + 8, cy - 12, cx + 8, cy + 12);
-                break;
-            case 'laser':
-                // Laser diode: LED arrows + cavity line
-                addArrow(true);
-                lineEl(cx + 14, cy - 14, cx + 14, cy + 14);
-                break;
-            case 'tvs_uni':
-                // Unidirectional TVS: small angled lines from top and bottom of cathode bar (like wings)
-                lineEl(bx, cy - 16, bx - 8, cy - 22);
-                lineEl(bx, cy + 16, bx - 8, cy + 22);
-                break;
-            case 'tvs_bi':
-                // Bidirectional TVS: two triangles pointing at each other with cathode bars on outside
-                // Clear the default diode elements first by not drawing them
-                // Remove all current children and redraw
-                while (gg.firstChild)
-                    gg.removeChild(gg.firstChild);
-                // Left cathode bar
-                lineEl(ax, cy - 16, ax, cy + 16);
-                // Left triangle (pointing right)
-                pathEl(`M ${ax} ${cy} L ${ax + 16} ${cy - 16} L ${ax + 16} ${cy + 16} Z`);
-                // Right triangle (pointing left)
-                pathEl(`M ${bx} ${cy} L ${bx - 16} ${cy - 16} L ${bx - 16} ${cy + 16} Z`);
-                // Right cathode bar
-                lineEl(bx, cy - 16, bx, cy + 16);
-                // Horizontal line connecting the triangles
-                lineEl(ax + 16, cy, bx - 16, cy);
-                break;
-            case 'generic':
-            default:
-                // no extra marks
-                break;
-        }
     }
     function redrawCanvasOnly() {
         // components
@@ -1880,7 +1336,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             // visible stroke
             // visible stroke (effective: explicit → netclass → theme)
             ensureStroke(w);
-            const eff = effectiveStroke(w, netClassForWire(w), THEME);
+            const eff = effectiveStroke(w, Netlist.netClassForWire(w, NET_CLASSES, activeNetClass), THEME);
             const vis = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
             vis.setAttribute('class', 'wire-stroke');
             vis.setAttribute('fill', 'none');
@@ -1974,7 +1430,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
         }
         // (Optional: if you want endpoint/pin dots, draw them in a different layer, not gJunctions)
-        updateSelectionOutline();
+        Rendering.updateSelectionOutline(selection);
         updateCounts();
         renderNetList();
         // Endpoint selection circles (overlay). Visible while placing wires or components
@@ -1990,7 +1446,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 if (!w.points || w.points.length < 2)
                     continue;
                 ensureStroke(w);
-                const eff = effectiveStroke(w, netClassForWire(w), THEME);
+                const eff = effectiveStroke(w, Netlist.netClassForWire(w, NET_CLASSES, activeNetClass), THEME);
                 // compute circle diameter in user units: about 3x the visible stroke width (in px -> user units)
                 const strokePx = Math.max(1, mmToPx(eff.width || 0.25));
                 // convert px to user units: 1 user unit == 1 SVG coordinate; userScale = screen px per user unit
@@ -2038,7 +1494,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             if (wid) {
                                 selection = { kind: 'wire', id: wid, segIndex: null };
                                 renderInspector();
-                                updateSelectionOutline();
+                                Rendering.updateSelectionOutline(selection);
                             }
                             return;
                         }
@@ -2071,7 +1527,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                                     rot = normDeg(hit.angle);
                                 }
                             }
-                            const id = uid(placeType);
+                            const id = State.uid(placeType);
                             const labelPrefix = { resistor: 'R', capacitor: 'C', inductor: 'L', diode: 'D', npn: 'Q', pnp: 'Q', ground: 'GND', battery: 'BT', ac: 'AC' }[placeType] || 'X';
                             const comp = { id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType] - 1}`, value: '', props: {} };
                             if (placeType === 'diode')
@@ -2100,7 +1556,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
             // Also add endpoint circles for component pins
             for (const c of components) {
-                const pins = compPinPositions(c);
+                const pins = Components.compPinPositions(c);
                 for (const pin of pins) {
                     // Scale circle diameter with zoom: 9px normal, 7px when < 75%, 6px when <= 25%
                     let desiredScreenPx = 9;
@@ -2136,7 +1592,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             if (cid) {
                                 selection = { kind: 'component', id: cid, segIndex: null };
                                 renderInspector();
-                                updateSelectionOutline();
+                                Rendering.updateSelectionOutline(selection);
                             }
                             return;
                         }
@@ -2169,7 +1625,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                                     rot = normDeg(hit.angle);
                                 }
                             }
-                            const id = uid(placeType);
+                            const id = State.uid(placeType);
                             const labelPrefix = { resistor: 'R', capacitor: 'C', inductor: 'L', diode: 'D', npn: 'Q', pnp: 'Q', ground: 'GND', battery: 'BT', ac: 'AC' }[placeType] || 'X';
                             const comp = { id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType] - 1}`, value: '', props: {} };
                             if (placeType === 'diode')
@@ -2203,14 +1659,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         redrawCanvasOnly();
         renderInspector();
     }
-    // Update selection styling (no circle; tint symbol graphics via CSS)
-    function updateSelectionOutline() {
-        document.querySelectorAll('#components g.comp').forEach(g => {
-            const id = g.getAttribute('data-id');
-            const on = selection.kind === 'component' && selection.id === id;
-            g.classList.toggle('selected', !!on);
-        });
-    }
     function selecting(kind, id, segIndex = null) {
         // If we're in Move mode and have a collapsed SWP, finalize it when switching away
         // from the current component (or to a non-component selection).
@@ -2239,7 +1687,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const left = aPoints.slice(0, Math.max(0, aPoints.length - 1));
             const right = bPoints.slice(1);
             const joined = left.concat(right);
-            const merged = collapseDuplicateVertices(joined);
+            const merged = Geometry.collapseDuplicateVertices(joined);
             // Replace the two wires with a single merged polyline
             wires = wires.filter(w => w !== wA && w !== wB);
             if (merged.length >= 2) {
@@ -2250,7 +1698,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 for (let i = 0; i < merged.length - 1; i++) {
                     const segPts = [merged[i], merged[i + 1]];
                     const segStroke = inheritedStroke ? { ...inheritedStroke, color: { ...inheritedStroke.color } } : undefined;
-                    wires.push({ id: uid('wire'), points: segPts, color: segStroke ? rgba01ToCss(segStroke.color) : colorCss, stroke: segStroke });
+                    wires.push({ id: State.uid('wire'), points: segPts, color: segStroke ? rgba01ToCss(segStroke.color) : colorCss, stroke: segStroke });
                 }
             }
         }
@@ -2261,7 +1709,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // Mend only for simple 2-pin parts
         if (comp && ['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'].includes(comp.type)) {
             // Use raw pin positions (no snap) so angled wires mend correctly
-            const pins = compPinPositions(comp);
+            const pins = Components.compPinPositions(comp);
             if (pins.length === 2) {
                 // Find the two wire endpoints that touch the pins (works for angled too)
                 const hitA = findWireEndpointNear(pins[0], 0.9);
@@ -2293,7 +1741,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             return;
         }
         // Fallback for multi-point polylines: delete only the clicked sub-segment.
-        const idx = nearestSegmentIndex(w.points, p);
+        const nearest = Geometry.nearestSegmentIndex(w.points, p);
+        if (!nearest)
+            return;
+        const idx = nearest.index;
         if (idx < 0 || idx >= w.points.length - 1)
             return;
         removeJunctionsAtWireEndpoints(w);
@@ -2310,12 +1761,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // Remove original wire
         wires = wires.filter(x => x.id !== w.id);
         // Add split pieces back if they contain at least one segment
-        const L = normalizedPolylineOrNull(left);
-        const R = normalizedPolylineOrNull(right);
+        const L = Geometry.normalizedPolylineOrNull(left);
+        const R = Geometry.normalizedPolylineOrNull(right);
         if (L)
-            wires.push({ id: uid('wire'), points: L, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
+            wires.push({ id: State.uid('wire'), points: L, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
         if (R)
-            wires.push({ id: uid('wire'), points: R, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
+            wires.push({ id: State.uid('wire'), points: R, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
         if (selection.id === w.id)
             selection = { kind: null, id: null, segIndex: null };
         normalizeAllWires();
@@ -2341,60 +1792,33 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         }
         return v;
     }
-    function nearestSegmentIndex(pts, p) {
-        let best = -1, bestD = 1e9;
-        for (let i = 0; i < pts.length - 1; i++) {
-            const d = pointToSegmentDistance(p, pts[i], pts[i + 1]);
-            if (d < bestD) {
-                bestD = d;
-                best = i;
-            }
-        }
-        return best;
-    }
-    // Local version of projectPointToSegment that returns {q, t} format
-    function projectPointToSegmentWithT(p, a, b) {
-        const A = { x: a.x, y: a.y }, B = { x: b.x, y: b.y }, P = { x: p.x, y: p.y };
-        const ABx = B.x - A.x, ABy = B.y - A.y;
-        const APx = P.x - A.x, APy = P.y - A.y;
-        const ab2 = ABx * ABx + ABy * ABy;
-        if (ab2 === 0)
-            return { q: { x: A.x, y: A.y }, t: 0 };
-        let t = (APx * ABx + APy * ABy) / ab2;
-        t = Math.max(0, Math.min(1, t));
-        return { q: { x: A.x + t * ABx, y: A.y + t * ABy }, t };
-    }
     // Angles / nearest segment helpers
     const isTwoPinType = (t) => ['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'].includes(t);
+    // nearestSegmentAtPoint - local app-specific version that searches wires array
     function nearestSegmentAtPoint(p, maxDist = 18) {
         let best = null, bestD = Infinity;
         for (const w of wires) {
             for (let i = 0; i < w.points.length - 1; i++) {
                 const a = w.points[i], b = w.points[i + 1];
-                const { q, t } = projectPointToSegmentWithT(p, a, b);
+                const { proj, t } = Geometry.projectPointToSegmentWithT(p, a, b);
                 if (t <= 0 || t >= 1)
                     continue; // interior only
-                const d = Math.hypot(p.x - q.x, p.y - q.y);
+                const d = Math.hypot(p.x - proj.x, p.y - proj.y);
                 if (d < bestD) {
                     bestD = d;
-                    best = { w, idx: i, q, angle: segmentAngle(a, b) };
+                    best = { w, idx: i, q: proj, angle: segmentAngle(a, b) };
                 }
             }
         }
         return (best && bestD <= maxDist) ? best : null;
     }
-    // --- Keep selection stable across a restroke that rewrites wire objects ---
-    function midOfSeg(pts, idx) {
-        const a = pts[idx], b = pts[idx + 1];
-        return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    }
     function reselectNearestAt(p) {
         const hit = nearestSegmentAtPoint(p, 24);
         if (hit && hit.w) {
-            selecting('wire', hit.w.id, hit.idx); // will redraw + rebuild the Inspector
+            selecting('wire', hit.w.id, hit.idx);
         }
         else {
-            redraw(); // fallback
+            redraw();
         }
     }
     // ----- Marquee helpers -----
@@ -2498,7 +1922,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     function breakWiresForComponent(c) {
         // Break wires at EACH connection pin (not at component center)
         let broke = false;
-        const pins = compPinPositions(c);
+        const pins = Components.compPinPositions(c);
         for (const pin of pins) {
             if (breakNearestWireAtPin(pin))
                 broke = true;
@@ -2510,7 +1934,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         for (const w of [...wires]) {
             for (let i = 0; i < w.points.length - 1; i++) {
                 const a = w.points[i], b = w.points[i + 1];
-                const { q, t } = projectPointToSegmentWithT(pin, a, b);
+                const { proj, t } = Geometry.projectPointToSegmentWithT(pin, a, b);
                 const dist = pointToSegmentDistance(pin, a, b);
                 // axis-aligned fallback for robust vertical/horizontal splitting
                 const isVertical = (a.x === b.x);
@@ -2519,18 +1943,18 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 const withinHorz = isHorizontal && Math.abs(pin.y - a.y) <= GRID / 2 && pin.x >= Math.min(a.x, b.x) && pin.x <= Math.max(a.x, b.x);
                 const nearInterior = (t > 0.001 && t < 0.999 && dist <= 20);
                 if (withinVert || withinHorz || nearInterior) {
-                    // For angled (nearInterior), split at the exact projection q; else use snapped pin
-                    const bp = nearInterior ? { x: q.x, y: q.y } : { x: snapToBaseScalar(pin.x), y: snapToBaseScalar(pin.y) };
+                    // For angled (nearInterior), split at the exact projection; else use snapped pin
+                    const bp = nearInterior ? { x: proj.x, y: proj.y } : { x: snapToBaseScalar(pin.x), y: snapToBaseScalar(pin.y) };
                     const left = w.points.slice(0, i + 1).concat([bp]);
                     const right = [bp].concat(w.points.slice(i + 1));
                     // replace original with normalized children (drop degenerate)
                     wires = wires.filter(x => x.id !== w.id);
-                    const L = normalizedPolylineOrNull(left);
-                    const R = normalizedPolylineOrNull(right);
+                    const L = Geometry.normalizedPolylineOrNull(left);
+                    const R = Geometry.normalizedPolylineOrNull(right);
                     if (L)
-                        wires.push({ id: uid('wire'), points: L, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
+                        wires.push({ id: State.uid('wire'), points: L, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
                     if (R)
-                        wires.push({ id: uid('wire'), points: R, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
+                        wires.push({ id: State.uid('wire'), points: R, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
                     return true;
                 }
             }
@@ -2542,7 +1966,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const twoPin = ['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'];
         if (!twoPin.includes(c.type))
             return;
-        const pins = compPinPositions(c);
+        const pins = Components.compPinPositions(c);
         if (pins.length !== 2)
             return;
         const a = { x: pins[0].x, y: pins[0].y };
@@ -2609,7 +2033,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     function collectAnchors() {
         const out = [];
         for (const c of components) {
-            const pins = compPinPositions(c);
+            const pins = Components.compPinPositions(c);
             for (const p of pins)
                 out.push({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) });
         }
@@ -2682,14 +2106,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             return eqPt(a, pt) || eqPt(b, pt);
         });
     }
-    function otherEnd(w, endPt) {
-        const a = w.points[0], b = w.points[w.points.length - 1];
-        return eqPt(a, endPt) ? b : a;
-    }
-    function otherEndpointOf(w, endPt) {
-        const a = w.points[0], b = w.points[w.points.length - 1];
-        return eqPt(a, endPt) ? b : a;
-    }
     function adjacentOther(w, endPt) {
         // return the vertex adjacent to the endpoint that equals endPt
         const n = w.points.length;
@@ -2701,58 +2117,33 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             return w.points[n - 2];
         return null;
     }
-    function buildSlideContext(c) {
-        // only for simple 2-pin parts
-        if (!['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'].includes(c.type))
-            return null;
-        const pins = compPinPositions(c).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
-        if (pins.length !== 2)
-            return null;
-        const axis = axisFromPins(pins);
-        if (!axis)
-            return null;
-        const wA = wireAlongAxisAt(pins[0], axis);
-        const wB = wireAlongAxisAt(pins[1], axis);
-        if (!wA || !wB)
-            return null;
-        const aAdj = adjacentOther(wA, pins[0]);
-        const bAdj = adjacentOther(wB, pins[1]);
-        if (!aAdj || !bAdj)
-            return null;
-        if (axis === 'x') {
-            const fixed = pins[0].y;
-            const min = Math.min(aAdj.x, bAdj.x);
-            const max = Math.max(aAdj.x, bAdj.x);
-            return { axis: 'x', fixed, min, max, wA, wB, pinAStart: pins[0], pinBStart: pins[1] };
-        }
-        else {
-            const fixed = pins[0].x;
-            const min = Math.min(aAdj.y, bAdj.y);
-            const max = Math.max(aAdj.y, bAdj.y);
-            return { axis: 'y', fixed, min, max, wA, wB, pinAStart: pins[0], pinBStart: pins[1] };
-        }
+    // Helper to create Move context
+    function createMoveContext() {
+        return {
+            components, wires, selection, moveCollapseCtx, lastMoveCompId, topology,
+            snap, snapToBaseScalar, eqPt, eqPtEps: Geometry.eqPtEps, eqN: Geometry.eqN, keyPt: Geometry.keyPt,
+            compPinPositions: Components.compPinPositions, wiresEndingAt, adjacentOther,
+            pushUndo, redraw, redrawCanvasOnly, uid: State.uid,
+            rebuildTopology, findSwpById, swpIdForComponent,
+            updateComponentDOM: (c) => updateComponentDOM(c), updateWireDOM,
+            setAttr, buildSymbolGroup: (c) => Rendering.buildSymbolGroup(c, GRID, defaultResistorStyle),
+            rgba01ToCss, ensureStroke, pointToSegmentDistance
+        };
     }
+    function buildSlideContext(c) { return Move.buildSlideContext(createMoveContext(), c); }
     function adjustWireEnd(w, oldEnd, newEnd) {
-        // replace whichever endpoint equals oldEnd with newEnd
-        if (eqPt(w.points[0], oldEnd))
-            w.points[0] = { ...newEnd };
-        else if (eqPt(w.points[w.points.length - 1], oldEnd))
-            w.points[w.points.length - 1] = { ...newEnd };
-    }
-    function replaceEndpoint(w, oldEnd, newEnd) {
-        // Replace a matching endpoint in w with newEnd, preserving all other vertices.
-        if (eqPt(w.points[0], oldEnd)) {
-            w.points[0] = { ...newEnd };
-            // collapse duplicate vertex if needed
-            if (w.points.length > 1 && eqPt(w.points[0], w.points[1]))
-                w.points.shift();
+        if (!w)
+            return;
+        const ctx = createMoveContext();
+        // Find and update the matching endpoint
+        if (ctx.eqPt(w.points[0], oldEnd)) {
+            w.points[0] = { x: newEnd.x, y: newEnd.y };
         }
-        else if (eqPt(w.points[w.points.length - 1], oldEnd)) {
-            w.points[w.points.length - 1] = { ...newEnd };
-            if (w.points.length > 1 && eqPt(w.points[w.points.length - 1], w.points[w.points.length - 2]))
-                w.points.pop();
+        else if (ctx.eqPt(w.points[w.points.length - 1], oldEnd)) {
+            w.points[w.points.length - 1] = { x: newEnd.x, y: newEnd.y };
         }
     }
+    function replaceEndpoint(w, oldEnd, newEnd) { return Move.replaceEndpoint(createMoveContext(), w, oldEnd, newEnd); }
     // Determine axis from a 2-pin part’s pin positions ('x' = horizontal, 'y' = vertical)
     function axisFromPins(pins) {
         if (!pins || pins.length < 2)
@@ -2763,56 +2154,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             return 'y';
         return null;
     }
-    // Pick the wire at 'pt' that runs along the given axis (ignores branches at junctions)
-    function wireAlongAxisAt(pt, axis) {
-        const ws = wiresEndingAt(pt);
-        for (const w of ws) {
-            const adj = adjacentOther(w, pt);
-            if (!adj)
-                continue;
-            if (axis === 'x' && adj.y === pt.y)
-                return w; // horizontal wire
-            if (axis === 'y' && adj.x === pt.x)
-                return w; // vertical wire
-        }
-        return null;
-    }
-    // ------- Lightweight DOM updaters (avoid full redraw during drag) -------
-    function updateComponentDOM(c) {
-        const g = gComps.querySelector(`g.comp[data-id="${c.id}"]`);
-        if (!g)
-            return;
-        // selection outline & hit rect
-        const outline = g.querySelector('[data-outline]');
-        if (outline) {
-            outline.setAttribute('cx', c.x);
-            outline.setAttribute('cy', c.y);
-        }
-        const hit = g.querySelector('rect');
-        if (hit) {
-            setAttr(hit, 'x', c.x - 60);
-            setAttr(hit, 'y', c.y - 60);
-        }
-        // pins
-        const pins = compPinPositions(c);
-        const pinEls = g.querySelectorAll('circle[data-pin]');
-        for (let i = 0; i < Math.min(pinEls.length, pins.length); i++) {
-            // pin circles (inside the for-loop):
-            setAttr(pinEls[i], 'cx', pins[i].x);
-            setAttr(pinEls[i], 'cy', pins[i].y);
-        }
-        // Rebuild the inner symbol group so absolute geometry (lines/paths) follows new x/y.
-        rebuildSymbolGroup(c, g);
-    }
-    // Replace the first-level symbol <g> inside a component with a fresh one.
-    function rebuildSymbolGroup(c, g) {
-        const old = g.querySelector(':scope > g'); // the inner symbol group we appended in drawComponent
-        const fresh = buildSymbolGroup(c);
-        if (old)
-            g.replaceChild(fresh, old);
-        else
-            g.appendChild(fresh);
-    }
+    function wireAlongAxisAt(pt, axis) { return Move.wireAlongAxisAt(createMoveContext(), pt, axis); }
+    function updateComponentDOM(c) { return Move.updateComponentDOM(createMoveContext(), c, gComps); }
+    function rebuildSymbolGroup(c, g) { return Move.rebuildSymbolGroup(createMoveContext(), c, g); }
     function wirePointsString(w) { return w.points.map(p => `${p.x},${p.y}`).join(' '); }
     function updateWireDOM(w) {
         if (!w)
@@ -2825,7 +2169,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const vis = group.querySelector('polyline[data-wire-stroke]');
         if (vis) {
             ensureStroke(w);
-            const eff = effectiveStroke(w, netClassForWire(w), THEME);
+            const eff = effectiveStroke(w, Netlist.netClassForWire(w, NET_CLASSES, activeNetClass), THEME);
             vis.setAttribute('stroke', rgba01ToCss(eff.color));
             vis.setAttribute('stroke-width', String(mmToPx(eff.width)));
             const dashes = dashArrayFor(eff.type);
@@ -3018,7 +2362,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             return;
         }
         if (mode === 'place' && placeType) {
-            const id = uid(placeType);
+            const id = State.uid(placeType);
             const labelPrefix = { resistor: 'R', capacitor: 'C', inductor: 'L', diode: 'D', npn: 'Q', pnp: 'Q', ground: 'GND', battery: 'BT', ac: 'AC' }[placeType] || 'X';
             // If a 2-pin part is dropped near a segment, project to it and align rotation
             let at = { x, y }, rot = 0;
@@ -3233,7 +2577,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     // Also include component pins if they're not the drawing start point
                     let componentPinCount = 0;
                     components.forEach(c => {
-                        const pins = compPinPositions(c);
+                        const pins = Components.compPinPositions(c);
                         pins.forEach(p => {
                             if (!isDrawingStart(p)) {
                                 candidates.push({ x: p.x, y: p.y });
@@ -3507,6 +2851,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 redraw();
             }
         }
+        if (e.key === 'Enter' && mode === 'move') {
+            e.preventDefault();
+            setMode('select');
+            return;
+        }
         if (e.key === 'Enter' && drawing.active) {
             finishWire();
         }
@@ -3740,7 +3089,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 const segStroke = stroke ? { ...stroke, color: { ...stroke.color } } : undefined;
                 // Always assign to activeNetClass (net assignment independent of custom properties)
                 const netId = activeNetClass;
-                wires.push({ id: uid('wire'), points: segmentPts, color: rgba01ToCss(segStroke ? segStroke.color : cssToRGBA01(curCol)), stroke: segStroke, netId });
+                wires.push({ id: State.uid('wire'), points: segmentPts, color: rgba01ToCss(segStroke ? segStroke.color : cssToRGBA01(curCol)), stroke: segStroke, netId });
             }
         }
     }
@@ -4278,7 +3627,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         }
         else if (mode === 'place' && placeType) {
             // Place component at typed coordinate
-            const id = uid(placeType);
+            const id = State.uid(placeType);
             const labelPrefix = { resistor: 'R', capacitor: 'C', inductor: 'L', diode: 'D', npn: 'Q', pnp: 'Q', ground: 'GND', battery: 'BT', ac: 'AC' }[placeType] || 'X';
             const comp = {
                 id, type: placeType, x: snapPt.x, y: snapPt.y, rot: 0, label: `${labelPrefix}${counters[placeType] - 1}`, value: '',
@@ -5225,21 +4574,30 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         applyZoom();
     }
     function clearAll() {
-        if (!confirm('Clear the canvas? This cannot be undone.'))
-            return;
-        components = [];
-        wires = [];
-        selection = { kind: null, id: null, segIndex: null };
-        // Cancel any in-progress wire drawing and clear overlay
-        drawing.active = false;
-        drawing.points = [];
-        gDrawing.replaceChildren();
-        // Reset ID counters
-        counters = { resistor: 1, capacitor: 1, inductor: 1, diode: 1, npn: 1, pnp: 1, ground: 1, battery: 1, ac: 1, wire: 1 };
-        // Reset nets to default only
-        nets = new Set(['default']);
-        renderNetList();
-        redraw();
+        FileIO.clearAll({
+            components,
+            wires,
+            junctions,
+            nets,
+            activeNetClass,
+            NET_CLASSES,
+            THEME,
+            defaultResistorStyle,
+            counters,
+            GRID,
+            projTitle,
+            defaultResistorStyleSelect,
+            normalizeAllWires,
+            ensureStroke: (w) => ensureStroke(w),
+            rgba01ToCss,
+            cssToRGBA01,
+            renderNetList,
+            redraw,
+            keyPt: (p) => Geometry.keyPt(p),
+            selection,
+            drawing,
+            gDrawing
+        });
     }
     // ================================================================================
     // ====== 9. UI COMPONENTS - INSPECTOR ======
@@ -5341,1121 +4699,83 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
         });
     })();
+    // Wrapper for Inspector.renderInspector that provides context
     function renderInspector() {
-        inspector.replaceChildren();
-        if (selection.kind === 'component') {
-            const c = components.find(x => x.id === selection.id);
-            inspectorNone.style.display = c ? 'none' : 'block';
-            if (!c)
-                return;
-            const wrap = document.createElement('div');
-            wrap.appendChild(rowPair('ID', text(c.id, true)));
-            wrap.appendChild(rowPair('Type', text(c.type, true)));
-            wrap.appendChild(rowPair('Label', input(c.label, v => { pushUndo(); c.label = v; redrawCanvasOnly(); })));
-            // value field for generic components
-            const showValue = ['resistor', 'capacitor', 'inductor', 'diode'].includes(c.type);
-            // Value + Unit (inline) for R, C, L. (Diode keeps a simple Value field if desired.)
-            if (c.type === 'resistor' || c.type === 'capacitor' || c.type === 'inductor') {
-                if (!c.props)
-                    c.props = {};
-                const typeKey = c.type;
-                const container = document.createElement('div');
-                container.className = 'hstack';
-                // numeric / text value
-                const valInput = document.createElement('input');
-                valInput.type = 'text';
-                valInput.value = c.value || '';
-                valInput.oninput = () => { pushUndo(); c.value = valInput.value; redrawCanvasOnly(); };
-                // unit select (uses symbols, e.g., kΩ, µF, mH)
-                const sel = unitSelect(typeKey, (c.props.unit) || defaultUnit(typeKey), (u) => {
-                    pushUndo();
-                    c.props.unit = u;
-                    redrawCanvasOnly();
-                });
-                container.appendChild(valInput);
-                container.appendChild(sel);
-                wrap.appendChild(rowPair('Value', container));
-                // Resistor style selector (only for resistors)
-                if (c.type === 'resistor') {
-                    const styleSel = document.createElement('select');
-                    const ansiOpt = document.createElement('option');
-                    ansiOpt.value = 'ansi';
-                    ansiOpt.textContent = 'ANSI/IEEE (US)';
-                    const iecOpt = document.createElement('option');
-                    iecOpt.value = 'iec';
-                    iecOpt.textContent = 'IEC (International)';
-                    styleSel.appendChild(ansiOpt);
-                    styleSel.appendChild(iecOpt);
-                    styleSel.value = c.props.resistorStyle || defaultResistorStyle;
-                    styleSel.onchange = () => {
-                        pushUndo();
-                        if (!c.props)
-                            c.props = {};
-                        c.props.resistorStyle = styleSel.value;
-                        redrawCanvasOnly();
-                    };
-                    wrap.appendChild(rowPair('Standard', styleSel));
-                }
-                // Capacitor subtype and style selectors (only for capacitors)
-                if (c.type === 'capacitor') {
-                    const subSel = document.createElement('select');
-                    const stdOpt = document.createElement('option');
-                    stdOpt.value = 'standard';
-                    stdOpt.textContent = 'Standard';
-                    const polOpt = document.createElement('option');
-                    polOpt.value = 'polarized';
-                    polOpt.textContent = 'Polarized';
-                    subSel.appendChild(stdOpt);
-                    subSel.appendChild(polOpt);
-                    subSel.value = c.props.capacitorSubtype || 'standard';
-                    subSel.onchange = () => {
-                        pushUndo();
-                        if (!c.props)
-                            c.props = {};
-                        c.props.capacitorSubtype = subSel.value;
-                        if (subSel.value === 'polarized' && !c.props.capacitorStyle) {
-                            c.props.capacitorStyle = defaultResistorStyle;
-                        }
-                        redrawCanvasOnly();
-                        renderInspector(); // Refresh inspector to show/hide Standard selector
-                    };
-                    wrap.appendChild(rowPair('Subtype', subSel));
-                    // Style selector for polarized capacitors
-                    if (c.props.capacitorSubtype === 'polarized') {
-                        const styleSel = document.createElement('select');
-                        const ansiOpt = document.createElement('option');
-                        ansiOpt.value = 'ansi';
-                        ansiOpt.textContent = 'ANSI/IEEE (US)';
-                        const iecOpt = document.createElement('option');
-                        iecOpt.value = 'iec';
-                        iecOpt.textContent = 'IEC (International)';
-                        styleSel.appendChild(ansiOpt);
-                        styleSel.appendChild(iecOpt);
-                        styleSel.value = c.props.capacitorStyle || defaultResistorStyle;
-                        styleSel.onchange = () => {
-                            pushUndo();
-                            if (!c.props)
-                                c.props = {};
-                            c.props.capacitorStyle = styleSel.value;
-                            redrawCanvasOnly();
-                        };
-                        wrap.appendChild(rowPair('Standard', styleSel));
-                    }
-                }
-            }
-            else if (c.type === 'diode') {
-                // Value (optional text) for diode
-                wrap.appendChild(rowPair('Value', input(c.value || '', v => { pushUndo(); c.value = v; redrawCanvasOnly(); })));
-                // Subtype (editable)
-                const subSel = document.createElement('select');
-                ['generic', 'schottky', 'zener', 'led', 'photo', 'tunnel', 'varactor', 'laser'].forEach(v => {
-                    const o = document.createElement('option');
-                    o.value = v;
-                    o.textContent = ({
-                        generic: 'Generic', schottky: 'Schottky', zener: 'Zener',
-                        led: 'Light-emitting (LED)', photo: 'Photo', tunnel: 'Tunnel',
-                        varactor: 'Varactor / Varicap', laser: 'Laser'
-                    })[v];
-                    subSel.appendChild(o);
-                });
-                subSel.value = (c.props && c.props.subtype) ? c.props.subtype : 'generic';
-                subSel.onchange = () => {
-                    pushUndo();
-                    if (!c.props)
-                        c.props = {};
-                    c.props.subtype = subSel.value;
-                    diodeSubtype = subSel.value;
-                    redrawCanvasOnly();
-                };
-                wrap.appendChild(rowPair('Subtype', subSel));
-            }
-            // voltage for DC battery & AC source
-            if (c.type === 'battery' || c.type === 'ac') {
-                if (!c.props)
-                    c.props = {};
-                wrap.appendChild(rowPair('Voltage (V)', number(c.props.voltage ?? 0, v => { pushUndo(); c.props.voltage = v; redrawCanvasOnly(); })));
-            }
-            // position + rotation (X/Y are shown in selected units; internal positions are px)
-            wrap.appendChild(rowPair('X', dimNumberPx(c.x, v => { pushUndo(); c.x = snap(v); redrawCanvasOnly(); })));
-            wrap.appendChild(rowPair('Y', dimNumberPx(c.y, v => { pushUndo(); c.y = snap(v); redrawCanvasOnly(); })));
-            wrap.appendChild(rowPair('Rotation', number(c.rot, v => { pushUndo(); c.rot = (Math.round(v / 90) * 90) % 360; redrawCanvasOnly(); })));
-            inspector.appendChild(wrap);
-            // After the DOM is in place, size any Value/Units selects to their content (capped at 50%)
-            fitInspectorUnitSelects();
-            return;
-        }
-        // WIRE INSPECTOR
-        if (selection.kind === 'wire') {
-            const w = wires.find(x => x.id === selection.id);
-            inspectorNone.style.display = w ? 'none' : 'block';
-            if (!w)
-                return;
-            const wrap = document.createElement('div');
-            // Legacy selection.segIndex is deprecated. Treat the selected `wire` as the
-            // segment itself (per-segment `Wire` objects). Find the SWP by wire id.
-            const swp = swpForWireSegment(w.id, 0);
-            // ---- Wire ID (read-only) ----
-            // Prefer the SWP id (e.g. "swp3"). Fallback to the underlying polyline id if no SWP detected.
-            wrap.appendChild(rowPair('Segment ID', text(w.id, true)));
-            if (swp)
-                wrap.appendChild(rowPair('SWP', text(swp.id, true)));
-            // ---- Wire Endpoints (read-only) ----
-            // If a specific segment is selected, show that segment's endpoints.
-            // Otherwise, prefer the SWP canonical endpoints; fallback to the polyline endpoints.
-            if (w && w.points && w.points.length >= 2) {
-                const A = w.points[0], B = w.points[w.points.length - 1];
-                wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(A.x), globalUnits)}, ${formatDimForDisplay(pxToNm(A.y), globalUnits)}`, true)));
-                wrap.appendChild(rowPair('Wire End', text(`${formatDimForDisplay(pxToNm(B.x), globalUnits)}, ${formatDimForDisplay(pxToNm(B.y), globalUnits)}`, true)));
-            }
-            else if (swp) {
-                wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(swp.start.x), globalUnits)}, ${formatDimForDisplay(pxToNm(swp.start.y), globalUnits)}`, true)));
-                wrap.appendChild(rowPair('Wire End', text(`${formatDimForDisplay(pxToNm(swp.end.x), globalUnits)}, ${formatDimForDisplay(pxToNm(swp.end.y), globalUnits)}`, true)));
-            }
-            else {
-                const A = w.points[0], B = w.points[w.points.length - 1];
-                wrap.appendChild(rowPair('Wire Start', text(`${formatDimForDisplay(pxToNm(A.x), globalUnits)}, ${formatDimForDisplay(pxToNm(A.y), globalUnits)}`, true)));
-                wrap.appendChild(rowPair('Wire End', text(`${formatDimForDisplay(pxToNm(B.x), globalUnits)}, ${formatDimForDisplay(pxToNm(B.y), globalUnits)}`, true)));
-            }
-            // ---- Wire Length (read-only) ----
-            if (w && w.points && w.points.length >= 2) {
-                let totalLength = 0;
-                for (let i = 1; i < w.points.length; i++) {
-                    const dx = w.points[i].x - w.points[i - 1].x;
-                    const dy = w.points[i].y - w.points[i - 1].y;
-                    totalLength += Math.sqrt(dx * dx + dy * dy);
-                }
-                const lengthNm = pxToNm(totalLength);
-                wrap.appendChild(rowPair('Wire Length', text(formatDimForDisplay(lengthNm, globalUnits), true)));
-            }
-            // ---- Net Assignment (includes Net Class selection) ----
-            const netRow = document.createElement('div');
-            netRow.className = 'row';
-            const netLbl = document.createElement('label');
-            netLbl.textContent = 'Net Class';
-            netLbl.style.width = '90px';
-            const netSel = document.createElement('select');
-            // Populate with all available nets
-            Array.from(nets).sort().forEach(netName => {
-                const o = document.createElement('option');
-                o.value = netName;
-                o.textContent = netName;
-                netSel.appendChild(o);
-            });
-            netRow.appendChild(netLbl);
-            netRow.appendChild(netSel);
-            wrap.appendChild(netRow);
-            // Set net dropdown initial value
-            netSel.value = w.netId || activeNetClass;
-            // Use custom properties checkbox
-            const customRow = document.createElement('div');
-            customRow.className = 'row';
-            const customLbl = document.createElement('label');
-            customLbl.style.display = 'flex';
-            customLbl.style.alignItems = 'center';
-            customLbl.style.gap = '6px';
-            const chkCustom = document.createElement('input');
-            chkCustom.type = 'checkbox';
-            const hasCustomProps = () => {
-                ensureStroke(w);
-                return w.stroke.width > 0 || (w.stroke.type !== 'default' && w.stroke.type !== undefined);
-            };
-            chkCustom.checked = hasCustomProps();
-            const lblCustomText = document.createElement('span');
-            lblCustomText.textContent = 'Use custom properties';
-            customLbl.append(chkCustom, lblCustomText);
-            customRow.appendChild(customLbl);
-            wrap.appendChild(customRow);
-            // ---- Wire Stroke (KiCad-style) ----
-            (function () {
-                ensureStroke(w);
-                const holder = document.createElement('div');
-                // Net selection handler - updates wire's net class assignment
-                netSel.onchange = () => {
-                    pushUndo();
-                    ensureStroke(w);
-                    activeNetClass = netSel.value;
-                    renderNetList();
-                    w.netId = netSel.value;
-                    if (!chkCustom.checked) {
-                        // If not using custom properties, update to use net class visuals
-                        const netClass = NET_CLASSES[netSel.value];
-                        const patch = { width: 0, type: 'default' };
-                        w.stroke = { ...w.stroke, ...patch };
-                        delete w.stroke.widthNm;
-                        w.color = rgba01ToCss(netClass.wire.color);
-                        updateWireDOM(w);
-                        redrawCanvasOnly();
-                    }
-                    selection = { kind: 'wire', id: w.id, segIndex: null };
-                    syncWidth();
-                    syncStyle();
-                    syncColor();
-                    syncPreview();
-                };
-                // Custom properties checkbox handler
-                chkCustom.onchange = () => {
-                    pushUndo();
-                    ensureStroke(w);
-                    if (chkCustom.checked) {
-                        // Switching to custom: populate with current effective values (width/type from effectiveStroke,
-                        // but preserve the actual net class color, not the display-adjusted color)
-                        const nc = NET_CLASSES[w.netId || activeNetClass] || NET_CLASSES.default;
-                        const eff = effectiveStroke(w, nc, THEME);
-                        // Determine the raw color to use (from wire's current stroke, or from netclass if using defaults)
-                        const rawColor = (w.stroke && w.stroke.width > 0) ? w.stroke.color : nc.wire.color;
-                        const patch = {
-                            width: eff.width,
-                            type: (eff.type === 'default' ? 'solid' : eff.type) || 'solid',
-                            color: rawColor
-                        };
-                        w.stroke = { ...w.stroke, ...patch };
-                        w.stroke.widthNm = Math.round(patch.width * NM_PER_MM);
-                        w.color = rgba01ToCss(rawColor);
-                    }
-                    else {
-                        // Switching to net class: use defaults
-                        const netClass = NET_CLASSES[w.netId || activeNetClass];
-                        const patch = { width: 0, type: 'default' };
-                        w.stroke = { ...w.stroke, ...patch };
-                        delete w.stroke.widthNm;
-                        w.color = rgba01ToCss(netClass.wire.color);
-                    }
-                    updateWireDOM(w);
-                    redrawCanvasOnly();
-                    selection = { kind: 'wire', id: w.id, segIndex: null };
-                    syncWidth();
-                    syncStyle();
-                    syncColor();
-                    syncPreview();
-                };
-                // Width (in selected units)
-                const widthRow = document.createElement('div');
-                widthRow.className = 'row';
-                const wLbl = document.createElement('label');
-                wLbl.textContent = `Width (${globalUnits})`;
-                wLbl.style.width = '90px';
-                const wIn = document.createElement('input');
-                wIn.type = 'text';
-                wIn.step = '0.05';
-                const syncWidth = () => {
-                    const eff = effectiveStroke(w, netClassForWire(w), THEME);
-                    const effNm = Math.round((eff.width || 0) * NM_PER_MM);
-                    wIn.value = formatDimForDisplay(effNm, globalUnits);
-                    wIn.disabled = !chkCustom.checked;
-                };
-                // Live, non-destructive width updates while typing so the inspector DOM
-                // isn't rebuilt on every keystroke. The final onchange will perform any
-                // SWP-wide restroke and normalization.
-                let hasUndoForThisEdit = false;
-                wIn.onfocus = () => {
-                    // Push undo once when editing starts
-                    if (!hasUndoForThisEdit) {
-                        pushUndo();
-                        hasUndoForThisEdit = true;
-                    }
-                };
-                wIn.oninput = () => {
-                    try {
-                        const parsed = parseDimInput(wIn.value || '0', globalUnits);
-                        if (!parsed)
-                            return;
-                        const nm = parsed.nm;
-                        const valMm = nm / NM_PER_MM;
-                        // store both mm and nm for precision; update DOM for immediate feedback
-                        ensureStroke(w);
-                        w.stroke.widthNm = nm;
-                        w.stroke.width = valMm;
-                        w.color = rgba01ToCss(w.stroke.color);
-                        updateWireDOM(w);
-                        syncPreview();
-                    }
-                    catch (err) {
-                        // ignore transient parse errors while typing
-                    }
-                };
-                wIn.onchange = () => {
-                    // pushUndo() called on focus, not here, to avoid duplicate entries
-                    ensureStroke(w);
-                    const parsed = parseDimInput(wIn.value || '0', globalUnits);
-                    const nm = parsed ? parsed.nm : 0;
-                    const valMm = nm / NM_PER_MM; // mm for legacy fields
-                    const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
-                    // Selected wire is the segment itself: apply directly to `w`.
-                    if (w.points && w.points.length === 2) {
-                        w.stroke.widthNm = nm;
-                        w.stroke.width = valMm;
-                        if (valMm <= 0)
-                            w.stroke.type = 'default';
-                        w.color = rgba01ToCss(w.stroke.color);
-                        updateWireDOM(w);
-                        redrawCanvasOnly();
-                        selection = { kind: 'wire', id: w.id, segIndex: null };
-                    }
-                    else if (swp) {
-                        restrokeSwpSegments(swp, { width: valMm, type: valMm > 0 ? (w.stroke.type === 'default' ? 'solid' : w.stroke.type) : 'default' });
-                        if (mid)
-                            reselectNearestAt(mid);
-                        else
-                            redraw();
-                    }
-                    else {
-                        w.stroke.widthNm = nm;
-                        w.stroke.width = valMm;
-                        if (valMm <= 0)
-                            w.stroke.type = 'default'; // mirror KiCad precedence
-                        updateWireDOM(w);
-                        redrawCanvasOnly();
-                    }
-                    // Normalize displayed value to chosen units
-                    wIn.value = formatDimForDisplay(nm, globalUnits);
-                };
-                widthRow.appendChild(wLbl);
-                widthRow.appendChild(wIn);
-                holder.appendChild(widthRow);
-                // Line style
-                const styleRow = document.createElement('div');
-                styleRow.className = 'row';
-                const sLbl = document.createElement('label');
-                sLbl.textContent = 'Line style';
-                sLbl.style.width = '90px';
-                const sSel = document.createElement('select');
-                ['default', 'solid', 'dash', 'dot', 'dash_dot', 'dash_dot_dot'].forEach(v => {
-                    const o = document.createElement('option');
-                    o.value = v;
-                    o.textContent = v.replace(/_/g, '·');
-                    sSel.appendChild(o);
-                });
-                const syncStyle = () => {
-                    const eff = effectiveStroke(w, netClassForWire(w), THEME);
-                    sSel.value = (!chkCustom.checked ? 'default' : w.stroke.type);
-                    sSel.disabled = !chkCustom.checked;
-                };
-                sSel.onchange = () => {
-                    pushUndo();
-                    ensureStroke(w);
-                    const val = (sSel.value || 'solid');
-                    const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
-                    if (w.points && w.points.length === 2) {
-                        ensureStroke(w);
-                        w.stroke.type = val;
-                        updateWireDOM(w);
-                        redrawCanvasOnly();
-                        selection = { kind: 'wire', id: w.id, segIndex: null };
-                    }
-                    else if (swp) {
-                        // Only change the style; do not force width to 0 when 'default' is chosen.
-                        restrokeSwpSegments(swp, { type: val });
-                        if (mid)
-                            reselectNearestAt(mid);
-                        else
-                            redraw();
-                    }
-                    else {
-                        w.stroke.type = val;
-                        // Selecting 'default' now only defers the style to netclass.
-                        // Width and color remain as-is.
-                        updateWireDOM(w);
-                        redrawCanvasOnly();
-                    }
-                    syncPreview();
-                };
-                styleRow.appendChild(sLbl);
-                styleRow.appendChild(sSel);
-                holder.appendChild(styleRow);
-                // Color (RGB) + Opacity
-                const colorRow = document.createElement('div');
-                colorRow.className = 'row hstack';
-                const cLbl = document.createElement('label');
-                cLbl.textContent = 'Color';
-                cLbl.style.width = '90px';
-                const cIn = document.createElement('input');
-                cIn.type = 'color';
-                // Tooltip for the color button
-                cIn.title = 'Pick color';
-                // Set initial value before defining syncColor
-                ensureStroke(w);
-                const initialColor = w.stroke.color;
-                const initialHex = '#' + [initialColor.r, initialColor.g, initialColor.b]
-                    .map(v => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
-                cIn.value = initialHex;
-                const aIn = document.createElement('input');
-                aIn.type = 'range';
-                aIn.min = '0';
-                aIn.max = '1';
-                aIn.step = '0.05';
-                // keep compact so it fits in the inspector width
-                aIn.style.flex = '0 0 120px';
-                aIn.style.maxWidth = '140px';
-                aIn.value = String(Math.max(0, Math.min(1, initialColor.a)));
-                const syncColor = () => {
-                    // Use raw stored color, not effective stroke (which may convert black/white for visibility)
-                    ensureStroke(w);
-                    const rawColor = w.stroke.color;
-                    // Disable first, then update values, then re-enable to force browser to refresh
-                    const wasDisabled = cIn.disabled;
-                    cIn.disabled = true;
-                    aIn.disabled = true;
-                    // If not using custom properties, show netclass color instead
-                    if (!chkCustom.checked) {
-                        const nc = NET_CLASSES[w.netId || activeNetClass];
-                        const rgbCss = `rgba(${Math.round(nc.wire.color.r * 255)},${Math.round(nc.wire.color.g * 255)},${Math.round(nc.wire.color.b * 255)},${nc.wire.color.a})`;
-                        const hex = colorToHex(rgbCss);
-                        cIn.value = hex;
-                        aIn.value = String(Math.max(0, Math.min(1, nc.wire.color.a)));
-                    }
-                    else {
-                        const rgbCss = `rgba(${Math.round(rawColor.r * 255)},${Math.round(rawColor.g * 255)},${Math.round(rawColor.b * 255)},${rawColor.a})`;
-                        const hex = colorToHex(rgbCss);
-                        cIn.value = hex;
-                        aIn.value = String(Math.max(0, Math.min(1, rawColor.a)));
-                    }
-                    // Re-enable after updating value to force refresh
-                    cIn.disabled = !chkCustom.checked;
-                    aIn.disabled = !chkCustom.checked;
-                };
-                function onColorCommit() {
-                    pushUndo();
-                    // parse #RRGGBB + alpha slider → RGBA01
-                    const hex = cIn.value || '#ffffff';
-                    const m = hex.replace('#', '');
-                    const r = parseInt(m.slice(0, 2), 16), g = parseInt(m.slice(2, 4), 16), b = parseInt(m.slice(4, 6), 16);
-                    const a = Math.max(0, Math.min(1, parseFloat(aIn.value) || 1));
-                    const newColor = { r: r / 255, g: g / 255, b: b / 255, a };
-                    const patch = { color: newColor };
-                    const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
-                    if (w.points && w.points.length === 2) {
-                        ensureStroke(w);
-                        w.stroke = { ...w.stroke, color: newColor };
-                        w.color = rgba01ToCss(w.stroke.color);
-                        updateWireDOM(w);
-                        redrawCanvasOnly();
-                        selection = { kind: 'wire', id: w.id, segIndex: null };
-                    }
-                    else if (swp) {
-                        // update only the segments that belong to this SWP
-                        restrokeSwpSegments(swp, patch);
-                        if (mid)
-                            reselectNearestAt(mid);
-                        else
-                            redraw();
-                    }
-                    else {
-                        ensureStroke(w);
-                        w.stroke = { ...w.stroke, color: newColor };
-                        // keep legacy css color in sync for any flows that still read w.color
-                        w.color = rgba01ToCss(w.stroke.color);
-                        updateWireDOM(w);
-                        redrawCanvasOnly();
-                    }
-                    // refresh all inspector controls + live preview
-                    syncWidth();
-                    syncStyle();
-                    syncColor();
-                    syncPreview();
-                }
-                // Live (non-destructive) updates while the user drags the color/alpha controls.
-                // These update only the selected wire's stroke and DOM so the native color picker
-                // isn't closed by a full inspector re-render mid-drag. The heavier commit that
-                // applies edits across an SWP (restrokeSwpSegments) runs on change/commit.
-                const liveApplyColor = () => {
-                    try {
-                        const hex = cIn.value || '#ffffff';
-                        const m = hex.replace('#', '');
-                        const r = parseInt(m.slice(0, 2), 16), g = parseInt(m.slice(2, 4), 16), b = parseInt(m.slice(4, 6), 16);
-                        const a = Math.max(0, Math.min(1, parseFloat(aIn.value) || 1));
-                        const newColor = { r: r / 255, g: g / 255, b: b / 255, a };
-                        // Apply locally to this wire only (no SWP-wide restroke) so we don't replace the inspector DOM.
-                        ensureStroke(w);
-                        w.stroke = { ...w.stroke, color: newColor };
-                        w.color = rgba01ToCss(w.stroke.color);
-                        updateWireDOM(w);
-                        syncPreview(); // update the tiny preview line
-                    }
-                    catch (err) {
-                        // Ignore transient parse errors while typing
-                    }
-                };
-                let hasColorUndo = false;
-                const ensureColorUndo = () => {
-                    if (!hasColorUndo) {
-                        pushUndo();
-                        hasColorUndo = true;
-                    }
-                };
-                cIn.onfocus = ensureColorUndo;
-                aIn.onfocus = ensureColorUndo;
-                cIn.oninput = () => {
-                    ensureColorUndo();
-                    liveApplyColor();
-                };
-                aIn.oninput = () => {
-                    ensureColorUndo();
-                    liveApplyColor();
-                };
-                // Finalize (apply across SWP if present) when the picker is closed or change is committed
-                cIn.onchange = () => {
-                    ensureColorUndo(); // Ensure undo is pushed even if oninput never fired
-                    const hex = cIn.value || '#ffffff';
-                    const m = hex.replace('#', '');
-                    const r = parseInt(m.slice(0, 2), 16), g = parseInt(m.slice(2, 4), 16), b = parseInt(m.slice(4, 6), 16);
-                    const a = Math.max(0, Math.min(1, parseFloat(aIn.value) || 1));
-                    const newColor = { r: r / 255, g: g / 255, b: b / 255, a };
-                    const patch = { color: newColor };
-                    const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
-                    if (w.points && w.points.length === 2) {
-                        ensureStroke(w);
-                        w.stroke = { ...w.stroke, color: newColor };
-                        w.color = rgba01ToCss(w.stroke.color);
-                        updateWireDOM(w);
-                        redrawCanvasOnly();
-                        selection = { kind: 'wire', id: w.id, segIndex: null };
-                    }
-                    else if (swp) {
-                        restrokeSwpSegments(swp, patch);
-                        if (mid)
-                            reselectNearestAt(mid);
-                        else
-                            redraw();
-                    }
-                    else {
-                        ensureStroke(w);
-                        w.stroke = { ...w.stroke, color: newColor };
-                        w.color = rgba01ToCss(w.stroke.color);
-                        updateWireDOM(w);
-                        redrawCanvasOnly();
-                    }
-                    syncWidth();
-                    syncStyle();
-                    syncColor();
-                    syncPreview();
-                };
-                aIn.onchange = () => {
-                    ensureColorUndo(); // Ensure undo is pushed even if oninput never fired
-                    const hex = cIn.value || '#ffffff';
-                    const m = hex.replace('#', '');
-                    const r = parseInt(m.slice(0, 2), 16), g = parseInt(m.slice(2, 4), 16), b = parseInt(m.slice(4, 6), 16);
-                    const a = Math.max(0, Math.min(1, parseFloat(aIn.value) || 1));
-                    const newColor = { r: r / 255, g: g / 255, b: b / 255, a };
-                    const patch = { color: newColor };
-                    const mid = (w.points && w.points.length >= 2) ? midOfSeg(w.points, 0) : null;
-                    if (w.points && w.points.length === 2) {
-                        ensureStroke(w);
-                        w.stroke = { ...w.stroke, color: newColor };
-                        w.color = rgba01ToCss(w.stroke.color);
-                        updateWireDOM(w);
-                        redrawCanvasOnly();
-                        selection = { kind: 'wire', id: w.id, segIndex: null };
-                    }
-                    else if (swp) {
-                        restrokeSwpSegments(swp, patch);
-                        if (mid)
-                            reselectNearestAt(mid);
-                        else
-                            redraw();
-                    }
-                    else {
-                        ensureStroke(w);
-                        w.stroke = { ...w.stroke, color: newColor };
-                        w.color = rgba01ToCss(w.stroke.color);
-                        updateWireDOM(w);
-                        redrawCanvasOnly();
-                    }
-                    syncWidth();
-                    syncStyle();
-                    syncColor();
-                    syncPreview();
-                };
-                colorRow.appendChild(cLbl);
-                colorRow.appendChild(cIn);
-                colorRow.appendChild(aIn);
-                // small toggle to open the swatch popover (separate from the native color picker)
-                const swatchToggle = document.createElement('button');
-                swatchToggle.type = 'button';
-                swatchToggle.className = 'swatch-toggle';
-                swatchToggle.title = 'Show swatches';
-                swatchToggle.setAttribute('aria-haspopup', 'true');
-                swatchToggle.setAttribute('aria-expanded', 'false');
-                swatchToggle.tabIndex = 0;
-                swatchToggle.setAttribute('role', 'button');
-                swatchToggle.style.marginLeft = '6px';
-                swatchToggle.style.width = '22px';
-                swatchToggle.style.height = '22px';
-                swatchToggle.style.borderRadius = '4px';
-                swatchToggle.style.display = 'inline-flex';
-                swatchToggle.style.alignItems = 'center';
-                swatchToggle.style.justifyContent = 'center';
-                swatchToggle.style.padding = '0';
-                swatchToggle.style.fontSize = '12px';
-                // small caret SVG for consistency
-                swatchToggle.innerHTML = '<svg width="12" height="8" viewBox="0 0 12 8" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1 1l5 5 5-5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-                colorRow.appendChild(swatchToggle);
-                holder.appendChild(colorRow);
-                // Small swatch palette for the inspector color picker — hidden by default.
-                (function () {
-                    const swatches = [
-                        ['black', '#000000'],
-                        ['red', '#FF0000'], ['green', '#00FF00'], ['blue', '#0000FF'],
-                        ['cyan', '#00FFFF'], ['magenta', '#FF00FF'], ['yellow', '#FFFF00']
-                    ];
-                    const palWrap = document.createElement('div');
-                    // Build a floating swatch popover that appears under the color input (not inline in the inspector)
-                    const popover = document.createElement('div');
-                    popover.className = 'inspector-color-popover';
-                    popover.style.position = 'absolute';
-                    popover.style.display = 'none';
-                    popover.style.zIndex = '9999';
-                    popover.style.background = 'var(--panel)';
-                    popover.style.padding = '8px';
-                    popover.style.borderRadius = '6px';
-                    popover.style.boxShadow = '0 6px 18px rgba(0,0,0,0.12)';
-                    popover.style.pointerEvents = 'auto';
-                    popover.style.userSelect = 'none';
-                    const pal = document.createElement('div');
-                    pal.style.display = 'grid';
-                    pal.style.gridTemplateColumns = `repeat(${swatches.length}, 18px)`;
-                    pal.style.gap = '8px';
-                    pal.style.alignItems = 'center';
-                    swatches.forEach(([k, col]) => {
-                        const b = document.createElement('button');
-                        b.className = 'swatch-btn';
-                        b.title = k.toUpperCase();
-                        // Special handling for black: create split diagonal swatch
-                        if (col === '#000000') {
-                            b.style.background = 'linear-gradient(to bottom right, #000000 0%, #000000 49%, #ffffff 51%, #ffffff 100%)';
-                            b.style.border = '1px solid #666666';
-                            b.title = 'BLACK/WHITE';
-                        }
-                        else {
-                            b.style.background = String(col);
-                        }
-                        b.style.width = '18px';
-                        b.style.height = '18px';
-                        b.style.borderRadius = '4px';
-                        b.style.border = '1px solid rgba(0,0,0,0.12)';
-                        b.style.padding = '0';
-                        // Prevent blur race when user clicks a swatch
-                        b.addEventListener('pointerdown', (ev) => { ev.preventDefault(); });
-                        b.addEventListener('click', () => {
-                            ensureColorUndo();
-                            cIn.value = String(col);
-                            aIn.value = '1';
-                            // Call the change handler directly
-                            if (cIn.onchange)
-                                cIn.onchange.call(cIn, new Event('change'));
-                            hidePopover();
-                        });
-                        pal.appendChild(b);
-                    });
-                    popover.appendChild(pal);
-                    document.body.appendChild(popover);
-                    function showPopover() {
-                        const r = cIn.getBoundingClientRect();
-                        const left = Math.max(6, window.scrollX + r.left);
-                        let top = window.scrollY + r.bottom + 6;
-                        const popH = popover.offsetHeight || 120;
-                        const viewportBottom = window.scrollY + window.innerHeight;
-                        if (top + popH > viewportBottom - 8) {
-                            // place above the input if below space is constrained
-                            top = window.scrollY + r.top - popH - 6;
-                        }
-                        popover.style.left = `${left}px`;
-                        popover.style.top = `${top}px`;
-                        // animate in
-                        popover.style.display = 'block';
-                        popover.style.transition = 'opacity 140ms ease, transform 140ms ease';
-                        popover.style.opacity = '0';
-                        popover.style.transform = 'translateY(-6px)';
-                        // force layout then animate
-                        popover.getBoundingClientRect();
-                        requestAnimationFrame(() => { popover.style.opacity = '1'; popover.style.transform = 'translateY(0)'; });
-                        swatchToggle.setAttribute('aria-expanded', 'true');
-                    }
-                    function hidePopover() {
-                        popover.style.opacity = '0';
-                        popover.style.transform = 'translateY(-6px)';
-                        swatchToggle.setAttribute('aria-expanded', 'false');
-                        setTimeout(() => { popover.style.display = 'none'; }, 160);
-                    }
-                    // Show popover when the swatch toggle is clicked. Keep the native
-                    // color picker behavior on the color input unchanged (clicking
-                    // `cIn` will open the browser color picker as before).
-                    swatchToggle.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); if (popover.style.display === 'block') {
-                        hidePopover();
-                    }
-                    else {
-                        showPopover();
-                    } });
-                    // keyboard accessibility: toggle on Enter/Space
-                    swatchToggle.addEventListener('keydown', (e) => {
-                        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-                            e.preventDefault();
-                            if (popover.style.display === 'block') {
-                                hidePopover();
-                            }
-                            else {
-                                showPopover();
-                            }
-                        }
-                    });
-                    // If user clicks outside the popover and color input, hide it
-                    document.addEventListener('pointerdown', (ev) => {
-                        const t = ev.target;
-                        if (!t)
-                            return;
-                        if (t === cIn || popover.contains(t))
-                            return;
-                        hidePopover();
-                    });
-                    // host popover is used (showHost / hideHost) — legacy popover handlers removed
-                })();
-                // Live preview of effective stroke
-                const prevRow = document.createElement('div');
-                prevRow.className = 'row';
-                const pLbl = document.createElement('label');
-                pLbl.textContent = 'Preview';
-                pLbl.style.width = '90px';
-                const pSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-                pSvg.setAttribute('width', '160');
-                pSvg.setAttribute('height', '24');
-                const pLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                setAttrs(pLine, { x1: 10, y1: 12, x2: 150, y2: 12 });
-                pLine.setAttribute('stroke-linecap', 'round');
-                pSvg.appendChild(pLine);
-                function syncPreview() {
-                    const eff = effectiveStroke(w, netClassForWire(w), THEME);
-                    // For the preview swatch, use the raw stored color (before black/white conversions)
-                    ensureStroke(w);
-                    const rawColor = (netSel.value !== '__none__')
-                        ? NET_CLASSES[netSel.value].wire.color
-                        : w.stroke.color;
-                    pLine.setAttribute('stroke', rgba01ToCss(rawColor));
-                    pLine.setAttribute('stroke-width', String(mmToPx(eff.width)));
-                    const d = dashArrayFor(eff.type);
-                    if (d)
-                        pLine.setAttribute('stroke-dasharray', d);
-                    else
-                        pLine.removeAttribute('stroke-dasharray');
-                }
-                prevRow.appendChild(pLbl);
-                prevRow.appendChild(pSvg);
-                holder.appendChild(prevRow);
-                // One-shot rebuild to wire up initial UI state
-                function rebuild() {
-                    // refresh live stroke from model + precedence
-                    syncWidth();
-                    syncStyle();
-                    syncColor();
-                    syncPreview();
-                }
-                rebuild();
-                // Header row: left-justified section title (“Wire Stroke”)
-                const wsHeader = document.createElement('div');
-                wsHeader.className = 'row';
-                const wsLabel = document.createElement('label');
-                wsLabel.textContent = 'Wire Stroke';
-                wsLabel.style.width = 'auto'; // don’t reserve the 90px label column
-                wsLabel.style.fontWeight = '600';
-                wsHeader.appendChild(wsLabel);
-                wrap.appendChild(wsHeader);
-                // Then put the stroke rows directly below the header (no indent)
-                wrap.appendChild(holder);
-            })();
-            inspector.appendChild(wrap);
-            return;
-        }
-        // nothing selected
-        inspectorNone.style.display = 'block';
-    }
-    function rowPair(lbl, control) {
-        const d1 = document.createElement('div');
-        d1.className = 'row';
-        const l = document.createElement('label');
-        l.textContent = lbl;
-        l.style.width = '90px';
-        d1.appendChild(l);
-        d1.appendChild(control);
-        return d1;
-    }
-    function input(val, on) {
-        const i = document.createElement('input');
-        i.type = 'text';
-        i.value = val;
-        i.oninput = () => on(i.value);
-        return i;
-    }
-    function number(val, on) {
-        const i = document.createElement('input');
-        i.type = 'number';
-        i.value = String(val);
-        i.oninput = () => on(parseFloat(i.value) || 0);
-        return i;
-    }
-    function text(val, readonly = false) {
-        const i = document.createElement('input');
-        i.type = 'text';
-        i.value = val;
-        i.readOnly = readonly;
-        return i;
-    }
-    function unitSelect(kind, current, onChange) {
-        const sel = document.createElement('select');
-        (UNIT_OPTIONS[kind] || []).forEach(u => {
-            const opt = document.createElement('option');
-            opt.value = u;
-            opt.textContent = u;
-            sel.appendChild(opt);
-        });
-        sel.value = current || defaultUnit(kind);
-        sel.onchange = () => onChange(sel.value);
-        return sel;
-    }
-    function fitInspectorUnitSelects() {
-        const sels = inspector.querySelectorAll('.hstack select');
-        sels.forEach((s) => sizeUnitSelectToContent(s));
-    }
-    function sizeUnitSelectToContent(sel) {
-        const row = sel.closest('.hstack');
-        if (!row)
-            return;
-        const cs = getComputedStyle(sel);
-        const font = cs.font || `${cs.fontStyle} ${cs.fontVariant} ${cs.fontWeight} ${cs.fontSize}/${cs.lineHeight} ${cs.fontFamily}`;
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        ctx.font = font;
-        let maxText = 0;
-        Array.from(sel.options).forEach(o => {
-            const w = ctx.measureText(o.textContent || '').width;
-            if (w > maxText)
-                maxText = w;
-        });
-        const pad = 36;
-        const desired = Math.ceil(maxText + pad);
-        const rowW = row.getBoundingClientRect().width || 0;
-        const cap = Math.max(0, Math.floor(rowW * 0.5));
-        const finalW = Math.min(desired, cap);
-        sel.style.width = finalW > 0 ? `${finalW}px` : 'auto';
-    }
-    function defaultUnit(kind) {
-        if (kind === 'resistor')
-            return '\u03A9'; // Ω
-        if (kind === 'capacitor')
-            return 'F';
-        if (kind === 'inductor')
-            return 'H';
-        return '';
+        Inspector.renderInspector({
+            selection,
+            components,
+            wires,
+            junctions,
+            nets,
+            activeNetClass,
+            globalUnits,
+            defaultResistorStyle,
+            junctionDotSize,
+            NET_CLASSES,
+            THEME,
+            NM_PER_MM,
+            UNIT_OPTIONS: {
+                resistor: ['\u03A9', 'k\u03A9', 'M\u03A9'],
+                capacitor: ['pF', 'nF', '\u00B5F', 'mF'],
+                inductor: ['\u00B5H', 'mH', 'H']
+            },
+            pushUndo,
+            redrawCanvasOnly,
+            redraw,
+            renderNetList,
+            renderInspector: () => renderInspector(),
+            compPinPositions: Components.compPinPositions,
+            snap: (val) => snap(val),
+            snapToBaseScalar: (val) => snapToBaseScalar(val),
+            swpForWireSegment: (wireId, segIndex) => swpForWireSegment(wireId, segIndex),
+            ensureStroke: (w) => ensureStroke(w),
+            effectiveStroke: (w, nc, th) => effectiveStroke(w, nc, th),
+            netClassForWire: (w) => Netlist.netClassForWire(w, NET_CLASSES, activeNetClass),
+            updateWireDOM: (w) => updateWireDOM(w),
+            restrokeSwpSegments: (swp, patch) => restrokeSwpSegments(swp, patch),
+            midOfSeg: (pts, idx) => Geometry.midOfSeg(pts, idx),
+            reselectNearestAt: (p) => reselectNearestAt(p),
+            normalizeAllWires: () => normalizeAllWires(),
+            rebuildTopology: () => rebuildTopology(),
+            wiresEndingAt: (pt) => wiresEndingAt(pt),
+            selecting: (kind, id, segIndex) => selecting(kind, id, segIndex),
+            pxToNm: (px) => pxToNm(px),
+            nmToPx: (nm) => nmToPx(nm),
+            mmToPx: (mm) => mmToPx(mm),
+            formatDimForDisplay: (nm, units) => formatDimForDisplay(nm, units),
+            parseDimInput: (str) => parseDimInput(str, globalUnits),
+            rgba01ToCss: (c) => rgba01ToCss(c),
+            colorToHex: (css) => colorToHex(css),
+            dashArrayFor: (type) => dashArrayFor(type),
+            setAttrs: (el, attrs) => Utils.setAttrs(el, attrs)
+        }, inspector, inspectorNone);
     }
     // ====== Embed / overlap helpers ======
-    function isEmbedded(c) {
-        const pins = compPinPositions(c).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
-        if (pins.length < 2)
-            return false;
-        return wiresEndingAt(pins[0]).length === 1 && wiresEndingAt(pins[1]).length === 1;
-    }
-    function overlapsAnyOther(c) {
-        const R = 56; // same as selection outline radius
-        for (const o of components) {
-            if (o.id === c.id)
-                continue;
-            const dx = o.x - c.x, dy = o.y - c.y;
-            if ((dx * dx + dy * dy) < (R * R))
-                return true;
-        }
-        return false;
-    }
-    // Test overlap if 'c' were at (x,y) without committing the move.
-    function overlapsAnyOtherAt(c, x, y) {
-        const R = 56;
-        for (const o of components) {
-            if (o.id === c.id)
-                continue;
-            const dx = o.x - x, dy = o.y - y;
-            if ((dx * dx + dy * dy) < (R * R))
-                return true;
-        }
-        return false;
-    }
-    // Prevent a component's pins from landing exactly on another component's pins.
-    function pinsCoincideAnyAt(c, x, y, eps = 0.75) {
-        // Compute THIS component's pins if its center were at (x,y)
-        const ghost = { ...c, x, y };
-        const myPins = compPinPositions(ghost).map(p => ({ x: snap(p.x), y: snap(p.y) }));
-        for (const o of components) {
-            if (o.id === c.id)
-                continue;
-            const oPins = compPinPositions(o).map(p => ({ x: snap(p.x), y: snap(p.y) }));
-            for (const mp of myPins) {
-                for (const op of oPins) {
-                    if (eqPtEps(mp, op, eps))
-                        return true;
-                }
-            }
-        }
-        return false;
-    }
-    // ====== Move helpers (mouse drag already handled; this handles arrow keys & clamping) ======
-    function moveSelectedBy(dx, dy) {
-        pushUndo();
-        const c = components.find(x => x.id === selection.id);
-        if (!c)
-            return;
-        // If an SWP is collapsed for THIS component, move along that SWP with proper clamps.
-        if (moveCollapseCtx && moveCollapseCtx.kind === 'swp' && swpIdForComponent(c) === moveCollapseCtx.sid) {
-            const mc = moveCollapseCtx;
-            if (mc.axis === 'x') {
-                let nx = snap(c.x + dx);
-                nx = Math.max(mc.minCenter, Math.min(mc.maxCenter, nx));
-                if (!overlapsAnyOtherAt(c, nx, mc.fixed) && !pinsCoincideAnyAt(c, nx, mc.fixed)) {
-                    c.x = nx;
-                    c.y = mc.fixed;
-                    mc.lastCenter = nx;
-                }
-            }
-            else {
-                let ny = snap(c.y + dy);
-                ny = Math.max(mc.minCenter, Math.min(mc.maxCenter, ny));
-                if (!overlapsAnyOtherAt(c, mc.fixed, ny) && !pinsCoincideAnyAt(c, mc.fixed, ny)) {
-                    c.y = ny;
-                    c.x = mc.fixed;
-                    mc.lastCenter = ny;
-                }
-            }
-            redrawCanvasOnly();
-            return;
-        }
-        const ctx = buildSlideContext(c);
-        if (ctx) {
-            // slide along constrained axis
-            if (ctx.axis === 'x') {
-                let nx = snap(c.x + dx);
-                nx = Math.max(Math.min(ctx.max, nx), ctx.min);
-                if (!overlapsAnyOtherAt(c, nx, ctx.fixed) && !pinsCoincideAnyAt(c, nx, ctx.fixed)) {
-                    c.x = nx;
-                    c.y = ctx.fixed;
-                }
-            }
-            else {
-                let ny = snap(c.y + dy);
-                ny = Math.max(Math.min(ctx.max, ny), ctx.min);
-                if (!overlapsAnyOtherAt(c, ctx.fixed, ny) && !pinsCoincideAnyAt(c, ctx.fixed, ny)) {
-                    c.y = ny;
-                    c.x = ctx.fixed;
-                }
-            }
-            const pins = compPinPositions(c).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
-            adjustWireEnd(ctx.wA, ctx.pinAStart, pins[0]);
-            adjustWireEnd(ctx.wB, ctx.pinBStart, pins[1]);
-            ctx.pinAStart = pins[0];
-            ctx.pinBStart = pins[1];
-            redraw();
-        }
-        else {
-            const nx = snap(c.x + dx), ny = snap(c.y + dy);
-            if (!overlapsAnyOtherAt(c, nx, ny) && !pinsCoincideAnyAt(c, nx, ny)) {
-                c.x = nx;
-                c.y = ny;
-            }
-            redrawCanvasOnly();
-        }
-    }
+    function isEmbedded(c) { return Move.isEmbedded(createMoveContext(), c); }
+    function overlapsAnyOther(c) { return Move.overlapsAnyOther(createMoveContext(), c); }
+    function overlapsAnyOtherAt(c, x, y) { return Move.overlapsAnyOtherAt(createMoveContext(), c, x, y); }
+    function pinsCoincideAnyAt(c, x, y, eps = 0.75) { return Move.pinsCoincideAnyAt(createMoveContext(), c, x, y, eps); }
+    function moveSelectedBy(dx, dy) { return Move.moveSelectedBy(createMoveContext(), dx, dy); }
     // --- Mend helpers ---
-    // --- Epsilon geometry helpers ---
-    function eqPtEps(a, b, eps = 0.75) { return Math.abs(a.x - b.x) <= eps && Math.abs(a.y - b.y) <= eps; }
-    function dist2(a, b) { const dx = a.x - b.x, dy = a.y - b.y; return dx * dx + dy * dy; }
-    function indexOfPointEps(pts, p, eps = 0.75) {
-        for (let i = 0; i < pts.length; i++) {
-            if (eqPtEps(pts[i], p, eps))
-                return i;
-        }
-        return -1;
-    }
-    const keyPt = (p) => `${Math.round(p.x)},${Math.round(p.y)}`;
-    const eqN = (a, b, eps = 0.5) => Math.abs(a - b) <= eps;
-    // Return a copy whose LAST point is 'pin'. If 'pin' is interior, keep only the side up to the pin.
-    function orderPointsEndingAt(pts, pin) {
-        const n = pts.length;
-        if (n === 0)
-            return pts.slice();
-        if (eqPtEps(pts[n - 1], pin))
-            return pts.slice();
-        if (eqPtEps(pts[0], pin))
-            return pts.slice().reverse();
-        const k = indexOfPointEps(pts, pin);
-        return (k >= 0) ? pts.slice(0, k + 1) : pts.slice();
-    }
-    // Return a copy whose FIRST point is 'pin'. If 'pin' is interior, keep only the side from the pin.
-    function orderPointsStartingAt(pts, pin) {
-        const n = pts.length;
-        if (n === 0)
-            return pts.slice();
-        if (eqPtEps(pts[0], pin))
-            return pts.slice();
-        if (eqPtEps(pts[n - 1], pin))
-            return pts.slice().reverse();
-        const k = indexOfPointEps(pts, pin);
-        return (k >= 0) ? pts.slice(k) : pts.slice();
-    }
-    function collapseDuplicateVertices(pts) {
-        const out = [];
-        for (const p of pts) {
-            const last = out[out.length - 1];
-            if (!last || last.x !== p.x || last.y !== p.y)
-                out.push({ x: p.x, y: p.y });
-        }
-        return out;
-    }
     // Find a wire whose **endpoint** is near the given point; returns {w, endIndex:0|n-1}
     function findWireEndpointNear(pt, tol = 0.9) {
         for (const w of wires) {
             const n = w.points.length;
             if (n < 2)
                 continue;
-            if (dist2(w.points[0], pt) <= tol * tol)
+            if (Geometry.dist2(w.points[0], pt) <= tol * tol)
                 return { w, endIndex: 0 };
-            if (dist2(w.points[n - 1], pt) <= tol * tol)
+            if (Geometry.dist2(w.points[n - 1], pt) <= tol * tol)
                 return { w, endIndex: n - 1 };
         }
         return null;
-    }
-    // Helpers to validate/normalize wire polylines
-    function samePt(a, b) { return !!a && !!b && a.x === b.x && a.y === b.y; }
-    function normalizedPolylineOrNull(pts) {
-        const c = collapseDuplicateVertices(pts || []);
-        if (c.length < 2)
-            return null;
-        if (c.length === 2 && samePt(c[0], c[1]))
-            return null; // zero-length line
-        // Remove intermediate colinear points so straight runs collapse to two-point segments
-        if (c.length > 2) {
-            const out = [];
-            out.push(c[0]);
-            for (let i = 1; i < c.length - 1; i++) {
-                const a = out[out.length - 1];
-                const b = c[i];
-                const d = c[i + 1];
-                // Check colinearity via cross product: (b-a) x (d-b) == 0
-                const v1x = b.x - a.x, v1y = b.y - a.y;
-                const v2x = d.x - b.x, v2y = d.y - b.y;
-                if ((v1x * v2y - v1y * v2x) === 0) {
-                    // b is colinear; skip it
-                    continue;
-                }
-                else {
-                    out.push(b);
-                }
-            }
-            out.push(c[c.length - 1]);
-            if (out.length < 2)
-                return null;
-            return out;
-        }
-        return c;
     }
     function normalizeAllWires() {
         // Convert each wire polyline into one or more 2-point segment wires.
         // This gives each straight segment its own persistent `id` and stroke.
         const next = [];
         for (const w of wires) {
-            const c = normalizedPolylineOrNull(w.points);
+            const c = Geometry.normalizedPolylineOrNull(w.points);
             if (!c)
                 continue;
             if (c.length === 2) {
@@ -6466,72 +4786,13 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 // Break into per-segment wires. Each segment gets a fresh id.
                 for (let i = 0; i < c.length - 1; i++) {
                     const pts = [c[i], c[i + 1]];
-                    next.push({ id: uid('wire'), points: pts, color: w.color || defaultWireColor, stroke: w.stroke ? { ...w.stroke } : undefined, netId: w.netId || 'default' });
+                    next.push({ id: State.uid('wire'), points: pts, color: w.color || defaultWireColor, stroke: w.stroke ? { ...w.stroke } : undefined, netId: w.netId || 'default' });
                 }
             }
         }
         wires = next;
     }
-    // Split a polyline by removing segments whose 0-based indices are in removeIdxSet.
-    // Returns an array of point arrays (each ≥ 2 points after normalization).
-    function splitPolylineByRemovedSegments(pts, removeIdxSet) {
-        if (!pts || pts.length < 2)
-            return [];
-        const out = [];
-        let cur = [pts[0]];
-        for (let i = 0; i < pts.length - 1; i++) {
-            if (removeIdxSet.has(i)) {
-                // close current piece before the removed segment
-                if (cur.length >= 2) {
-                    const np = normalizedPolylineOrNull(cur);
-                    if (np)
-                        out.push(np);
-                }
-                // start a new piece after the removed segment
-                cur = [pts[i + 1]];
-            }
-            else {
-                cur.push(pts[i + 1]);
-            }
-        }
-        if (cur.length >= 2) {
-            const np = normalizedPolylineOrNull(cur);
-            if (np)
-                out.push(np);
-        }
-        return out;
-    }
     // Split a polyline keeping ONLY the segments whose indices are in keepIdxSet.
-    // Returns an array of point arrays (each ≥ 2 points).
-    function splitPolylineByKeptSegments(pts, keepIdxSet) {
-        if (!pts || pts.length < 2)
-            return [];
-        const out = [];
-        let cur = [];
-        for (let i = 0; i < pts.length - 1; i++) {
-            const a = pts[i], b = pts[i + 1];
-            if (keepIdxSet.has(i)) {
-                if (cur.length === 0)
-                    cur.push({ x: a.x, y: a.y });
-                cur.push({ x: b.x, y: b.y });
-            }
-            else {
-                if (cur.length >= 2) {
-                    const np = normalizedPolylineOrNull(cur);
-                    if (np)
-                        out.push(np);
-                }
-                cur = [];
-            }
-        }
-        if (cur.length >= 2) {
-            const np = normalizedPolylineOrNull(cur);
-            if (np)
-                out.push(np);
-        }
-        return out;
-    }
-    // Isolate a single segment (by index) from a polyline `w`.
     // Replaces the original wire with up to three wires: left, mid, right.
     // Returns the newly-created mid wire (whose points length==2) or the original wire
     // if no split was necessary. The new wires copy the original stroke/color/netId.
@@ -6546,16 +4807,16 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const leftPts = w.points.slice(0, segIndex + 1);
         const midPts = w.points.slice(segIndex, segIndex + 2);
         const rightPts = w.points.slice(segIndex + 1);
-        const L = normalizedPolylineOrNull(leftPts);
-        const M = normalizedPolylineOrNull(midPts);
-        const R = normalizedPolylineOrNull(rightPts);
+        const L = Geometry.normalizedPolylineOrNull(leftPts);
+        const M = Geometry.normalizedPolylineOrNull(midPts);
+        const R = Geometry.normalizedPolylineOrNull(rightPts);
         // Remove the original wire and insert the pieces in its place
         wires = wires.filter(x => x.id !== w.id);
         let midWire = null;
         const pushPiece = (pts) => {
             if (!pts)
                 return null;
-            const nw = { id: uid('wire'), points: pts, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined, netId: w.netId || 'default' };
+            const nw = { id: State.uid('wire'), points: pts, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined, netId: w.netId || 'default' };
             wires.push(nw);
             return nw;
         };
@@ -6575,9 +4836,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     function allPinKeys() {
         const s = new Set();
         for (const c of components) {
-            const pins = compPinPositions(c).map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+            const pins = Components.compPinPositions(c).map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }));
             for (const p of pins)
-                s.add(keyPt(p));
+                s.add(Geometry.keyPt(p));
         }
         return s;
     }
@@ -6603,7 +4864,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const ends = [0, n - 1];
             for (const endIndex of ends) {
                 const p = w.points[endIndex];
-                const key = keyPt({ x: Math.round(p.x), y: Math.round(p.y) });
+                const key = Geometry.keyPt({ x: Math.round(p.x), y: Math.round(p.y) });
                 const ax = axisAtEndpoint(w, endIndex);
                 const other = (endIndex === 0) ? w.points[1] : w.points[n - 2];
                 (map.get(key) || (map.set(key, []), map.get(key))).push({ w, endIndex, axis: ax, other });
@@ -6622,7 +4883,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             iter++;
             let mergedThisPass = false;
             // detect repeated global state to avoid endless cycles
-            const sig = wires.map(w => `${w.id}:${w.points.map(p => keyPt(p)).join('|')}`).join(';');
+            const sig = wires.map(w => `${w.id}:${w.points.map(p => Geometry.keyPt(p)).join('|')}`).join(';');
             if (seen.has(sig)) {
                 console.warn('unifyInlineWires: detected repeating state, aborting merge loop', { iter, sig });
                 break;
@@ -6664,7 +4925,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 const lPts = (primary.endIndex === lp.length - 1) ? lp : lp.reverse();
                 const rPts = (secondary.endIndex === 0) ? rp : rp.reverse();
                 const mergedPts = lPts.concat(rPts.slice(1)); // drop duplicate join point
-                const merged = normalizedPolylineOrNull(mergedPts);
+                const merged = Geometry.normalizedPolylineOrNull(mergedPts);
                 if (!merged)
                     continue;
                 // Adopt primary wire's stroke/color (preserve its id when possible)
@@ -6895,107 +5156,56 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         reader.readAsText(f);
     });
     function saveJSON() {
-        // Clean up any accidental duplicates/zero-length segments before saving
-        const SAVE_LEGACY_WIRE_COLOR = true; // back-compat flag (old format keeps {color})
-        normalizeAllWires();
-        // build a wires array that always includes KiCad-style stroke; keep {color} if flag enabled
-        const wiresOut = wires.map(w => {
-            ensureStroke(w);
-            const base = { id: w.id, points: w.points, stroke: w.stroke, netId: w.netId || 'default' };
-            if (SAVE_LEGACY_WIRE_COLOR)
-                base.color = w.color || rgba01ToCss(w.stroke.color);
-            return base;
-        });
-        const data = {
-            version: 2,
-            title: projTitle.value || 'Untitled',
-            grid: GRID,
+        FileIO.saveJSON({
             components,
-            wires: wiresOut,
+            wires,
             junctions,
-            nets: Array.from(nets),
+            nets,
             activeNetClass,
-            netClasses: Object.fromEntries(Object.entries(NET_CLASSES)
-                .filter(([id]) => id !== 'default')
-                .map(([id, nc]) => [id, nc])),
-            defaultResistorStyle
-        };
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = (projTitle.value?.trim() || 'schematic') + '.json';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+            NET_CLASSES,
+            THEME,
+            defaultResistorStyle,
+            counters,
+            GRID,
+            projTitle,
+            defaultResistorStyleSelect,
+            normalizeAllWires,
+            ensureStroke: (w) => ensureStroke(w),
+            rgba01ToCss,
+            cssToRGBA01,
+            renderNetList,
+            redraw,
+            keyPt: (p) => Geometry.keyPt(p),
+            selection,
+            drawing,
+            gDrawing
+        });
     }
     function loadFromJSON(text) {
-        const data = JSON.parse(text);
-        components = data.components || [];
-        wires = (data.wires || []);
-        projTitle.value = data.title || '';
-        // Restore default resistor style
-        if (data.defaultResistorStyle && (data.defaultResistorStyle === 'ansi' || data.defaultResistorStyle === 'iec')) {
-            defaultResistorStyle = data.defaultResistorStyle;
-            defaultResistorStyleSelect.value = defaultResistorStyle;
-            localStorage.setItem('defaultResistorStyle', defaultResistorStyle);
-        }
-        // Restore nets (add default if not present)
-        nets = new Set(data.nets || ['default']);
-        if (!nets.has('default'))
-            nets.add('default');
-        // Restore active net class
-        if (data.activeNetClass && typeof data.activeNetClass === 'string') {
-            activeNetClass = data.activeNetClass;
-        }
-        else {
-            activeNetClass = 'default';
-        }
-        // Restore net classes (custom net properties)
-        if (data.netClasses && typeof data.netClasses === 'object') {
-            Object.entries(data.netClasses).forEach(([id, nc]) => {
-                if (nc && typeof nc === 'object') {
-                    NET_CLASSES[id] = {
-                        id: nc.id || id,
-                        name: nc.name || id,
-                        wire: nc.wire || { ...THEME.wire },
-                        junction: nc.junction || { ...THEME.junction }
-                    };
-                }
-            });
-        }
-        // Backfill stroke from legacy color (and ensure presence for v2)
-        wires.forEach((w) => {
-            if (!w.stroke) {
-                const css = w.color || defaultWireColor;
-                w.stroke = { width: 0, type: 'default', color: cssToRGBA01(css) };
-            }
-            // keep legacy color in sync so SWP heuristics & old flows remain stable
-            if (!w.color)
-                w.color = rgba01ToCss(w.stroke.color);
-            // Preserve an internal nanometer resolution where possible
-            if (w.stroke.widthNm == null && typeof w.stroke.width === 'number') {
-                w.stroke.widthNm = Math.round((w.stroke.width || 0) * NM_PER_MM);
-            }
-            if (!w.netId)
-                w.netId = 'default';
-        });
-        junctions = Array.isArray(data.junctions) ? data.junctions : [];
-        normalizeAllWires();
-        // re-seed counters so new IDs continue incrementing nicely
-        const used = { resistor: 0, capacitor: 0, inductor: 0, diode: 0, npn: 0, pnp: 0, ground: 0, battery: 0, ac: 0, wire: 0 };
-        for (const c of components) {
-            const k = c.type;
-            const num = parseInt((c.label || '').replace(/^[A-Z]+/, '').trim()) || 0;
-            used[k] = Math.max(used[k], num);
-        }
-        for (const w of wires) {
-            const n = parseInt((w.id || '').replace(/^wire/, '')) || 0;
-            used.wire = Math.max(used.wire, n);
-        }
-        Object.keys(counters).forEach(k => counters[k] = used[k] + 1);
-        selection = { kind: null, id: null, segIndex: null };
-        renderNetList();
-        redraw();
+        FileIO.loadFromJSON({
+            components,
+            wires,
+            junctions,
+            nets,
+            activeNetClass,
+            NET_CLASSES,
+            THEME,
+            defaultResistorStyle,
+            counters,
+            GRID,
+            projTitle,
+            defaultResistorStyleSelect,
+            normalizeAllWires,
+            ensureStroke: (w) => ensureStroke(w),
+            rgba01ToCss,
+            cssToRGBA01,
+            renderNetList,
+            redraw,
+            keyPt: (p) => Geometry.keyPt(p),
+            selection,
+            drawing,
+            gDrawing
+        }, text);
     }
     // ====== Topology: nodes, edges, SWPs ======
     function rebuildTopology() {
@@ -7004,7 +5214,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const edges = []; // {id, wireId, i, a:{x,y}, b:{x,y}, axis:'x'|'y'|null, akey, bkey}
         const axisOf = (a, b) => (a.y === b.y) ? 'x' : (a.x === b.x) ? 'y' : null;
         function addNode(p) {
-            const k = keyPt(p);
+            const k = Geometry.keyPt(p);
             if (!nodes.has(k))
                 nodes.set(k, { x: Math.round(p.x), y: Math.round(p.y), edges: new Set(), axDeg: { x: 0, y: 0 } });
             return k;
@@ -7020,8 +5230,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 const a = { x: Math.round(pts[i].x), y: Math.round(pts[i].y) };
                 const b = { x: Math.round(pts[i + 1].x), y: Math.round(pts[i + 1].y) };
                 segments.push({ w, i, a, b });
-                segmentPoints.push(keyPt(a));
-                segmentPoints.push(keyPt(b));
+                segmentPoints.push(Geometry.keyPt(a));
+                segmentPoints.push(Geometry.keyPt(b));
             }
         }
         // Step 2: Find all true intersections (not at endpoints) AND T-junctions (endpoint-to-segment)
@@ -7062,14 +5272,14 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     // Is s1.a on s2 (interior)?
                     if ((s2.a.x === s2.b.x && s1.a.x === s2.a.x && Math.min(s2.a.y, s2.b.y) < s1.a.y && s1.a.y < Math.max(s2.a.y, s2.b.y)) ||
                         (s2.a.y === s2.b.y && s1.a.y === s2.a.y && Math.min(s2.a.x, s2.b.x) < s1.a.x && s1.a.x < Math.max(s2.a.x, s2.b.x))) {
-                        intersectionPoints.push(keyPt(s1.a));
+                        intersectionPoints.push(Geometry.keyPt(s1.a));
                     }
                 }
                 // Check s1.b (end point)
                 if (!isEndpoint(s1.b, s2)) {
                     if ((s2.a.x === s2.b.x && s1.b.x === s2.a.x && Math.min(s2.a.y, s2.b.y) < s1.b.y && s1.b.y < Math.max(s2.a.y, s2.b.y)) ||
                         (s2.a.y === s2.b.y && s1.b.y === s2.a.y && Math.min(s2.a.x, s2.b.x) < s1.b.x && s1.b.x < Math.max(s2.a.x, s2.b.x))) {
-                        intersectionPoints.push(keyPt(s1.b));
+                        intersectionPoints.push(Geometry.keyPt(s1.b));
                     }
                 }
             }
@@ -7125,8 +5335,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             for (let i = 0; i < pts.length - 1; i++) {
                 const a = { x: Math.round(pts[i].x), y: Math.round(pts[i].y) };
                 const b = { x: Math.round(pts[i + 1].x), y: Math.round(pts[i + 1].y) };
-                segmentPoints.push(keyPt(a));
-                segmentPoints.push(keyPt(b));
+                segmentPoints.push(Geometry.keyPt(a));
+                segmentPoints.push(Geometry.keyPt(b));
             }
         }
         // Step 4: Add nodes for all unique points
@@ -7183,7 +5393,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         for (const c of components) {
             if (!twoPinForBridge.includes(c.type))
                 continue;
-            const pins = compPinPositions(c).map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+            const pins = Components.compPinPositions(c).map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }));
             if (pins.length !== 2)
                 continue;
             let axis = null;
@@ -7311,14 +5521,14 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         for (const c of components) {
             if (!twoPin.includes(c.type))
                 continue;
-            const pins = compPinPositions(c).map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+            const pins = Components.compPinPositions(c).map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }));
             if (pins.length !== 2)
                 continue;
             for (const s of swps) {
                 if (s.axis === 'x') {
                     const y = s.start.y;
                     const minx = Math.min(s.start.x, s.end.x), maxx = Math.max(s.start.x, s.end.x);
-                    if (eqN(pins[0].y, y) && eqN(pins[1].y, y) &&
+                    if (Geometry.eqN(pins[0].y, y) && Geometry.eqN(pins[1].y, y) &&
                         Math.min(pins[0].x, pins[1].x) >= minx - 0.5 &&
                         Math.max(pins[0].x, pins[1].x) <= maxx + 0.5) {
                         compToSwp.set(c.id, s.id);
@@ -7328,7 +5538,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 else if (s.axis === 'y') {
                     const x = s.start.x;
                     const miny = Math.min(s.start.y, s.end.y), maxy = Math.max(s.start.y, s.end.y);
-                    if (eqN(pins[0].x, x) && eqN(pins[1].x, x) &&
+                    if (Geometry.eqN(pins[0].x, x) && Geometry.eqN(pins[1].x, x) &&
                         Math.min(pins[0].y, pins[1].y) >= miny - 0.5 &&
                         Math.max(pins[0].y, pins[1].y) <= maxy + 0.5) {
                         compToSwp.set(c.id, s.id);
@@ -7345,7 +5555,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // Build a set of all component pin positions (rounded)
         const pinKeys = new Set();
         for (const c of components) {
-            const pins = compPinPositions(c).map(p => `${Math.round(p.x)},${Math.round(p.y)}`);
+            const pins = Components.compPinPositions(c).map(p => `${Math.round(p.x)},${Math.round(p.y)}`);
             for (const k of pins)
                 pinKeys.add(k);
         }
@@ -7410,308 +5620,29 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         }
         return null;
     }
-    function compCenterAlongAxis(c, axis) { return axis === 'x' ? c.x : c.y; }
-    function pinSpanAlongAxis(c, axis) {
-        const pins = compPinPositions(c);
-        if (axis === 'x') {
-            const xs = pins.map(p => Math.round(p.x));
-            return { lo: Math.min(...xs), hi: Math.max(...xs) };
-        }
-        else {
-            const ys = pins.map(p => Math.round(p.y));
-            return { lo: Math.min(...ys), hi: Math.max(...ys) };
-        }
-    }
-    function halfPinSpan(c, axis) {
-        const s = pinSpanAlongAxis(c, axis);
-        return (axis === 'x') ? (s.hi - s.lo) / 2 : (s.hi - s.lo) / 2;
-    }
-    function beginSwpMove(c) {
-        const sid = swpIdForComponent(c);
-        if (!sid)
-            return null;
-        // Already collapsed for this SWP? Keep it; just remember which component we're moving.
-        if (moveCollapseCtx && moveCollapseCtx.kind === 'swp' && moveCollapseCtx.sid === sid) {
-            lastMoveCompId = c.id;
-            return moveCollapseCtx;
-        }
-        // Capture undo state before beginning move
-        pushUndo();
-        const swp = findSwpById(sid);
-        if (!swp)
-            return null;
-        // Collapse the SWP: remove all its wires, replace with a single straight polyline
-        // Collapse the SWP: remove only the SWP's segments from their host wires (preserve perpendicular legs),
-        // then add one straight polyline for the collapsed SWP.
-        const originalWires = JSON.parse(JSON.stringify(wires));
-        const rebuilt = [];
-        // Collect original segment strokes for the SWP so we can reassign them after move
-        const originalSegments = [];
-        // Also capture a snapshot of the full wires that contributed to this SWP so we can
-        // find the closest original physical segment by distance at restore time.
-        const origWireSnapshot = [];
-        // With per-segment wires, originalWires already contains 2-point wires.
-        for (const w of originalWires) {
-            if (swp.edgeWireIds && swp.edgeWireIds.includes(w.id)) {
-                // This segment is part of the SWP: remove it from the collapsed set and
-                // record its axis-aligned extent + stroke for later remapping.
-                const p0 = w.points[0];
-                const p1 = w.points[1];
-                if (p0 && p1) {
-                    const lo = (swp.axis === 'x') ? Math.min(p0.x, p1.x) : Math.min(p0.y, p1.y);
-                    const hi = (swp.axis === 'x') ? Math.max(p0.x, p1.x) : Math.max(p0.y, p1.y);
-                    const mid = (lo + hi) / 2;
-                    originalSegments.push({ wireId: w.id, index: 0, lo, hi, mid, stroke: w.stroke });
-                }
-                origWireSnapshot.push({ id: w.id, points: w.points.map(p => ({ x: p.x, y: p.y })), stroke: w.stroke });
-            }
-            else {
-                // untouched wire (preserve full object including stroke)
-                rebuilt.push(w);
-            }
-        }
-        // sort original segments along axis (by midpoint)
-        originalSegments.sort((a, b) => a.mid - b.mid);
-        const p0 = swp.start, p1 = swp.end;
-        const collapsed = { id: uid('wire'), points: [{ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }], color: swp.color };
-        wires = rebuilt.concat([collapsed]);
-        // Compute allowed span for c (no overlap with other components in this SWP)
-        const axis = swp.axis;
-        const myHalf = halfPinSpan(c, axis);
-        const fixed = (axis === 'x') ? p0.y : p0.x;
-        const endLo = (axis === 'x') ? Math.min(p0.x, p1.x) : Math.min(p0.y, p1.y);
-        const endHi = (axis === 'x') ? Math.max(p0.x, p1.x) : Math.max(p0.y, p1.y);
-        // Other components on this SWP, build neighbor-based exclusion using real half-spans
-        const others = components.filter(o => o.id !== c.id && swpIdForComponent(o) === sid)
-            .map(o => ({ center: compCenterAlongAxis(o, axis), half: halfPinSpan(o, axis) }))
-            .sort((a, b) => a.center - b.center);
-        const t0 = compCenterAlongAxis(c, axis);
-        let leftBound = endLo + myHalf, rightBound = endHi - myHalf;
-        for (const o of others) {
-            const gap = myHalf + o.half; // centers must be ≥ this far apart
-            if (o.center <= t0)
-                leftBound = Math.max(leftBound, o.center + gap);
-            if (o.center >= t0)
-                rightBound = Math.min(rightBound, o.center - gap);
-        }
-        // Clamp current component to the fixed line (orthogonal coordinate)
-        if (axis === 'x') {
-            c.y = fixed;
-        }
-        else {
-            c.x = fixed;
-        }
-        redrawCanvasOnly(); // reflect the collapsed wire visually
-        moveCollapseCtx = {
-            kind: 'swp', sid, axis, fixed,
-            minCenter: leftBound, maxCenter: rightBound,
-            ends: { lo: endLo, hi: endHi }, color: swp.color,
-            collapsedId: collapsed.id,
-            lastCenter: t0,
-            // attached metadata: original SWP contributing segments (lo/hi in axis coords + stroke)
-            originalSegments,
-            origWireSnapshot
-        };
-        lastMoveCompId = c.id;
-        return moveCollapseCtx;
-    }
+    function compCenterAlongAxis(c, axis) { return Move.compCenterAlongAxis(c, axis); }
+    function halfPinSpan(c, axis) { return Move.halfPinSpan(createMoveContext(), c, axis); }
+    function pinSpanAlongAxis(c, axis) { return Move.pinSpanAlongAxis(createMoveContext(), c, axis); }
+    function beginSwpMove(c) { return Move.beginSwpMove(createMoveContext(), c); }
     function finishSwpMove(c) {
+        const ctx = createMoveContext();
+        Move.finishSwpMove(ctx, c);
+        // The Move function reassigns ctx.wires, so we need to sync it back
+        wires.length = 0;
+        wires.push(...ctx.wires);
+    }
+    function ensureFinishSwpMove() {
         if (!moveCollapseCtx || moveCollapseCtx.kind !== 'swp')
             return;
-        const mc = moveCollapseCtx;
-        const axis = mc.axis;
-        // Safety clamp: ensure the component's pins sit within [lo, hi]
-        const myHalf = halfPinSpan(c, axis);
-        let ctr = compCenterAlongAxis(c, axis);
-        if (ctr - myHalf < mc.ends.lo)
-            ctr = mc.ends.lo + myHalf;
-        if (ctr + myHalf > mc.ends.hi)
-            ctr = mc.ends.hi - myHalf;
-        if (axis === 'x') {
-            c.x = ctr;
-            c.y = mc.fixed;
+        if (!lastMoveCompId)
+            return;
+        const c = components.find(x => x.id === lastMoveCompId);
+        if (c) {
+            finishSwpMove(c);
+            moveCollapseCtx = null;
+            lastMoveCompId = null;
         }
-        else {
-            c.y = ctr;
-            c.x = mc.fixed;
-        }
-        updateComponentDOM(c);
-        const lo = mc.ends.lo, hi = mc.ends.hi;
-        const EPS = 0.5;
-        // Keep ONLY components whose two pins lie within this SWP’s endpoints.
-        const inSwpComps = components.filter(o => {
-            const pins = compPinPositions(o);
-            if (axis === 'x') {
-                if (!(eqN(pins[0].y, mc.fixed) && eqN(pins[1].y, mc.fixed)))
-                    return false;
-                const sp = pinSpanAlongAxis(o, 'x');
-                return sp.lo >= lo - EPS && sp.hi <= hi + EPS;
-            }
-            else {
-                if (!(eqN(pins[0].x, mc.fixed) && eqN(pins[1].x, mc.fixed)))
-                    return false;
-                const sp = pinSpanAlongAxis(o, 'y');
-                return sp.lo >= lo - EPS && sp.hi <= hi + EPS;
-            }
-        }).sort((a, b) => compCenterAlongAxis(a, axis) - compCenterAlongAxis(b, axis));
-        // Sweep lo→hi, carving gaps at each component’s pin span.
-        const newSegs = [];
-        let cursor = lo;
-        for (const o of inSwpComps) {
-            const sp = pinSpanAlongAxis(o, axis);
-            const a = (axis === 'x') ? { x: cursor, y: mc.fixed } : { x: mc.fixed, y: cursor };
-            const b = (axis === 'x') ? { x: sp.lo, y: mc.fixed } : { x: mc.fixed, y: sp.lo };
-            if ((axis === 'x' ? a.x < b.x : a.y < b.y)) {
-                // choose stroke for this segment by finding the closest original physical segment
-                // using the origWireSnapshot (distance to segment) and fall back to overlap matching
-                const segMidPt = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-                let chosenStroke = undefined;
-                if (mc.origWireSnapshot && mc.origWireSnapshot.length) {
-                    let bestD = Infinity;
-                    for (const ow of mc.origWireSnapshot) {
-                        const pts = ow.points || [];
-                        for (let i = 0; i < pts.length - 1; i++) {
-                            const d = pointToSegmentDistance(segMidPt, pts[i], pts[i + 1]);
-                            if (d < bestD) {
-                                bestD = d;
-                                chosenStroke = ow.stroke;
-                            }
-                        }
-                    }
-                    // If closest distance is too large, attempt overlap-based match as fallback
-                    if (bestD > 12 && mc.originalSegments && mc.originalSegments.length) {
-                        let bestOverlap = 0;
-                        const segStart = axis === 'x' ? a.x : a.y;
-                        const segEnd = axis === 'x' ? b.x : b.y;
-                        const segLo = Math.min(segStart, segEnd), segHi = Math.max(segStart, segEnd);
-                        for (const os of mc.originalSegments) {
-                            const ov = Math.max(0, Math.min(segHi, os.hi) - Math.max(segLo, os.lo));
-                            if (ov > bestOverlap) {
-                                bestOverlap = ov;
-                                chosenStroke = os.stroke;
-                            }
-                        }
-                        // if still none, choose nearest by midpoint
-                        if (!chosenStroke) {
-                            const segMid = (segStart + segEnd) / 2;
-                            let bestDist = Infinity;
-                            for (const os of mc.originalSegments) {
-                                const osMid = (os.lo + os.hi) / 2;
-                                const d = Math.abs(segMid - osMid);
-                                if (d < bestDist) {
-                                    bestDist = d;
-                                    chosenStroke = os.stroke;
-                                }
-                            }
-                        }
-                    }
-                }
-                else if (mc.originalSegments && mc.originalSegments.length) {
-                    // fallback if no snapshot present
-                    let bestOverlap = 0;
-                    const segStart = axis === 'x' ? a.x : a.y;
-                    const segEnd = axis === 'x' ? b.x : b.y;
-                    const segLo = Math.min(segStart, segEnd), segHi = Math.max(segStart, segEnd);
-                    for (const os of mc.originalSegments) {
-                        const ov = Math.max(0, Math.min(segHi, os.hi) - Math.max(segLo, os.lo));
-                        if (ov > bestOverlap) {
-                            bestOverlap = ov;
-                            chosenStroke = os.stroke;
-                        }
-                    }
-                }
-                newSegs.push({ id: uid('wire'), points: [a, b], color: chosenStroke ? rgba01ToCss(chosenStroke.color) : mc.color, stroke: chosenStroke });
-            }
-            cursor = sp.hi;
-        }
-        // Tail segment (last gap → end)
-        const tailA = (axis === 'x') ? { x: cursor, y: mc.fixed } : { x: mc.fixed, y: cursor };
-        const tailB = (axis === 'x') ? { x: hi, y: mc.fixed } : { x: mc.fixed, y: hi };
-        if ((axis === 'x' ? tailA.x < tailB.x : tailA.y < tailB.y)) {
-            const segMidPt = { x: (tailA.x + tailB.x) / 2, y: (tailA.y + tailB.y) / 2 };
-            let chosenStroke = undefined;
-            if (mc.origWireSnapshot && mc.origWireSnapshot.length) {
-                let bestD = Infinity;
-                for (const ow of mc.origWireSnapshot) {
-                    const pts = ow.points || [];
-                    for (let i = 0; i < pts.length - 1; i++) {
-                        const d = pointToSegmentDistance(segMidPt, pts[i], pts[i + 1]);
-                        if (d < bestD) {
-                            bestD = d;
-                            chosenStroke = ow.stroke;
-                        }
-                    }
-                }
-                if (bestD > 12 && mc.originalSegments && mc.originalSegments.length) {
-                    let bestOverlap = 0;
-                    const segStart = axis === 'x' ? tailA.x : tailA.y;
-                    const segEnd = axis === 'x' ? tailB.x : tailB.y;
-                    const segLo = Math.min(segStart, segEnd), segHi = Math.max(segStart, segEnd);
-                    for (const os of mc.originalSegments) {
-                        const ov = Math.max(0, Math.min(segHi, os.hi) - Math.max(segLo, os.lo));
-                        if (ov > bestOverlap) {
-                            bestOverlap = ov;
-                            chosenStroke = os.stroke;
-                        }
-                    }
-                    if (!chosenStroke) {
-                        const segMid = (segStart + segEnd) / 2;
-                        let bestDist = Infinity;
-                        for (const os of mc.originalSegments) {
-                            const osMid = (os.lo + os.hi) / 2;
-                            const d = Math.abs(segMid - osMid);
-                            if (d < bestDist) {
-                                bestDist = d;
-                                chosenStroke = os.stroke;
-                            }
-                        }
-                    }
-                }
-            }
-            else if (mc.originalSegments && mc.originalSegments.length) {
-                let bestOverlap = 0;
-                const segStart = axis === 'x' ? tailA.x : tailA.y;
-                const segEnd = axis === 'x' ? tailB.x : tailB.y;
-                const segLo = Math.min(segStart, segEnd), segHi = Math.max(segStart, segEnd);
-                for (const os of mc.originalSegments) {
-                    const ov = Math.max(0, Math.min(segHi, os.hi) - Math.max(segLo, os.lo));
-                    if (ov > bestOverlap) {
-                        bestOverlap = ov;
-                        chosenStroke = os.stroke;
-                    }
-                }
-            }
-            newSegs.push({ id: uid('wire'), points: [tailA, tailB], color: chosenStroke ? rgba01ToCss(chosenStroke.color) : mc.color, stroke: chosenStroke });
-        }
-        // Restore: remove only the collapsed straight run; add the reconstructed SWP segments beside all other wires
-        const untouched = wires.filter(w => w.id !== mc.collapsedId);
-        // Map original segments -> reconstructed segments by order along the axis when possible
-        try {
-            const orig = (mc.originalSegments || []).slice().sort((a, b) => a.mid - b.mid);
-            const mapped = newSegs.map((s, idx) => ({ idx, mid: (axis === 'x' ? (s.points[0].x + s.points[1].x) / 2 : (s.points[0].y + s.points[1].y) / 2), seg: s }));
-            mapped.sort((a, b) => a.mid - b.mid);
-            const n = Math.min(orig.length, mapped.length);
-            for (let i = 0; i < n; i++) {
-                const os = orig[i];
-                const tar = mapped[i].seg;
-                if (os && os.stroke) {
-                    tar.stroke = os.stroke;
-                    tar.color = rgba01ToCss(os.stroke.color);
-                }
-            }
-            // any remaining unmapped segments keep mc.color (already set)
-        }
-        catch (err) {
-            // fall back to default behavior if matching fails
-        }
-        wires = untouched.concat(newSegs);
-        moveCollapseCtx = null;
-        lastMoveCompId = null;
-        normalizeAllWires();
-        rebuildTopology();
-        redraw();
     }
-    // Ensure current selection's SWP is collapsed if possible (Move mode entry or selection of a component).
     function ensureCollapseForSelection() {
         if (selection.kind !== 'component')
             return;
@@ -7723,31 +5654,19 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         if (!sid)
             return;
         if (moveCollapseCtx && moveCollapseCtx.kind === 'swp' && moveCollapseCtx.sid === sid) {
-            lastMoveCompId = c.id; // already collapsed for this SWP
+            lastMoveCompId = c.id;
             return;
         }
-        // If another SWP is currently collapsed, finalize it first.
         if (moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
             const prev = components.find(x => x.id === lastMoveCompId);
             finishSwpMove(prev || c);
+            moveCollapseCtx = null;
+            lastMoveCompId = null;
         }
-        beginSwpMove(c);
-    }
-    // Finalize any active SWP collapse (used when leaving Move mode or switching selection away).
-    function ensureFinishSwpMove() {
-        if (moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
-            const prev = components.find(x => x.id === lastMoveCompId);
-            if (prev) {
-                finishSwpMove(prev);
-            }
-            else {
-                // Fallback: finalize using any component that sits on this SWP
-                const anyOn = components.find(o => swpIdForComponent(o) === moveCollapseCtx.sid);
-                if (anyOn)
-                    finishSwpMove(anyOn);
-                else
-                    moveCollapseCtx = null;
-            }
+        const swpCtx = beginSwpMove(c);
+        if (swpCtx) {
+            moveCollapseCtx = swpCtx;
+            lastMoveCompId = c.id;
         }
     }
     // ====== Boot ======
