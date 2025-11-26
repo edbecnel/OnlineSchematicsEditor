@@ -3569,8 +3569,9 @@ import {
 
   // Handle coordinate input click - place component or add wire point
   function handleCoordinateInputClick(point: { x: number, y: number }) {
-    const x = snap(point.x);
-    const y = snap(point.y);
+    // Use exact coordinates as entered - no snapping for keyed-in values
+    const x = point.x;
+    const y = point.y;
     const snapPt = { x, y };
 
     if (mode === 'wire') {
