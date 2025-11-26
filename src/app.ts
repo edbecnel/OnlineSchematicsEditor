@@ -13,6 +13,7 @@ import * as Utils from './utils.js';
 import * as Constants from './constants.js';
 import * as Geometry from './geometry.js';
 import * as State from './state.js';
+import * as Components from './components.js';
 import type { ClientXYEvent } from './utils.js';
 
 import type {
