@@ -18,6 +18,7 @@ import * as Wires from './wires.js';
 import * as TopologyBuilder from './topology.js';
 import * as Rendering from './rendering.js';
 import * as Netlist from './netlist.js';
+import * as Inspector from './inspector.js';
 import type { ClientXYEvent } from './utils.js';
 
 import type {
