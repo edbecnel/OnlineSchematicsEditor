@@ -15,6 +15,7 @@ import * as Geometry from './geometry.js';
 import * as State from './state.js';
 import * as Components from './components.js';
 import * as Wires from './wires.js';
+import * as TopologyBuilder from './topology.js';
 import type { ClientXYEvent } from './utils.js';
 
 import type {
