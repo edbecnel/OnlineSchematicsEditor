@@ -12,8 +12,11 @@ export type Axis = 'x' | 'y' | null;
 // ====== Editor Mode Types ======
 
 export type Mode = 'none' | 'select' | 'wire' | 'delete' | 'place' | 'pan' | 'move';
+export type EditorMode = Mode | 'place-junction' | 'delete-junction';
 export type PlaceType = 'resistor' | 'capacitor' | 'inductor' | 'diode' | 'npn' | 'pnp' | 'ground' | 'battery' | 'ac';
 export type CounterKey = PlaceType | 'wire';
+export type GridMode = 'line' | 'dot' | 'off';
+export type SnapMode = 'grid' | '50mil' | 'off';
 
 // ====== Selection Types ======
 
