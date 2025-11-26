@@ -7338,7 +7338,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
         }
         topology = { nodes: [...nodes.values()], edges, swps, compToSwp };
-        // --- JUNCTION LOGIC: Only add junctions for wire-to-wire intersections (not endpoints or component pins) ---
+        // --- JUNCTION LOGIC: Add junctions for wire-to-wire T-junctions (including at component pins) ---
         // Preserve manually placed junctions, clear auto-generated ones
         const manualJunctions = junctions.filter(j => j.manual);
         junctions = [...manualJunctions];
@@ -7351,10 +7351,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         }
         // For each node in the topology, check if it is a valid wire-to-wire intersection
         for (const node of nodes.values()) {
-            // Skip if this node is a component pin
             const k = `${node.x},${node.y}`;
-            if (pinKeys.has(k))
-                continue;
             // Gather all wires touching this node
             const wireIds = new Set();
             let hasMidSegment = false;
@@ -7372,9 +7369,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     }
                 }
             }
-            // Only add a junction if two or more wires meet here,
-            // and at least one of them passes through (not an endpoint)
-            if (wireIds.size >= 2 && hasMidSegment) {
+            // Add a junction if:
+            // 1. Two or more wires meet and at least one passes through (T-junction), OR
+            // 2. Two or more wires meet at a component pin (even if all are endpoints)
+            const isComponentPin = pinKeys.has(k);
+            const shouldCreateJunction = wireIds.size >= 2 && (hasMidSegment || isComponentPin);
+            if (shouldCreateJunction) {
                 // Check if this location has been manually suppressed
                 const isSuppressed = manualJunctions.some(j => j.suppressed && Math.abs(j.at.x - node.x) < 1e-3 && Math.abs(j.at.y - node.y) < 1e-3);
                 if (!isSuppressed) {
