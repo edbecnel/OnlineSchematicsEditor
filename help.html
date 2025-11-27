@@ -133,14 +133,14 @@
     <ul>
       <li><b>Resistor (1):</b> Two-terminal resistor with IEC (rectangular) or ANSI (zigzag) styles. Symbol height has been doubled for better visibility.</li>
       <li><b>Capacitor (2):</b> Two-terminal capacitor. Press <span class="kbd">Alt+C</span> to toggle between standard and polarized subtypes. Symbol height has been doubled for better visibility.</li>
-      <li><b>Inductor (3):</b> Two-terminal inductor</li>
-      <li><b>Diode (4):</b> Two-terminal diode with multiple subtypes</li>
-      <li><b>NPN (5):</b> NPN bipolar transistor (3 pins)</li>
-      <li><b>PNP (6):</b> PNP bipolar transistor (3 pins)</li>
-      <li><b>Ground (7):</b> Ground symbol</li>
-      <li><b>Battery (8):</b> DC voltage source</li>
-      <li><b>AC (9):</b> AC voltage source</li>
+      <li><b>Inductor (3):</b> Two-terminal inductor with coil symbol</li>
+      <li><b>Diode (4):</b> Two-terminal diode with dropdown selector for subtypes (Generic, Schottky, Zener, LED, Photo diode, Tunnel diode, Varactor, Laser diode)</li>
+      <li><b>Transistor (5):</b> Bipolar transistor (3 pins) with dropdown selector for NPN or PNP type</li>
+      <li><b>Ground (6):</b> Ground symbol</li>
+      <li><b>Battery (7):</b> DC voltage source</li>
+      <li><b>AC (8):</b> AC voltage source</li>
     </ul>
+    <p class="tip"><i>Note:</i> Toolbar icons now show visual symbols for inductors, diodes (with anode arrow), and transistors (with base, emitter, and collector) for easier identification.</p>
 
     <h3>Placement Process</h3>
     <ol>
@@ -160,17 +160,26 @@
     <p class="tip"><i>Tip:</i> Use polarized capacitors for electrolytics and tantalum capacitors; use standard for ceramic and film capacitors.</p>
 
     <h3>Diode Subtypes</h3>
-    <p>When Diode is selected, a dropdown appears with these options:</p>
+    <p>When Diode is selected in the toolbar, a dropdown appears with these options:</p>
     <ul>
-      <li>Generic (standard diode)</li>
-      <li>Schottky</li>
-      <li>Zener</li>
-      <li>LED (Light-emitting)</li>
-      <li>Photo diode</li>
-      <li>Tunnel diode</li>
-      <li>Varactor / Varicap</li>
-      <li>Laser diode</li>
+      <li><b>Generic:</b> Standard diode symbol with triangle and line</li>
+      <li><b>Schottky:</b> Diode with S-shaped cathode markings</li>
+      <li><b>Zener:</b> Diode with Z-shaped cathode for voltage regulation</li>
+      <li><b>LED:</b> Light-emitting diode with radiation arrows</li>
+      <li><b>Photo diode:</b> Light-sensing diode with incoming radiation arrows</li>
+      <li><b>Tunnel diode:</b> Diode with bidirectional cathode markings</li>
+      <li><b>Varactor / Varicap:</b> Voltage-variable capacitor diode</li>
+      <li><b>Laser diode:</b> Laser-emitting diode with parallel radiation lines</li>
     </ul>
+    <p class="tip"><i>Tip:</i> All diode symbols are now precisely centered on the component coordinate for consistent alignment.</p>
+
+    <h3>Transistor Types</h3>
+    <p>When Transistor is selected in the toolbar, a dropdown appears with these options:</p>
+    <ul>
+      <li><b>NPN:</b> NPN bipolar transistor with emitter arrow pointing outward</li>
+      <li><b>PNP:</b> PNP bipolar transistor with emitter arrow pointing inward</li>
+    </ul>
+    <p class="tip"><i>Tip:</i> Transistor symbols use industry-standard IEEE conventions with clear pin identification for base (B), collector (C), and emitter (E).</p>
 
     <h2>Editing Components &amp; Wires</h2>
     <h3>Selecting</h3>
@@ -314,6 +323,18 @@
       <li>Click <b>Pan</b> mode or press <span class="kbd">P</span>, then drag</li>
       <li><b>Middle mouse button:</b> Click and drag to pan in any mode</li>
     </ul>
+
+    <h2>Moving Components with Keyboard</h2>
+    <p>When a component is selected, use arrow keys to move it with precision:</p>
+    <ul>
+      <li><b>Arrow keys:</b> Move 250 mils (25px) — standard grid movement</li>
+      <li><b>Shift+Arrow keys:</b> Move 50 mils (5px) — fine adjustment on the base grid</li>
+      <li><b>Shift+Alt+Arrow keys:</b> Move 1 mil (0.1px) — finest precision for exact positioning</li>
+      <li>Works in both Select and Move modes</li>
+      <li>Movements are not snapped to grid — arrow keys provide exact, pre-calculated offsets</li>
+      <li>Respects collision detection and pin overlap prevention</li>
+    </ul>
+    <p class="tip"><i>Tip:</i> Use standard arrow keys for rough positioning, Shift for 50 mil grid alignment, and Shift+Alt for sub-mil precision adjustments.</p>
 
     <h2>Status Bar Controls</h2>
     <p>The status bar at the bottom of the canvas provides quick access to drawing aids and status information:</p>
@@ -556,7 +577,7 @@
       <li><span class="kbd">X</span> — Delete mode</li>
       <li><span class="kbd">P</span> — Pan mode</li>
       <li><span class="kbd">M</span> — Move mode</li>
-      <li><span class="kbd">1-9</span> — Place component</li>
+      <li><span class="kbd">1-8</span> — Place component (Resistor through AC source)</li>
     </ul>
 
     <h3>Component Shortcuts</h3>
@@ -580,6 +601,13 @@
       <li><span class="kbd">Delete</span> — Delete selected component or wire</li>
       <li><span class="kbd">Shift</span> — Hold while wiring for temporary orthogonal mode</li>
       <li><span class="kbd">Right-click</span> — Finish wire drawing / Exit junction dot mode</li>
+    </ul>
+
+    <h3>Component Movement</h3>
+    <ul>
+      <li><span class="kbd">Arrow keys</span> — Move selected component 250 mils (standard grid)</li>
+      <li><span class="kbd">Shift+Arrow keys</span> — Move selected component 50 mils (fine adjustment)</li>
+      <li><span class="kbd">Shift+Alt+Arrow keys</span> — Move selected component 1 mil (finest precision)</li>
     </ul>
 
     <h3>File Operations</h3>
