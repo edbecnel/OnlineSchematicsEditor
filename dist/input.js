@@ -141,7 +141,13 @@ export function beginPan(ctx, e) {
     ctx.panStartClient = { x: e.clientX, y: e.clientY };
     ctx.panStartView = { x: ctx.viewX, y: ctx.viewY };
     ctx.panPointerId = e.pointerId;
-    ctx.svg.setPointerCapture?.(ctx.panPointerId);
+    // Capture pointer to receive events even if cursor leaves the element
+    try {
+        ctx.svg.setPointerCapture(ctx.panPointerId);
+    }
+    catch (err) {
+        console.warn('setPointerCapture failed:', err);
+    }
 }
 export function doPan(ctx, e) {
     if (!ctx.isPanning)
@@ -171,8 +177,15 @@ export function endPan(ctx) {
         return;
     ctx.isPanning = false;
     document.body.classList.remove('panning');
-    if (ctx.panPointerId != null)
-        ctx.svg.releasePointerCapture?.(ctx.panPointerId);
+    // Release pointer capture
+    if (ctx.panPointerId != null) {
+        try {
+            ctx.svg.releasePointerCapture(ctx.panPointerId);
+        }
+        catch (err) {
+            // Ignore errors
+        }
+    }
     ctx.panPointerId = null;
     if (ctx.panAnimationFrame !== null) {
         cancelAnimationFrame(ctx.panAnimationFrame);
@@ -266,9 +279,10 @@ export function handlePointerDown(ctx, e) {
         }
     }
     catch (_) { }
-    // Middle mouse drag pans
+    // Middle mouse button pans (button 1 is middle click)
     if (e.button === 1) {
         e.preventDefault();
+        e.stopPropagation();
         beginPan(ctx, e);
         return;
     }
@@ -912,13 +926,7 @@ export function installInputHandlers(ctx) {
     ctx.svg.addEventListener('pointerup', (e) => handlePointerUp(ctx, e));
     ctx.svg.addEventListener('pointerleave', (e) => handlePointerLeave(ctx, e));
     ctx.svg.addEventListener('dblclick', (e) => handleDoubleClick(ctx, e));
-    // Mouse events for middle-click pan
-    ctx.svg.addEventListener('mousedown', (e) => {
-        if (e.button === 1) {
-            e.preventDefault();
-            beginPan(ctx, e);
-        }
-    });
+    // Prevent middle-click default behaviors (like autoscroll on some browsers)
     ctx.svg.addEventListener('auxclick', (e) => {
         if (e.button === 1)
             e.preventDefault();

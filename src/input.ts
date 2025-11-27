@@ -288,7 +288,13 @@ export function beginPan(ctx: InputContext, e: PointerEvent): void {
   ctx.panStartClient = { x: e.clientX, y: e.clientY };
   ctx.panStartView = { x: ctx.viewX, y: ctx.viewY };
   ctx.panPointerId = e.pointerId;
-  ctx.svg.setPointerCapture?.(ctx.panPointerId);
+  
+  // Capture pointer to receive events even if cursor leaves the element
+  try {
+    ctx.svg.setPointerCapture(ctx.panPointerId);
+  } catch (err) {
+    console.warn('setPointerCapture failed:', err);
+  }
 }
 
 export function doPan(ctx: InputContext, e: PointerEvent): void {
@@ -322,7 +328,15 @@ export function endPan(ctx: InputContext): void {
   if (!ctx.isPanning) return;
   ctx.isPanning = false;
   document.body.classList.remove('panning');
-  if (ctx.panPointerId != null) ctx.svg.releasePointerCapture?.(ctx.panPointerId);
+  
+  // Release pointer capture
+  if (ctx.panPointerId != null) {
+    try {
+      ctx.svg.releasePointerCapture(ctx.panPointerId);
+    } catch (err) {
+      // Ignore errors
+    }
+  }
   ctx.panPointerId = null;
   
   if (ctx.panAnimationFrame !== null) {
@@ -435,9 +449,10 @@ export function handlePointerDown(ctx: InputContext, e: PointerEvent): void {
     }
   } catch (_) { }
   
-  // Middle mouse drag pans
+  // Middle mouse button pans (button 1 is middle click)
   if (e.button === 1) {
     e.preventDefault();
+    e.stopPropagation();
     beginPan(ctx, e);
     return;
   }
@@ -1121,13 +1136,7 @@ export function installInputHandlers(ctx: InputContext): void {
   ctx.svg.addEventListener('pointerleave', (e) => handlePointerLeave(ctx, e));
   ctx.svg.addEventListener('dblclick', (e) => handleDoubleClick(ctx, e));
   
-  // Mouse events for middle-click pan
-  ctx.svg.addEventListener('mousedown', (e) => {
-    if (e.button === 1) {
-      e.preventDefault();
-      beginPan(ctx, e as any);
-    }
-  });
+  // Prevent middle-click default behaviors (like autoscroll on some browsers)
   ctx.svg.addEventListener('auxclick', (e) => {
     if (e.button === 1) e.preventDefault();
   });
