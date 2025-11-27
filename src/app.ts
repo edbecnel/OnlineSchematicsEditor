@@ -2948,6 +2948,18 @@ import {
     }
     // Arrow-key move when component is selected
     if (selection.kind === 'component' && e.key.startsWith('Arrow')) {
+      // If in Select mode, automatically switch to Move mode
+      if (mode === 'select') {
+        setMode('move');
+        // Show coordinate inputs immediately after switching to Move mode
+        const comp = components.find(c => c.id === selection.id);
+        if (comp) {
+          updateCoordinateDisplay(comp.x, comp.y);
+          updateCoordinateInputs(comp.x, comp.y);
+          showCoordinateInputs();
+        }
+      }
+      
       // Calculate step size:
       // - No modifiers: 250 mils (GRID = 25 px)
       // - Shift: 50 mils (GRID / 5 = 5 px)
