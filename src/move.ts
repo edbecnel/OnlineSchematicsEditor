@@ -234,7 +234,9 @@ export function moveSelectedBy(ctx: MoveContext, dx: number, dy: number): void {
     slideCtx.pinBStart = pins[1];
     ctx.redraw();
   } else {
-    const nx = ctx.snap(c.x + dx), ny = ctx.snap(c.y + dy);
+    // For keyboard movements, dx and dy are already snapped values, so don't snap again
+    const nx = c.x + dx;
+    const ny = c.y + dy;
     if (!overlapsAnyOtherAt(ctx, c, nx, ny) && !pinsCoincideAnyAt(ctx, c, nx, ny)) {
       c.x = nx;
       c.y = ny;

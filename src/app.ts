@@ -2927,14 +2927,25 @@ import {
         }
       }
     }
-    // Arrow-key move in Move mode
-    if (mode === 'move' && selection.kind === 'component') {
-      const step = GRID;
+    // Arrow-key move when component is selected
+    if (selection.kind === 'component' && e.key.startsWith('Arrow')) {
+      // Calculate step size:
+      // - No modifiers: 250 mils (GRID = 25 px)
+      // - Shift: 50 mils (GRID / 5 = 5 px)
+      // - Shift+Alt: 1 mil (0.1 px)
+      let step = GRID; // 250 mils (default)
+      if (e.shiftKey && e.altKey) {
+        step = 0.1; // 1 mil (finest adjustment)
+      } else if (e.shiftKey) {
+        step = GRID / 5; // 50 mils (fine adjustment)
+      }
+      
       let dx = 0, dy = 0;
       if (e.key === 'ArrowLeft') dx = -step;
       if (e.key === 'ArrowRight') dx = step;
       if (e.key === 'ArrowUp') dy = -step;
       if (e.key === 'ArrowDown') dy = step;
+      
       if (dx !== 0 || dy !== 0) { 
         e.preventDefault(); 
         moveSelectedBy(dx, dy);

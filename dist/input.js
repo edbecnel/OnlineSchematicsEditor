@@ -482,7 +482,17 @@ export function handleKeyDown(ctx, e) {
     }
     // Arrow key move in Move mode
     if (ctx.mode === 'move' && ctx.selection.kind === 'component') {
-        const step = ctx.GRID;
+        // Calculate step size based on modifiers:
+        // - No modifiers: 25 mil (base grid)
+        // - Shift: 50 mil (2x base grid)
+        // - Shift+Alt: 1 mil (fine adjustment)
+        let step = ctx.GRID;
+        if (e.shiftKey && e.altKey) {
+            step = ctx.GRID / 25; // 1 mil
+        }
+        else if (e.shiftKey) {
+            step = ctx.GRID * 2; // 50 mil
+        }
         let dx = 0, dy = 0;
         if (e.key === 'ArrowLeft')
             dx = -step;
