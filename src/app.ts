@@ -178,6 +178,7 @@ import {
   // ---- Wire topology (nodes/edges/SWPs) + per-move collapse context ----
   let topology: Topology = { nodes: [], edges: [], swps: [], compToSwp: new Map() };
   let moveCollapseCtx: MoveCollapseCtx | null = null; // set while moving a component within its SWP
+  let draggedComponentId: string | null = null; // track component being dragged to hide only its endpoint circles
   let lastMoveCompId: string | null = null;           // component id whose SWP is currently collapsed
 
   // Suppress the next contextmenu after right-click finishing a wire
@@ -1235,6 +1236,8 @@ import {
       // Move only when Move mode is active; in Select mode: select only.
       if (mode !== 'move') { return; }
       dragging = true;
+      draggedComponentId = c.id;
+      updateEndpointCircles(); // Hide this component's circles
       dragOff.x = c.x - pt.x; dragOff.y = c.y - pt.y;
       // Prepare SWP-aware context (collapse SWP to a single straight run)
       slideCtx = null; // fallback only if no SWP detected
@@ -1278,7 +1281,6 @@ import {
           if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
             c.x = candX; c.y = candY; mc.lastCenter = candX;
             updateComponentDOM(c);
-            redrawCanvasOnly(); // Update endpoint circles for new component position
           }
         } else {
           let cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
@@ -1288,7 +1290,6 @@ import {
           if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
             c.y = candY; c.x = candX; mc.lastCenter = ny;
             updateComponentDOM(c);
-            redrawCanvasOnly(); // Update endpoint circles for new component position
           }
         }
       } else if (slideCtx) {
@@ -1299,7 +1300,6 @@ import {
           if (overlapsAnyOtherAt(c, candX, candY) || pinsCoincideAnyAt(c, candX, candY)) return;
           c.x = candX; c.y = candY;
           updateComponentDOM(c);
-          redrawCanvasOnly(); // Update endpoint circles for new component position
         } else {
           let ny = snap(p.y + dragOff.y);
           ny = Math.max(Math.min(slideCtx.max, ny), slideCtx.min);
@@ -1308,7 +1308,6 @@ import {
             c.y = candY; c.x = candX;
           }
           updateComponentDOM(c);
-          redrawCanvasOnly(); // Update endpoint circles for new component position
         }
       } else {
         const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
@@ -1317,7 +1316,6 @@ import {
         if (!overlapsAnyOtherAt(c, candX, candY)) {
           c.x = candX; c.y = candY;
           updateComponentDOM(c);
-          redrawCanvasOnly(); // Update endpoint circles for new component position
         }
       }
     });
@@ -1361,6 +1359,8 @@ import {
           }
         }
         dragStart = null;
+        draggedComponentId = null;
+        updateEndpointCircles(); // Restore circles
       }
     });
     g.addEventListener('pointercancel', () => { dragging = false; });
@@ -1578,6 +1578,8 @@ import {
 
       // Also add endpoint circles for component pins
       for (const c of components) {
+        // Skip circles for component being dragged to avoid visual lag
+        if (draggedComponentId && c.id === draggedComponentId) continue;
         const pins = Components.compPinPositions(c);
         for (const pin of pins) {
           // Scale circle diameter with zoom: 9px normal, 7px when < 75%, 6px when <= 25%
@@ -1650,6 +1652,68 @@ import {
               redraw();
             }
           });
+          gOverlay.appendChild(circle);
+        }
+      }
+    }
+  }
+
+  function updateEndpointCircles() {
+    // Remove existing endpoint circles
+    try {
+      $qa('[data-endpoint]', gOverlay).forEach(el => el.remove());
+    } catch (_) { }
+    // Redraw them (respecting draggedComponentId filter)
+    if (mode === 'wire' || mode === 'place' || mode === 'move' || mode === 'select' || mode === 'place-junction' || mode === 'delete-junction') {
+      const ns = 'http://www.w3.org/2000/svg';
+      // Wire endpoints
+      for (const w of wires) {
+        if (!w.points || w.points.length < 2) continue;
+        ensureStroke(w);
+        const eff = effectiveStroke(w, Netlist.netClassForWire(w, NET_CLASSES, activeNetClass), THEME);
+        const ends = [w.points[0], w.points[w.points.length - 1]];
+        for (const [ei, pt] of ends.map((p, i) => [i, p] as [number, Point])) {
+          let desiredScreenPx = 9;
+          if (zoom <= 0.25) desiredScreenPx = 6;
+          else if (zoom < 0.75) desiredScreenPx = 7;
+          const scale = userScale();
+          const widthUser = desiredScreenPx / Math.max(1e-6, scale);
+          const circle = document.createElementNS(ns, 'circle');
+          circle.setAttribute('data-endpoint', '1');
+          circle.setAttribute('cx', String(pt.x));
+          circle.setAttribute('cy', String(pt.y));
+          circle.setAttribute('r', String(widthUser / 2));
+          circle.setAttribute('fill', 'rgba(0,200,0,0.08)');
+          circle.setAttribute('stroke', 'lime');
+          circle.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
+          circle.style.cursor = 'pointer';
+          (circle as any).endpoint = { x: pt.x, y: pt.y };
+          (circle as any).wireId = w.id;
+          (circle as any).endpointIndex = ei;
+          gOverlay.appendChild(circle);
+        }
+      }
+      // Component pin endpoints
+      for (const c of components) {
+        if (draggedComponentId && c.id === draggedComponentId) continue;
+        const pins = Components.compPinPositions(c);
+        for (const pin of pins) {
+          let desiredScreenPx = 9;
+          if (zoom <= 0.25) desiredScreenPx = 6;
+          else if (zoom < 0.75) desiredScreenPx = 7;
+          const scale = userScale();
+          const widthUser = desiredScreenPx / Math.max(1e-6, scale);
+          const circle = document.createElementNS(ns, 'circle');
+          circle.setAttribute('data-endpoint', '1');
+          circle.setAttribute('cx', String(pin.x));
+          circle.setAttribute('cy', String(pin.y));
+          circle.setAttribute('r', String(widthUser / 2));
+          circle.setAttribute('fill', 'rgba(0,200,0,0.08)');
+          circle.setAttribute('stroke', 'lime');
+          circle.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
+          circle.style.cursor = 'pointer';
+          (circle as any).endpoint = { x: pin.x, y: pin.y };
+          (circle as any).componentId = c.id;
           gOverlay.appendChild(circle);
         }
       }
