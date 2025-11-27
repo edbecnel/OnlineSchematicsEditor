@@ -252,7 +252,7 @@ function drawDiodeInto(gg: SVGGElement, c: Component, subtype: DiodeSubtype) {
     return add(p);
   };
 
-  const y = c.y, ax = c.x - 50, bx = c.x + 50, cx = c.x + 8, cy = y;
+  const y = c.y, ax = c.x - 50, bx = c.x + 50, cx = c.x, cy = y;
 
   const addArrow = (outward = true) => {
     const dir = outward ? 1 : -1, arrX = cx + (outward ? 10 : -10);
@@ -262,43 +262,49 @@ function drawDiodeInto(gg: SVGGElement, c: Component, subtype: DiodeSubtype) {
 
   switch (String(subtype).toLowerCase()) {
     case 'tvs_bi':
-      // Bidirectional TVS: two triangles pointing at each other
+      // Bidirectional TVS: two triangles pointing at each other, leads to 50 mil grid
+      // Left cathode bar
       lineEl(ax, cy - 16, ax, cy + 16);
+      // Left triangle
       pathEl(`M ${ax} ${cy} L ${ax + 16} ${cy - 16} L ${ax + 16} ${cy + 16} Z`);
+      // Right triangle
       pathEl(`M ${bx} ${cy} L ${bx - 16} ${cy - 16} L ${bx - 16} ${cy + 16} Z`);
+      // Right cathode bar
       lineEl(bx, cy - 16, bx, cy + 16);
+      // Center connection between triangles
       lineEl(ax + 16, cy, bx - 16, cy);
       break;
     case 'schottky':
-      // Schottky diode: drawn exactly as in assets/Schottky Diode.svg (scaled 2x)
+      // Schottky diode: leads extended to 50 mil grid (ax and bx)
       // Anode lead
-      lineEl(ax, cy, ax + 32, cy);
+      lineEl(ax, cy, cx - 8, cy);
       // Diode triangle (anode side)
-      pathEl(`M ${ax + 32} ${cy - 16} L ${ax + 56} ${cy} L ${ax + 32} ${cy + 16} Z`);
+      pathEl(`M ${cx - 8} ${cy - 16} L ${cx + 16} ${cy} L ${cx - 8} ${cy + 16} Z`);
       // Cathode bar
-      lineEl(ax + 58.72, cy - 16, ax + 58.72, cy + 16);
+      lineEl(cx + 16, cy - 16, cx + 16, cy + 16);
       // Cathode lead
-      lineEl(ax + 58.72, cy, ax + 98.72, cy);
+      lineEl(cx + 16, cy, bx, cy);
       // Schottky hooks
-      pathEl(`M ${ax + 58.72} ${cy - 16} h 8 v 4`);
-      pathEl(`M ${ax + 58.72} ${cy + 16} h -8 v -4`);
+      pathEl(`M ${cx + 16} ${cy - 16} h 8 v 4`);
+      pathEl(`M ${cx + 16} ${cy + 16} h -8 v -4`);
       break;
     default:
-      // Standard diode: same dimensions as Schottky but without hooks
+      // Standard diode: leads extended to 50 mil grid (ax and bx)
       // Anode lead
-      lineEl(ax, cy, ax + 32, cy);
+      lineEl(ax, cy, cx - 8, cy);
       // Diode triangle (anode side)
-      pathEl(`M ${ax + 32} ${cy - 16} L ${ax + 56} ${cy} L ${ax + 32} ${cy + 16} Z`);
+      pathEl(`M ${cx - 8} ${cy - 16} L ${cx + 16} ${cy} L ${cx - 8} ${cy + 16} Z`);
       // Cathode bar (touching the triangle point)
-      lineEl(ax + 56, cy - 16, ax + 56, cy + 16);
+      lineEl(cx + 16, cy - 16, cx + 16, cy + 16);
       // Cathode lead
-      lineEl(ax + 56, cy, bx, cy);
+      lineEl(cx + 16, cy, bx, cy);
 
-      // Subtype adorners
+      // Subtype adorners (adjusted for body center at cx)
+      const bodyCenter = cx;
       switch (String(subtype).toLowerCase()) {
         case 'zener':
-          lineEl(cx - 14, cy - 6, cx, cy);
-          lineEl(cx - 14, cy + 6, cx, cy);
+          lineEl(bodyCenter - 6, cy - 6, bodyCenter + 6, cy);
+          lineEl(bodyCenter - 6, cy + 6, bodyCenter + 6, cy);
           break;
         case 'led':
           addArrow(true);
@@ -307,15 +313,15 @@ function drawDiodeInto(gg: SVGGElement, c: Component, subtype: DiodeSubtype) {
           addArrow(false);
           break;
         case 'tunnel':
-          lineEl(cx - 10, cy - 12, cx - 10, cy + 12);
+          lineEl(bodyCenter - 2, cy - 12, bodyCenter - 2, cy + 12);
           break;
         case 'varactor':
         case 'varicap':
-          lineEl(cx + 8, cy - 12, cx + 8, cy + 12);
+          lineEl(bodyCenter + 16, cy - 12, bodyCenter + 16, cy + 12);
           break;
         case 'laser':
           addArrow(true);
-          lineEl(cx + 14, cy - 14, cx + 14, cy + 14);
+          lineEl(bodyCenter + 22, cy - 14, bodyCenter + 22, cy + 14);
           break;
         case 'tvs_uni':
           lineEl(bx, cy - 16, bx - 8, cy - 22);
