@@ -248,18 +248,18 @@
     <h3>Coordinate Input</h3>
     <p>For precise placement, you can type exact coordinates instead of clicking:</p>
     <ul>
-      <li><b>Location:</b> X and Y input boxes appear in the status bar during Wire, Place, and Junction modes</li>
-      <li><b>Real-time Updates:</b> Input boxes automatically display current mouse coordinates as you move</li>
+      <li><b>Location:</b> X and Y input boxes appear in the status bar during Wire, Place, Move, and Junction modes</li>
+      <li><b>Real-time Updates:</b> Input boxes automatically display current mouse coordinates (or component position in Move mode) as you move</li>
       <li><b>Keyboard Activation:</b> Press <span class="kbd">Ctrl+L</span> to focus the X input without moving the mouse
         <ul>
-          <li>Your current mouse position coordinates are preserved</li>
+          <li>Your current coordinates are preserved</li>
           <li>Start typing immediately to replace the X value</li>
         </ul>
       </li>
       <li><b>Navigation:</b> Press <span class="kbd">Tab</span> to move from X to Y input</li>
       <li><b>Unit Support:</b> Include units after values (e.g., "100 mils", "2.54 mm", "0.1 in") or use current display units if omitted</li>
-      <li><b>Accepting Coordinates:</b> Press <span class="kbd">Enter</span> to place a wire point, component, or junction dot at the exact typed coordinates</li>
-      <li><b>Cancel:</b> Press <span class="kbd">Esc</span> to exit input mode without placing</li>
+      <li><b>Accepting Coordinates:</b> Press <span class="kbd">Enter</span> to place a wire point, component, junction dot, or move selected component to the exact typed coordinates</li>
+      <li><b>Cancel:</b> Press <span class="kbd">Esc</span> to exit input mode without placing or moving</li>
     </ul>
 
     <h3>Polar Coordinate Input (Wire Drawing)</h3>
@@ -324,7 +324,16 @@
       <li><b>Middle mouse button:</b> Click and drag to pan in any mode</li>
     </ul>
 
-    <h2>Moving Components with Keyboard</h2>
+    <h2>Moving Components</h2>
+    <h3>Mouse Movement</h3>
+    <ul>
+      <li>Click <b>Move</b> mode or press <span class="kbd">M</span></li>
+      <li>Click and drag a component to reposition it</li>
+      <li>Component coordinates display in upper left corner during movement</li>
+      <li>Editable X and Y coordinate inputs appear in the status bar</li>
+    </ul>
+
+    <h3>Keyboard Movement</h3>
     <p>When a component is selected, use arrow keys to move it with precision:</p>
     <ul>
       <li><b>Arrow keys:</b> Move 250 mils (25px) — standard grid movement</li>
@@ -333,8 +342,21 @@
       <li>Works in both Select and Move modes</li>
       <li>Movements are not snapped to grid — arrow keys provide exact, pre-calculated offsets</li>
       <li>Respects collision detection and pin overlap prevention</li>
+      <li>Coordinate display and inputs update in real-time as you move</li>
     </ul>
-    <p class="tip"><i>Tip:</i> Use standard arrow keys for rough positioning, Shift for 50 mil grid alignment, and Shift+Alt for sub-mil precision adjustments.</p>
+
+    <h3>Coordinate Input for Movement</h3>
+    <p>Type exact coordinates to move a component to a precise location:</p>
+    <ul>
+      <li>Select a component in Select or Move mode</li>
+      <li>Press <span class="kbd">Ctrl+L</span> to focus the X coordinate input in the status bar</li>
+      <li>Type the desired X coordinate (supports units: "100 mils", "2.54 mm", "0.1 in")</li>
+      <li>Press <span class="kbd">Tab</span> to move to the Y coordinate input</li>
+      <li>Type the desired Y coordinate</li>
+      <li>Press <span class="kbd">Enter</span> to move the component to the specified coordinates</li>
+      <li>Uses current display units if no unit is specified</li>
+    </ul>
+    <p class="tip"><i>Tip:</i> Use arrow keys for incremental adjustments, mouse for free positioning, and coordinate input for exact placement at specific coordinates.</p>
 
     <h2>Status Bar Controls</h2>
     <p>The status bar at the bottom of the canvas provides quick access to drawing aids and status information:</p>
@@ -594,7 +616,7 @@
       <li><span class="kbd">G</span> — Cycle grid display (Lines → Dots → Off)</li>
       <li><span class="kbd">X</span> — Cycle crosshair style (+ → Full → Off)</li>
       <li><span class="kbd">T</span> — Toggle connection tracking on/off</li>
-      <li><span class="kbd">Ctrl+L</span> — Activate coordinate input (cycles through X, Y, Length, Angle when wire drawing)</li>
+      <li><span class="kbd">Ctrl+L</span> — Activate coordinate input (works in Wire, Place, Move, and Junction modes; cycles through X, Y, Length, Angle when wire drawing)</li>
       <li><span class="kbd">Tab</span> — Switch between coordinate input fields (X → Y → Length → Angle)</li>
       <li><span class="kbd">Esc</span> — Cancel drawing / Deselect / Exit mode / Cancel coordinate input</li>
       <li><span class="kbd">Enter</span> — Finish wire drawing / Exit junction dot mode / Accept coordinate input</li>

@@ -1215,6 +1215,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         c.y = candY;
                         mc.lastCenter = candX;
                         updateComponentDOM(c);
+                        updateCoordinateDisplay(c.x, c.y);
+                        updateCoordinateInputs(c.x, c.y);
                     }
                 }
                 else {
@@ -1227,6 +1229,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         c.x = candX;
                         mc.lastCenter = ny;
                         updateComponentDOM(c);
+                        updateCoordinateDisplay(c.x, c.y);
+                        updateCoordinateInputs(c.x, c.y);
                     }
                 }
             }
@@ -1240,6 +1244,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     c.x = candX;
                     c.y = candY;
                     updateComponentDOM(c);
+                    updateCoordinateDisplay(c.x, c.y);
+                    updateCoordinateInputs(c.x, c.y);
                 }
                 else {
                     let ny = snap(p.y + dragOff.y);
@@ -1250,6 +1256,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         c.x = candX;
                     }
                     updateComponentDOM(c);
+                    updateCoordinateDisplay(c.x, c.y);
+                    updateCoordinateInputs(c.x, c.y);
                 }
             }
             else {
@@ -1260,6 +1268,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     c.x = candX;
                     c.y = candY;
                     updateComponentDOM(c);
+                    updateCoordinateDisplay(c.x, c.y);
+                    updateCoordinateInputs(c.x, c.y);
                 }
             }
         });
@@ -2802,10 +2812,20 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         else {
             clearGhost();
         }
-        // Update coordinate display and input boxes when placing wire or components
-        if (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction') {
-            updateCoordinateDisplay(x, y);
-            updateCoordinateInputs(x, y);
+        // Update coordinate display and input boxes when placing wire, components, or moving
+        if (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction' || (mode === 'move' && selection.kind === 'component')) {
+            // For move mode, show component's current position
+            if (mode === 'move' && selection.kind === 'component') {
+                const comp = components.find(c => c.id === selection.id);
+                if (comp) {
+                    updateCoordinateDisplay(comp.x, comp.y);
+                    updateCoordinateInputs(comp.x, comp.y);
+                }
+            }
+            else {
+                updateCoordinateDisplay(x, y);
+                updateCoordinateInputs(x, y);
+            }
             showCoordinateInputs();
             // Show polar inputs only when actively drawing a wire (after first point)
             if (mode === 'wire' && drawing.active && drawing.points.length > 0) {
@@ -2999,6 +3019,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             if (dx !== 0 || dy !== 0) {
                 e.preventDefault();
                 moveSelectedBy(dx, dy);
+                // Update coordinate display and inputs after move
+                const comp = components.find(c => c.id === selection.id);
+                if (comp) {
+                    updateCoordinateDisplay(comp.x, comp.y);
+                    updateCoordinateInputs(comp.x, comp.y);
+                }
             }
         }
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -3010,7 +3036,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             clearAll();
         }
         // Coordinate input activation shortcut (Ctrl+L for cartesian, Ctrl+Shift+L for polar when drawing wire)
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction')) {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction' || (mode === 'move' && selection.kind === 'component'))) {
             e.preventDefault();
             // Use polar input if Shift is held and we're actively drawing a wire
             if (e.shiftKey && mode === 'wire' && drawing.active && drawing.points.length > 0 && coordInputLength && polarInputGroup) {
@@ -3697,7 +3723,23 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const x = point.x;
         const y = point.y;
         const snapPt = { x, y };
-        if (mode === 'wire') {
+        if (mode === 'move' && selection.kind === 'component') {
+            // Move selected component to typed coordinates
+            const comp = components.find(c => c.id === selection.id);
+            if (comp) {
+                if (!overlapsAnyOtherAt(comp, snapPt.x, snapPt.y) && !pinsCoincideAnyAt(comp, snapPt.x, snapPt.y)) {
+                    pushUndo();
+                    comp.x = snapPt.x;
+                    comp.y = snapPt.y;
+                    breakWiresForComponent(comp);
+                    deleteBridgeBetweenPins(comp);
+                    rebuildTopology();
+                    redraw();
+                    updateCoordinateInputs(comp.x, comp.y);
+                }
+            }
+        }
+        else if (mode === 'wire') {
             if (!drawing.active) {
                 // Start wire at typed coordinate
                 drawing.active = true;

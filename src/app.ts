@@ -1281,6 +1281,8 @@ import {
           if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
             c.x = candX; c.y = candY; mc.lastCenter = candX;
             updateComponentDOM(c);
+            updateCoordinateDisplay(c.x, c.y);
+            updateCoordinateInputs(c.x, c.y);
           }
         } else {
           let cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
@@ -1290,6 +1292,8 @@ import {
           if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
             c.y = candY; c.x = candX; mc.lastCenter = ny;
             updateComponentDOM(c);
+            updateCoordinateDisplay(c.x, c.y);
+            updateCoordinateInputs(c.x, c.y);
           }
         }
       } else if (slideCtx) {
@@ -1300,6 +1304,8 @@ import {
           if (overlapsAnyOtherAt(c, candX, candY) || pinsCoincideAnyAt(c, candX, candY)) return;
           c.x = candX; c.y = candY;
           updateComponentDOM(c);
+          updateCoordinateDisplay(c.x, c.y);
+          updateCoordinateInputs(c.x, c.y);
         } else {
           let ny = snap(p.y + dragOff.y);
           ny = Math.max(Math.min(slideCtx.max, ny), slideCtx.min);
@@ -1308,6 +1314,8 @@ import {
             c.y = candY; c.x = candX;
           }
           updateComponentDOM(c);
+          updateCoordinateDisplay(c.x, c.y);
+          updateCoordinateInputs(c.x, c.y);
         }
       } else {
         const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
@@ -1316,6 +1324,8 @@ import {
         if (!overlapsAnyOtherAt(c, candX, candY)) {
           c.x = candX; c.y = candY;
           updateComponentDOM(c);
+          updateCoordinateDisplay(c.x, c.y);
+          updateCoordinateInputs(c.x, c.y);
         }
       }
     });
@@ -2784,10 +2794,19 @@ import {
       clearGhost();
     }
 
-    // Update coordinate display and input boxes when placing wire or components
-    if (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction') {
-      updateCoordinateDisplay(x, y);
-      updateCoordinateInputs(x, y);
+    // Update coordinate display and input boxes when placing wire, components, or moving
+    if (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction' || (mode === 'move' && selection.kind === 'component')) {
+      // For move mode, show component's current position
+      if (mode === 'move' && selection.kind === 'component') {
+        const comp = components.find(c => c.id === selection.id);
+        if (comp) {
+          updateCoordinateDisplay(comp.x, comp.y);
+          updateCoordinateInputs(comp.x, comp.y);
+        }
+      } else {
+        updateCoordinateDisplay(x, y);
+        updateCoordinateInputs(x, y);
+      }
       showCoordinateInputs();
       
       // Show polar inputs only when actively drawing a wire (after first point)
@@ -2949,13 +2968,19 @@ import {
       if (dx !== 0 || dy !== 0) { 
         e.preventDefault(); 
         moveSelectedBy(dx, dy);
+        // Update coordinate display and inputs after move
+        const comp = components.find(c => c.id === selection.id);
+        if (comp) {
+          updateCoordinateDisplay(comp.x, comp.y);
+          updateCoordinateInputs(comp.x, comp.y);
+        }
       }
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveJSON(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); clearAll(); }
 
     // Coordinate input activation shortcut (Ctrl+L for cartesian, Ctrl+Shift+L for polar when drawing wire)
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction')) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction' || (mode === 'move' && selection.kind === 'component'))) {
       e.preventDefault();
       
       // Use polar input if Shift is held and we're actively drawing a wire
@@ -3655,7 +3680,22 @@ import {
     const y = point.y;
     const snapPt = { x, y };
 
-    if (mode === 'wire') {
+    if (mode === 'move' && selection.kind === 'component') {
+      // Move selected component to typed coordinates
+      const comp = components.find(c => c.id === selection.id);
+      if (comp) {
+        if (!overlapsAnyOtherAt(comp, snapPt.x, snapPt.y) && !pinsCoincideAnyAt(comp, snapPt.x, snapPt.y)) {
+          pushUndo();
+          comp.x = snapPt.x;
+          comp.y = snapPt.y;
+          breakWiresForComponent(comp);
+          deleteBridgeBetweenPins(comp);
+          rebuildTopology();
+          redraw();
+          updateCoordinateInputs(comp.x, comp.y);
+        }
+      }
+    } else if (mode === 'wire') {
       if (!drawing.active) {
         // Start wire at typed coordinate
         drawing.active = true;
