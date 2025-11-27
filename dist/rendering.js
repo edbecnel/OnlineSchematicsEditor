@@ -46,7 +46,7 @@ export function buildSymbolGroup(c, GRID, defaultResistorStyle) {
             drawCapacitor(gg, c, x, y, ax, bx, defaultResistorStyle, line, path, add);
             break;
         case 'inductor':
-            drawInductor(x, y, ax, bx, path);
+            drawInductor(x, y, ax, bx, line, path);
             break;
         case 'diode':
             drawDiodeInto(gg, c, c.props?.subtype || 'generic');
@@ -67,13 +67,43 @@ export function buildSymbolGroup(c, GRID, defaultResistorStyle) {
     }
     // Label and voltage text
     const label = document.createElementNS(SVG_NS, 'text');
-    setAttrs(label, { x: c.x, y: c.y + 46, 'text-anchor': 'middle', 'font-size': '12', fill: 'var(--ink)' });
+    const rot = ((c.rot % 360) + 360) % 360;
+    // For transistors, position label to the right (in local rotated space)
+    if (c.type === 'npn' || c.type === 'pnp') {
+        // Position in local space, counter-rotate text around its own position
+        setAttrs(label, {
+            x: c.x + 60,
+            y: c.y,
+            'text-anchor': 'start',
+            'dominant-baseline': 'middle',
+            'font-size': '12',
+            fill: 'var(--ink)',
+            transform: `rotate(${-c.rot} ${c.x + 60} ${c.y})`
+        });
+    }
+    else {
+        setAttrs(label, {
+            x: c.x,
+            y: c.y + 46,
+            'text-anchor': 'middle',
+            'font-size': '12',
+            fill: 'var(--ink)',
+            transform: `rotate(${-c.rot} ${c.x} ${c.y + 46})`
+        });
+    }
     const valText = formatValue(c);
     label.textContent = valText ? `${c.label} (${valText})` : c.label;
     gg.appendChild(label);
     if (c.type === 'battery' || c.type === 'ac') {
         const vtxt = document.createElementNS(SVG_NS, 'text');
-        setAttrs(vtxt, { x: c.x, y: c.y + 62, 'text-anchor': 'middle', 'font-size': '12', fill: 'var(--ink)' });
+        setAttrs(vtxt, {
+            x: c.x,
+            y: c.y + 62,
+            'text-anchor': 'middle',
+            'font-size': '12',
+            fill: 'var(--ink)',
+            transform: `rotate(${-c.rot} ${c.x} ${c.y + 62})`
+        });
         const v = (c.props?.voltage ?? '') !== '' ? `${c.props.voltage} V` : '';
         vtxt.textContent = v;
         gg.appendChild(vtxt);
@@ -136,16 +166,27 @@ function drawCapacitor(gg, c, x, y, ax, bx, defaultResistorStyle, line, path, ad
         line(x2, y, x + 48, y);
     }
 }
-function drawInductor(x, y, ax, bx, path) {
-    const totalWidth = 100;
+function drawInductor(x, y, ax, bx, line, path) {
+    // Inductor with 4 semicircular coils as in assets/Inductor.svg
+    // Total width: ax to bx = 100px
+    // 4 coils of radius 8 = 64px for coils
+    // Remaining space: 100 - 64 = 36px for leads, so 18px each side
     const r = 8;
-    const numCoils = 6;
-    const coilWidth = totalWidth / numCoils;
-    let d = `M ${ax} ${y}`;
-    for (let i = 0; i < numCoils; i++) {
-        d += ` q ${coilWidth / 2} -${r} ${coilWidth} 0`;
-    }
+    const coilWidth = 64; // 4 coils * 2 * radius
+    const leadLength = (bx - ax - coilWidth) / 2;
+    const coilStart = ax + leadLength;
+    const coilEnd = coilStart + coilWidth;
+    // Left lead
+    line(ax, y, coilStart, y);
+    // 4 semicircles going up (a command with positive y creates upward arc)
+    const d = `M ${coilStart} ${y}
+    a ${r} ${r} 0 0 1 ${r * 2} 0
+    a ${r} ${r} 0 0 1 ${r * 2} 0
+    a ${r} ${r} 0 0 1 ${r * 2} 0
+    a ${r} ${r} 0 0 1 ${r * 2} 0`;
     path(d);
+    // Right lead
+    line(coilEnd, y, bx, y);
 }
 function drawDiodeInto(gg, c, subtype) {
     const stroke = 'var(--component)';
@@ -177,19 +218,35 @@ function drawDiodeInto(gg, c, subtype) {
             lineEl(bx, cy - 16, bx, cy + 16);
             lineEl(ax + 16, cy, bx - 16, cy);
             break;
+        case 'schottky':
+            // Schottky diode: drawn exactly as in assets/Schottky Diode.svg (scaled 2x)
+            // Anode lead
+            lineEl(ax, cy, ax + 32, cy);
+            // Diode triangle (anode side)
+            pathEl(`M ${ax + 32} ${cy - 16} L ${ax + 56} ${cy} L ${ax + 32} ${cy + 16} Z`);
+            // Cathode bar
+            lineEl(ax + 58.72, cy - 16, ax + 58.72, cy + 16);
+            // Cathode lead
+            lineEl(ax + 58.72, cy, ax + 98.72, cy);
+            // Schottky hooks
+            pathEl(`M ${ax + 58.72} ${cy - 16} h 8 v 4`);
+            pathEl(`M ${ax + 58.72} ${cy + 16} h -8 v -4`);
+            break;
         default:
-            // Standard diode: triangle + cathode bar
-            pathEl(`M ${ax} ${y} L ${ax} ${y - 16} L ${c.x} ${y} L ${ax} ${y + 16} Z`);
-            lineEl(bx, y - 16, bx, y + 16);
-            lineEl(c.x, y, bx, y);
+            // Standard diode: same dimensions as Schottky but without hooks
+            // Anode lead
+            lineEl(ax, cy, ax + 32, cy);
+            // Diode triangle (anode side)
+            pathEl(`M ${ax + 32} ${cy - 16} L ${ax + 56} ${cy} L ${ax + 32} ${cy + 16} Z`);
+            // Cathode bar (touching the triangle point)
+            lineEl(ax + 56, cy - 16, ax + 56, cy + 16);
+            // Cathode lead
+            lineEl(ax + 56, cy, bx, cy);
             // Subtype adorners
             switch (String(subtype).toLowerCase()) {
                 case 'zener':
                     lineEl(cx - 14, cy - 6, cx, cy);
                     lineEl(cx - 14, cy + 6, cx, cy);
-                    break;
-                case 'schottky':
-                    lineEl(cx - 6, cy - 12, cx - 6, cy + 12);
                     break;
                 case 'led':
                     addArrow(true);
@@ -251,15 +308,45 @@ function drawACSource(x, y, ax, bx, line, add, path) {
     path(`M ${x - 30} ${y} q 15 -20 30 0 q 15 20 30 0`);
 }
 function drawTransistor(c, x, y, line, add) {
-    const arrowOut = c.type === 'npn';
-    line(x, y - 28, x, y + 28);
-    line(x, y - 10, x + 30, y - 30);
-    line(x, y + 10, x + 30, y + 30);
-    const arr = document.createElementNS(SVG_NS, 'path');
-    const dx = arrowOut ? 8 : -8;
-    arr.setAttribute('d', `M ${x + 30} ${y + 30} l ${-dx} -6 l 0 12 Z`);
-    arr.setAttribute('fill', 'var(--component)');
-    add(arr);
+    // Double the size: SVG 64x64 -> 128x128 equivalent, centered at (x,y)
+    // All external leads on 50mil grid: base at x-50, collector/emitter at x, y±50
+    const isNPN = c.type === 'npn';
+    // Device body - circle at center, radius 36 (doubled from 18)
+    const circle = document.createElementNS(SVG_NS, 'circle');
+    circle.setAttribute('cx', x.toString());
+    circle.setAttribute('cy', y.toString());
+    circle.setAttribute('r', '36');
+    circle.setAttribute('fill', 'none');
+    circle.setAttribute('stroke', 'var(--component)');
+    circle.setAttribute('stroke-width', '2');
+    add(circle);
+    // Collector vertical lead: external at (x, y-50), internal at (x, y-28)
+    line(x, y - 50, x, y - 28);
+    // Emitter vertical lead: external at (x, y+50), internal at (x, y+32)
+    line(x, y + 50, x, y + 32);
+    // Base electrode inside circle: vertical line at x-16, from y-20 to y+20
+    line(x - 16, y - 20, x - 16, y + 20);
+    // Base lead external: from x-50 to base electrode at x-16
+    line(x - 50, y, x - 16, y);
+    // Internal connection to collector: from base electrode to collector lead
+    line(x - 16, y - 16, x, y - 28);
+    // Internal connection to emitter: from base electrode to emitter lead
+    line(x - 16, y + 16, x, y + 32);
+    // Arrow on emitter (doubled size, balanced on slanted line)
+    // Emitter slant goes from (x-16, y+16) to (x, y+32)
+    // dx=16, dy=16, so slope is 1:1 at 45 degrees
+    if (isNPN) {
+        // NPN: arrow pointing outward, positioned near emitter end
+        // Arrow head at (x-1, y+31)
+        line(x - 1, y + 31, x - 9, y + 28); // lower side
+        line(x - 1, y + 31, x - 4, y + 22); // upper side
+    }
+    else {
+        // PNP: arrow pointing inward, positioned near base end
+        // Arrow head at (x-12, y+20)
+        line(x - 12, y + 20, x - 8, y + 28); // lower side
+        line(x - 12, y + 20, x - 4, y + 24); // upper side
+    }
 }
 function drawGround(x, y, line) {
     line(x - 16, y, x + 16, y);

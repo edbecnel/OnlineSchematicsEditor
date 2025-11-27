@@ -523,6 +523,7 @@ import {
   // Palette state: diode subtype selection
   let diodeSubtype: DiodeSubtype = 'generic';
   let capacitorSubtype: CapacitorSubtype = 'standard';
+  let transistorType: 'npn' | 'pnp' = 'npn';
 
   // Wire color state: default from CSS var, and current palette choice (affects new wires only)
   const defaultWireColor: string = (getComputedStyle(document.documentElement).getPropertyValue('--wire').trim() || '#c7f284');
@@ -3790,12 +3791,14 @@ import {
   function positionSubtypeDropdown() {
     if (!paletteRow2) return;
     const headerEl = document.querySelector('header');
-    // Position under the active button (diode or capacitor)
+    // Position under the active button (diode, capacitor, or transistor)
     let activeBtn: Element | null = null;
     if (placeType === 'diode') {
       activeBtn = document.querySelector('#paletteRow1 button[data-tool="diode"]');
     } else if (placeType === 'capacitor') {
       activeBtn = document.querySelector('#paletteRow1 button[data-tool="capacitor"]');
+    } else if (placeType === 'npn' || placeType === 'pnp') {
+      activeBtn = document.querySelector('#paletteRow1 button[data-tool="transistor"]');
     }
     if (!headerEl || !activeBtn) return;
     const hb = headerEl.getBoundingClientRect();
@@ -3806,25 +3809,28 @@ import {
   }
   window.addEventListener('resize', () => { if (paletteRow2.style.display !== 'none') positionSubtypeDropdown(); });
 
-  // Show subtype row for diode or capacitor placement
+  // Show subtype row for diode, capacitor, or transistor placement
   function updateSubtypeVisibility() {
     if (!paletteRow2) return;
-    const show = (mode === 'place' && (placeType === 'diode' || placeType === 'capacitor'));
+    const show = (mode === 'place' && (placeType === 'diode' || placeType === 'capacitor' || placeType === 'npn' || placeType === 'pnp'));
     if (show) {
       paletteRow2.style.display = 'block';
       const ds = document.getElementById('diodeSelect') as HTMLSelectElement | null;
       const capacitorSubtypes = document.querySelector('.capacitor-subtypes') as HTMLElement | null;
+      const transistorSubtypes = document.querySelector('.transistor-subtypes') as HTMLElement | null;
       if (ds) ds.style.display = (placeType === 'diode') ? 'inline-block' : 'none';
       if (capacitorSubtypes) capacitorSubtypes.style.display = (placeType === 'capacitor') ? 'flex' : 'none';
+      if (transistorSubtypes) transistorSubtypes.style.display = (placeType === 'npn' || placeType === 'pnp') ? 'flex' : 'none';
       if (ds && placeType === 'diode') ds.value = diodeSubtype;
       if (capacitorSubtypes && placeType === 'capacitor') updateCapacitorSubtypeButtons();
+      if (transistorSubtypes && (placeType === 'npn' || placeType === 'pnp')) updateTransistorSubtypeButtons();
       positionSubtypeDropdown();
     } else {
       paletteRow2.style.display = 'none';
     }
   }
 
-  // Any button in the header (except the Diode button) hides the popup
+  // Any button in the header (except the Diode, Capacitor, or Transistor buttons) hides the popup
   (function () {
     const headerEl = document.querySelector('header');
     headerEl.addEventListener('click', (e) => {
@@ -3832,8 +3838,9 @@ import {
       if (!btn) return;
       const isDiodeBtn = btn.matches('#paletteRow1 button[data-tool="diode"]');
       const isCapacitorBtn = btn.matches('#paletteRow1 button[data-tool="capacitor"]');
+      const isTransistorBtn = btn.matches('#paletteRow1 button[data-tool="transistor"]');
       const isSubtypeBtn = btn.closest('#paletteRow2');
-      if (!isDiodeBtn && !isCapacitorBtn && !isSubtypeBtn) {
+      if (!isDiodeBtn && !isCapacitorBtn && !isTransistorBtn && !isSubtypeBtn) {
         paletteRow2.style.display = 'none';
       }
     }, true);
@@ -3842,10 +3849,18 @@ import {
   document.getElementById('paletteRow1')!.addEventListener('click', (e) => {
     const btn = (e.target as Element | null)?.closest('button') as HTMLButtonElement | null;
     if (!btn) return;
-    placeType = (btn.dataset.tool as PlaceType | undefined) || placeType;
+    const tool = btn.dataset.tool;
+    
+    // Handle transistor button specially - map to current transistor type
+    if (tool === 'transistor') {
+      placeType = transistorType; // Use current transistor type (npn or pnp)
+    } else {
+      placeType = (tool as PlaceType | undefined) || placeType;
+    }
+    
     setMode('place');
-    // Reveal sub-type row for types that have subtypes (diode, capacitor)
-    if (placeType === 'diode' || placeType === 'capacitor') {
+    // Reveal sub-type row for types that have subtypes (diode, capacitor, transistor)
+    if (placeType === 'diode' || placeType === 'capacitor' || tool === 'transistor') {
       paletteRow2.style.display = 'block';
       const ds = document.getElementById('diodeSelect') as HTMLSelectElement | null;
       const cs = document.getElementById('capacitorSelect') as HTMLSelectElement | null;
@@ -3973,6 +3988,38 @@ import {
   // Initialize capacitor button icon and subtype buttons on load
   updateCapacitorButtonIcon();
   updateCapacitorSubtypeButtons();
+
+  // Transistor subtype buttons (NPN/PNP)
+  function updateTransistorSubtypeButtons() {
+    const npnBtn = document.getElementById('transistorNPN');
+    const pnpBtn = document.getElementById('transistorPNP');
+    if (npnBtn) npnBtn.classList.toggle('active', transistorType === 'npn');
+    if (pnpBtn) pnpBtn.classList.toggle('active', transistorType === 'pnp');
+  }
+
+  const transistorNPNBtn = document.getElementById('transistorNPN');
+  const transistorPNPBtn = document.getElementById('transistorPNP');
+
+  if (transistorNPNBtn) {
+    transistorNPNBtn.addEventListener('click', () => {
+      transistorType = 'npn';
+      updateTransistorSubtypeButtons();
+      placeType = 'npn';
+      setMode('place');
+    });
+  }
+
+  if (transistorPNPBtn) {
+    transistorPNPBtn.addEventListener('click', () => {
+      transistorType = 'pnp';
+      updateTransistorSubtypeButtons();
+      placeType = 'pnp';
+      setMode('place');
+    });
+  }
+
+  // Initialize transistor subtype buttons on load
+  updateTransistorSubtypeButtons();
 
   document.getElementById('rotateBtn').addEventListener('click', rotateSelected);
   document.getElementById('clearBtn').addEventListener('click', clearAll);

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 64 64"
+     width="64" height="64">
+  <g fill="none"
+     stroke="currentColor"
+     stroke-width="2"
+     stroke-linecap="round"
+     stroke-linejoin="round">
+
+    <!-- Anode lead -->
+    <line x1="4" y1="32" x2="20" y2="32" />
+
+    <!-- Diode triangle (anode side) -->
+    <path d="M20 24 L32 32 L20 40 Z" />
+
+    <!-- Cathode bar -->
+    <line x1="33.360676" y1="24" x2="33.360676" y2="40" />
+
+    <!-- Cathode lead -->
+    <line x1="33.360676" y1="32" x2="53.360676" y2="32" />
+
+    <!-- Schottky hooks -->
+    <path d="M33.360676 24 h4 v2" />
+    <path d="M33.346201 40.154403 h-4 v-2" />
+
+  </g>
+</svg>

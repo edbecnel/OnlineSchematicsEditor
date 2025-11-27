@@ -64,11 +64,12 @@ export function compPinPositions(c: Component): Array<{
   const r = ((c.rot % 360) + 360) % 360;
   
   if (c.type === 'npn' || c.type === 'pnp') {
-    // base at center; collector top; emitter bottom (before rotation)
+    // Snap all connection points to 50 mil grid
+    // base at left (x-50); collector/emitter on right at nearest 50 mil (round 16 to 0 or 50)
     const pins = [
-      { name: 'B', id: 'B', x: c.x, y: c.y, electricalType: 'input' as const },
-      { name: 'C', id: 'C', x: c.x, y: c.y - 2 * GRID, electricalType: 'passive' as const },
-      { name: 'E', id: 'E', x: c.x, y: c.y + 2 * GRID, electricalType: 'passive' as const }
+      { name: 'B', id: 'B', x: c.x - 50, y: c.y, electricalType: 'input' as const },
+      { name: 'C', id: 'C', x: c.x, y: c.y - 50, electricalType: 'passive' as const },
+      { name: 'E', id: 'E', x: c.x, y: c.y + 50, electricalType: 'passive' as const }
     ];
     return pins.map(p => ({
       ...rotatePoint(p, { x: c.x, y: c.y }, r),
