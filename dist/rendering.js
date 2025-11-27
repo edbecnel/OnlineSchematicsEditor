@@ -137,33 +137,33 @@ function drawCapacitor(gg, c, x, y, ax, bx, defaultResistorStyle, line, path, ad
         const style = c.props?.capacitorStyle || defaultResistorStyle;
         const x1 = x - 6, x2 = x + 6;
         if (style === 'iec') {
-            // IEC polarized: straight plates with +/- marks
-            line(x - 48, y, x1, y);
+            // IEC polarized: straight plates with +/- marks, leads to 50 mil grid
+            line(ax, y, x1, y);
             line(x1, y - 16, x1, y + 16);
             line(x2, y - 16, x2, y + 16);
-            line(x2, y, x + 48, y);
+            line(x2, y, bx, y);
             line(x - 18, y - 24, x - 18, y - 12);
             line(x - 24, y - 18, x - 12, y - 18);
             line(x + 12, y - 18, x + 24, y - 18);
         }
         else {
-            // ANSI polarized: straight + curved plates
-            line(x - 48, y, x1, y);
+            // ANSI polarized: straight + curved plates, leads to 50 mil grid
+            line(ax, y, x1, y);
             line(x1, y - 16, x1, y + 16);
             const curveLeft = x2 - 6;
             path(`M ${x2} ${y - 16} Q ${curveLeft} ${y} ${x2} ${y + 16}`);
-            line(x2, y, x + 48, y);
+            line(x2, y, bx, y);
             line(x - 20, y - 24, x - 20, y - 12);
             line(x - 26, y - 18, x - 14, y - 18);
         }
     }
     else {
-        // Standard non-polarized capacitor
+        // Standard non-polarized capacitor, leads to 50 mil grid
         const x1 = x - 6, x2 = x + 6;
-        line(x - 48, y, x1, y);
+        line(ax, y, x1, y);
         line(x1, y - 16, x1, y + 16);
         line(x2, y - 16, x2, y + 16);
-        line(x2, y, x + 48, y);
+        line(x2, y, bx, y);
     }
 }
 function drawInductor(x, y, ax, bx, line, path) {

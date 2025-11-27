@@ -1278,6 +1278,7 @@ import {
           if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
             c.x = candX; c.y = candY; mc.lastCenter = candX;
             updateComponentDOM(c);
+            redrawCanvasOnly(); // Update endpoint circles for new component position
           }
         } else {
           let cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
@@ -1287,6 +1288,7 @@ import {
           if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
             c.y = candY; c.x = candX; mc.lastCenter = ny;
             updateComponentDOM(c);
+            redrawCanvasOnly(); // Update endpoint circles for new component position
           }
         }
       } else if (slideCtx) {
@@ -1297,6 +1299,7 @@ import {
           if (overlapsAnyOtherAt(c, candX, candY) || pinsCoincideAnyAt(c, candX, candY)) return;
           c.x = candX; c.y = candY;
           updateComponentDOM(c);
+          redrawCanvasOnly(); // Update endpoint circles for new component position
         } else {
           let ny = snap(p.y + dragOff.y);
           ny = Math.max(Math.min(slideCtx.max, ny), slideCtx.min);
@@ -1305,6 +1308,7 @@ import {
             c.y = candY; c.x = candX;
           }
           updateComponentDOM(c);
+          redrawCanvasOnly(); // Update endpoint circles for new component position
         }
       } else {
         const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
@@ -1313,6 +1317,7 @@ import {
         if (!overlapsAnyOtherAt(c, candX, candY)) {
           c.x = candX; c.y = candY;
           updateComponentDOM(c);
+          redrawCanvasOnly(); // Update endpoint circles for new component position
         }
       }
     });
@@ -1477,8 +1482,8 @@ import {
     try {
       $qa('[data-endpoint]', gOverlay).forEach(el => el.remove());
     } catch (_) { }
-    // Show endpoint circles while wiring, placing, managing junctions, or when Select is active
-    if (mode === 'wire' || mode === 'place' || mode === 'select' || mode === 'place-junction' || mode === 'delete-junction') {
+    // Show endpoint circles while wiring, placing, moving, managing junctions, or when Select is active
+    if (mode === 'wire' || mode === 'place' || mode === 'move' || mode === 'select' || mode === 'place-junction' || mode === 'delete-junction') {
       const ns = 'http://www.w3.org/2000/svg';
       for (const w of wires) {
         if (!w.points || w.points.length < 2) continue;

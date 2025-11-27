@@ -1212,6 +1212,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         c.y = candY;
                         mc.lastCenter = candX;
                         updateComponentDOM(c);
+                        redrawCanvasOnly(); // Update endpoint circles for new component position
                     }
                 }
                 else {
@@ -1224,6 +1225,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         c.x = candX;
                         mc.lastCenter = ny;
                         updateComponentDOM(c);
+                        redrawCanvasOnly(); // Update endpoint circles for new component position
                     }
                 }
             }
@@ -1237,6 +1239,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     c.x = candX;
                     c.y = candY;
                     updateComponentDOM(c);
+                    redrawCanvasOnly(); // Update endpoint circles for new component position
                 }
                 else {
                     let ny = snap(p.y + dragOff.y);
@@ -1247,6 +1250,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         c.x = candX;
                     }
                     updateComponentDOM(c);
+                    redrawCanvasOnly(); // Update endpoint circles for new component position
                 }
             }
             else {
@@ -1257,6 +1261,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     c.x = candX;
                     c.y = candY;
                     updateComponentDOM(c);
+                    redrawCanvasOnly(); // Update endpoint circles for new component position
                 }
             }
         });
@@ -1440,8 +1445,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             $qa('[data-endpoint]', gOverlay).forEach(el => el.remove());
         }
         catch (_) { }
-        // Show endpoint circles while wiring, placing, managing junctions, or when Select is active
-        if (mode === 'wire' || mode === 'place' || mode === 'select' || mode === 'place-junction' || mode === 'delete-junction') {
+        // Show endpoint circles while wiring, placing, moving, managing junctions, or when Select is active
+        if (mode === 'wire' || mode === 'place' || mode === 'move' || mode === 'select' || mode === 'place-junction' || mode === 'delete-junction') {
             const ns = 'http://www.w3.org/2000/svg';
             for (const w of wires) {
                 if (!w.points || w.points.length < 2)
