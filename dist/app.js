@@ -6263,9 +6263,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const isComponentPin = pinKeys.has(k);
             const shouldCreateJunction = wireIds.size >= 2 && (hasMidSegment || isComponentPin);
             if (shouldCreateJunction) {
-                // Check if this location has been manually suppressed
-                const isSuppressed = manualJunctions.some(j => j.suppressed && Math.abs(j.at.x - node.x) < 1e-3 && Math.abs(j.at.y - node.y) < 1e-3);
-                if (!isSuppressed) {
+                // Check if this location already has a manual junction (including suppressed ones)
+                const hasManualJunction = manualJunctions.some(j => Math.abs(j.at.x - node.x) < 1e-3 && Math.abs(j.at.y - node.y) < 1e-3);
+                // Only create automatic junction if no manual junction exists at this location
+                if (!hasManualJunction) {
                     // Use the netId of the first wire found, or 'default'
                     let netId = 'default';
                     for (const wid of wireIds) {
