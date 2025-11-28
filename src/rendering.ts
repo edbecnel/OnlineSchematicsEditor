@@ -112,7 +112,8 @@ export function buildSymbolGroup(
     fill: 'var(--ink)',
     transform: `rotate(${-c.rot} ${labelX} ${labelY})`,
     'pointer-events': 'all',
-    'cursor': 'move'
+    'cursor': 'move',
+    'user-select': 'none'
   });
   
   label.textContent = c.label;
@@ -140,7 +141,8 @@ export function buildSymbolGroup(
       fill: 'var(--ink)',
       transform: `rotate(${-c.rot} ${valueX} ${valueY})`,
       'pointer-events': 'all',
-      'cursor': 'move'
+      'cursor': 'move',
+      'user-select': 'none'
     });
     
     value.textContent = valText;

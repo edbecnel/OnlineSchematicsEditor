@@ -1511,9 +1511,14 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 if (e.button !== 0)
                     return;
                 e.stopPropagation(); // Prevent component selection
+                e.preventDefault(); // Prevent text selection
                 selection = { kind: 'label', id: c.id, segIndex: null };
                 renderInspector();
                 Rendering.updateSelectionOutline(selection);
+                // Auto-switch to Move mode if in Select mode
+                if (mode === 'select') {
+                    setMode('move');
+                }
                 if (mode !== 'move')
                     return;
                 labelDragging = true;
@@ -1555,9 +1560,14 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 if (e.button !== 0)
                     return;
                 e.stopPropagation(); // Prevent component selection
+                e.preventDefault(); // Prevent text selection
                 selection = { kind: 'value', id: c.id, segIndex: null };
                 renderInspector();
                 Rendering.updateSelectionOutline(selection);
+                // Auto-switch to Move mode if in Select mode
+                if (mode === 'select') {
+                    setMode('move');
+                }
                 if (mode !== 'move')
                     return;
                 valueDragging = true;

@@ -93,7 +93,8 @@ export function buildSymbolGroup(c, GRID, defaultResistorStyle) {
         fill: 'var(--ink)',
         transform: `rotate(${-c.rot} ${labelX} ${labelY})`,
         'pointer-events': 'all',
-        'cursor': 'move'
+        'cursor': 'move',
+        'user-select': 'none'
     });
     label.textContent = c.label;
     gg.appendChild(label);
@@ -118,7 +119,8 @@ export function buildSymbolGroup(c, GRID, defaultResistorStyle) {
             fill: 'var(--ink)',
             transform: `rotate(${-c.rot} ${valueX} ${valueY})`,
             'pointer-events': 'all',
-            'cursor': 'move'
+            'cursor': 'move',
+            'user-select': 'none'
         });
         value.textContent = valText;
         gg.appendChild(value);
