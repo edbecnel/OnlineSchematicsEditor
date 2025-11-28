@@ -14,7 +14,7 @@ export type Axis = 'x' | 'y' | null;
 export type Mode = 'none' | 'select' | 'wire' | 'delete' | 'place' | 'pan' | 'move';
 export type EditorMode = Mode | 'place-junction' | 'delete-junction';
 export type PlaceType = 'resistor' | 'capacitor' | 'inductor' | 'diode' | 'npn' | 'pnp' | 'ground' | 'battery' | 'ac';
-export type CounterKey = PlaceType | 'wire';
+export type CounterKey = PlaceType | 'wire' | 'junction';
 export type GridMode = 'line' | 'dot' | 'off';
 export type SnapMode = 'grid' | '50mil' | 'off';
 
@@ -32,7 +32,7 @@ export type Selection =
   | { kind: 'wire'; id: string; segIndex: number | null }
   | { kind: 'label'; id: string; segIndex: null }    // component label text
   | { kind: 'value'; id: string; segIndex: null }    // component value text
-  | { kind: 'junction'; id: number; segIndex: null }; // junction dot (id is index in junctions array)
+  | { kind: 'junction'; id: string; segIndex: null }; // junction dot (id is stable unique identifier)
 
 // ====== Component Types ======
 
@@ -170,6 +170,7 @@ export interface Net {
 }
 
 export interface Junction {
+  id: string;        // unique identifier
   at: Point;
   size?: number;
   color?: string;    // explicit override; otherwise follows netclass/theme

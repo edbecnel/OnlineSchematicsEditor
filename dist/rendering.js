@@ -506,9 +506,9 @@ export function updateSelectionOutline(selection) {
         }
     });
     // Highlight selected junction dot
-    document.querySelectorAll('[data-junction-index]').forEach(dot => {
-        const idx = parseInt(dot.getAttribute('data-junction-index') || '-1');
-        const isSelected = selection.kind === 'junction' && typeof selection.id === 'number' && selection.id === idx;
+    document.querySelectorAll('[data-junction-id]').forEach(dot => {
+        const jId = dot.getAttribute('data-junction-id');
+        const isSelected = selection.kind === 'junction' && selection.id === jId;
         if (isSelected) {
             dot.setAttribute('stroke', 'var(--accent)');
             dot.setAttribute('stroke-width', '3');

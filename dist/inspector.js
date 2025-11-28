@@ -447,8 +447,8 @@ export function renderInspector(ctx, inspector, inspectorNone) {
     }
     // JUNCTION INSPECTOR
     if (ctx.selection.kind === 'junction') {
-        const jIdx = ctx.selection.id;
-        const j = ctx.junctions[jIdx];
+        const jId = ctx.selection.id;
+        const j = ctx.junctions.find(j => j.id === jId);
         inspectorNone.style.display = j ? 'none' : 'block';
         if (!j)
             return;
@@ -604,12 +604,17 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         deleteBtn.onclick = () => {
             ctx.pushUndo();
             if (j.manual) {
-                ctx.junctions.splice(jIdx, 1);
+                const jIdx = ctx.junctions.indexOf(j);
+                if (jIdx !== -1)
+                    ctx.junctions.splice(jIdx, 1);
             }
             else {
                 // Mark automatic junction as suppressed
-                ctx.junctions.splice(jIdx, 1);
-                ctx.junctions.push({ at: j.at, manual: true, suppressed: true });
+                const jIdx = ctx.junctions.indexOf(j);
+                if (jIdx !== -1) {
+                    ctx.junctions.splice(jIdx, 1);
+                    ctx.junctions.push({ id: ctx.uid('junction'), at: j.at, manual: true, suppressed: true });
+                }
             }
             ctx.selection = { kind: null, id: null, segIndex: null };
             ctx.redrawCanvasOnly();

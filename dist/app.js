@@ -379,6 +379,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         components = JSON.parse(JSON.stringify(state.components));
         wires = JSON.parse(JSON.stringify(state.wires));
         junctions = JSON.parse(JSON.stringify(state.junctions));
+        // Migrate: ensure all junctions have IDs (for backward compatibility)
+        for (const j of junctions) {
+            if (!j.id)
+                j.id = State.uid('junction');
+        }
         textLabels = JSON.parse(JSON.stringify(state.textLabels || []));
         selection = { ...state.selection };
         counters = { ...state.counters };
@@ -1769,7 +1774,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 dot.setAttribute('fill', color);
                 dot.setAttribute('stroke', 'var(--bg)');
                 dot.setAttribute('stroke-width', '1');
-                dot.setAttribute('data-junction-index', String(junctions.indexOf(j)));
+                dot.setAttribute('data-junction-id', j.id);
                 gJunctions.appendChild(dot);
             }
         }
@@ -2302,7 +2307,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const j = junctions[i];
             if (inRect(j.at, r)) {
                 const d2 = (j.at.x - cx) * (j.at.x - cx) + (j.at.y - cy) * (j.at.y - cy);
-                juncs.push({ j, idx: i, d2 });
+                juncs.push({ j, d2 });
             }
         }
         // Decide priority based on Shift during drag
@@ -2311,7 +2316,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             // Shift-drag priority: junctions > components > wires
             if (juncs.length) {
                 juncs.sort((u, v) => u.d2 - v.d2);
-                selection = { kind: 'junction', id: juncs[0].idx, segIndex: null };
+                selection = { kind: 'junction', id: juncs[0].j.id, segIndex: null };
                 redraw();
                 return true;
             }
@@ -2832,7 +2837,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             break;
                     }
                 }
-                junctions.push({ at: { x: bestPt.x, y: bestPt.y }, manual: true, color: junctionColor });
+                junctions.push({ id: State.uid('junction'), at: { x: bestPt.x, y: bestPt.y }, manual: true, color: junctionColor });
                 redraw();
             }
             // Stay in place-junction mode to allow placing multiple dots
@@ -2864,7 +2869,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     // Remove the automatic junction and add a suppressed marker at this location
                     junctions.splice(idx, 1);
                     // Add a manual junction with suppressed flag to prevent auto-recreation
-                    junctions.push({ at: junction.at, manual: true, suppressed: true });
+                    junctions.push({ id: State.uid('junction'), at: junction.at, manual: true, suppressed: true });
                 }
                 redraw();
             }
@@ -4328,7 +4333,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 // Check if junction already exists at this location
                 const existing = junctions.find(j => Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3);
                 if (!existing) {
-                    junctions.push({ at: bestPt, manual: true });
+                    junctions.push({ id: State.uid('junction'), at: bestPt, manual: true });
                     pushUndo();
                     rebuildTopology();
                     requestAnimationFrame(() => { redrawCanvasOnly(); });
@@ -4348,7 +4353,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             if (idx !== -1) {
                 const junction = junctions[idx];
                 if (!junction.manual) {
-                    junctions[idx] = { at: junction.at, manual: true, suppressed: true };
+                    junctions[idx] = { id: State.uid('junction'), at: junction.at, manual: true, suppressed: true };
                 }
                 else {
                     junctions.splice(idx, 1);
@@ -5396,6 +5401,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             redraw,
             renderNetList,
             renderInspector: () => renderInspector(),
+            uid: (prefix) => State.uid(prefix),
             compPinPositions: Components.compPinPositions,
             snap: (val) => snap(val),
             snapToBaseScalar: (val) => snapToBaseScalar(val),
@@ -6271,6 +6277,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     }
                     // Add automatic junction without size/color overrides (will use netclass defaults at render time)
                     junctions.push({
+                        id: State.uid('junction'),
                         at: { x: node.x, y: node.y },
                         netId
                     });

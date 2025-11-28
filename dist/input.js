@@ -638,7 +638,7 @@ function handlePlaceJunction(ctx, p, x, y) {
     // Add junction if not already present
     if (!ctx.junctions.some(j => Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3)) {
         ctx.pushUndo();
-        ctx.junctions.push({ at: { x: bestPt.x, y: bestPt.y }, manual: true });
+        ctx.junctions.push({ id: ctx.uid('junction'), at: { x: bestPt.x, y: bestPt.y }, manual: true });
         ctx.redraw();
     }
 }
@@ -663,7 +663,7 @@ function handleDeleteJunction(ctx, p) {
         }
         else {
             ctx.junctions.splice(idx, 1);
-            ctx.junctions.push({ at: junction.at, manual: true, suppressed: true });
+            ctx.junctions.push({ id: ctx.uid('junction'), at: junction.at, manual: true, suppressed: true });
         }
         ctx.redraw();
     }
