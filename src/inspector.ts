@@ -598,7 +598,15 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
         const sizeMils = parsed.nm / (0.0254 * ctx.NM_PER_MM);
         j.size = sizeMils;
         // Mark as manual so custom properties persist through topology rebuilds
-        j.manual = true;
+        if (!j.manual) {
+          j.manual = true;
+          // Remove any other junctions at the same location (duplicates)
+          ctx.junctions = ctx.junctions.filter(other => 
+            other.id === j.id || 
+            Math.abs(other.at.x - j.at.x) >= 1e-3 || 
+            Math.abs(other.at.y - j.at.y) >= 1e-3
+          );
+        }
         ctx.redrawCanvasOnly();
         ctx.renderInspector();
       }
@@ -662,7 +670,15 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
       const a = parseFloat(opacityIn.value) || 1;
       j.color = `rgba(${r},${g},${b},${a})`;
       // Mark as manual so custom properties persist through topology rebuilds
-      j.manual = true;
+      if (!j.manual) {
+        j.manual = true;
+        // Remove any other junctions at the same location (duplicates)
+        ctx.junctions = ctx.junctions.filter(other => 
+          other.id === j.id || 
+          Math.abs(other.at.x - j.at.x) >= 1e-3 || 
+          Math.abs(other.at.y - j.at.y) >= 1e-3
+        );
+      }
       ctx.redrawCanvasOnly();
     };
     
