@@ -549,6 +549,199 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     return;
   }
 
+  // JUNCTION INSPECTOR
+  if (ctx.selection.kind === 'junction') {
+    const jIdx = ctx.selection.id;
+    const j = ctx.junctions[jIdx];
+    inspectorNone.style.display = j ? 'none' : 'block';
+    if (!j) return;
+    
+    const wrap = document.createElement('div');
+    wrap.appendChild(rowPair('Type', text(j.manual ? 'Manual Junction' : 'Auto Junction', true)));
+    
+    // Position (read-only)
+    const xNm = ctx.pxToNm(j.at.x);
+    const yNm = ctx.pxToNm(j.at.y);
+    const xDisplay = nmToUnit(xNm, ctx.globalUnits);
+    const yDisplay = nmToUnit(yNm, ctx.globalUnits);
+    let precision = 2;
+    if (ctx.globalUnits === 'mils') precision = 0;
+    if (ctx.globalUnits === 'in') precision = 4;
+    
+    wrap.appendChild(rowPair(`X (${ctx.globalUnits})`, text(xDisplay.toFixed(precision), true)));
+    wrap.appendChild(rowPair(`Y (${ctx.globalUnits})`, text(yDisplay.toFixed(precision), true)));
+    
+    // Size (diameter in current units)
+    const sizeRow = document.createElement('div');
+    sizeRow.className = 'row';
+    const sizeLbl = document.createElement('label');
+    sizeLbl.textContent = `Size (${ctx.globalUnits})`;
+    sizeLbl.style.width = '90px';
+    const sizeIn = document.createElement('input');
+    sizeIn.type = 'text';
+    
+    // Get current size (from junction override or global default)
+    const currentSizeMils = j.size || (ctx.junctionDotSize === 'smallest' ? 15 : 
+                                       ctx.junctionDotSize === 'small' ? 30 : 
+                                       ctx.junctionDotSize === 'default' ? 40 : 
+                                       ctx.junctionDotSize === 'large' ? 50 : 65);
+    // Convert mils to nm: 1 mil = 0.0254 mm, so mils * 0.0254 * NM_PER_MM
+    const currentSizeNm = currentSizeMils * 0.0254 * ctx.NM_PER_MM;
+    sizeIn.value = ctx.formatDimForDisplay(currentSizeNm, ctx.globalUnits);
+    
+    sizeIn.onchange = () => {
+      ctx.pushUndo();
+      const parsed = ctx.parseDimInput(sizeIn.value || '0');
+      if (parsed) {
+        // Convert nm to mils: nm / (0.0254 * NM_PER_MM)
+        const sizeMils = parsed.nm / (0.0254 * ctx.NM_PER_MM);
+        j.size = sizeMils;
+        ctx.redrawCanvasOnly();
+        ctx.renderInspector();
+      }
+    };
+    
+    sizeRow.appendChild(sizeLbl);
+    sizeRow.appendChild(sizeIn);
+    wrap.appendChild(sizeRow);
+    
+    // Color picker with opacity and swatches
+    const colorRow = document.createElement('div');
+    colorRow.className = 'row hstack';
+    const colorLbl = document.createElement('label');
+    colorLbl.textContent = 'Color';
+    colorLbl.style.width = '90px';
+    
+    const colorIn = document.createElement('input');
+    colorIn.type = 'color';
+    colorIn.title = 'Pick color';
+    
+    // Get current color (from junction override, netclass, or default)
+    let currentColor = j.color || 'var(--wire)';
+    if (currentColor.startsWith('var(')) {
+      // Use default black for var() colors in the picker
+      currentColor = '#000000';
+    }
+    const initialHex = ctx.colorToHex(currentColor);
+    colorIn.value = initialHex;
+    
+    // Opacity slider
+    const opacityIn = document.createElement('input');
+    opacityIn.type = 'range';
+    opacityIn.min = '0';
+    opacityIn.max = '1';
+    opacityIn.step = '0.05';
+    opacityIn.style.flex = '0 0 120px';
+    opacityIn.style.maxWidth = '140px';
+    
+    // Extract current opacity from color
+    let currentOpacity = 1;
+    if (j.color && j.color.includes('rgba')) {
+      const match = j.color.match(/rgba?\(.*?,\s*(\d*\.?\d+)\s*\)/);
+      if (match) currentOpacity = parseFloat(match[1]);
+    }
+    opacityIn.value = String(currentOpacity);
+    
+    let hasColorUndo = false;
+    const ensureColorUndo = () => {
+      if (!hasColorUndo) {
+        ctx.pushUndo();
+        hasColorUndo = true;
+      }
+    };
+    
+    const applyColor = () => {
+      const hex = colorIn.value || '#000000';
+      const m = hex.replace('#', '');
+      const r = parseInt(m.slice(0, 2), 16);
+      const g = parseInt(m.slice(2, 4), 16);
+      const b = parseInt(m.slice(4, 6), 16);
+      const a = parseFloat(opacityIn.value) || 1;
+      j.color = `rgba(${r},${g},${b},${a})`;
+      ctx.redrawCanvasOnly();
+    };
+    
+    colorIn.onfocus = ensureColorUndo;
+    opacityIn.onfocus = ensureColorUndo;
+    colorIn.oninput = () => {
+      ensureColorUndo();
+      applyColor();
+    };
+    opacityIn.oninput = () => {
+      ensureColorUndo();
+      applyColor();
+    };
+    
+    colorRow.appendChild(colorLbl);
+    colorRow.appendChild(colorIn);
+    colorRow.appendChild(opacityIn);
+    wrap.appendChild(colorRow);
+    
+    // Color swatches (reuse wire inspector pattern)
+    const swatchRow = document.createElement('div');
+    swatchRow.className = 'row hstack';
+    swatchRow.style.marginLeft = '90px';
+    swatchRow.style.gap = '4px';
+    swatchRow.style.flexWrap = 'wrap';
+    
+    const swatches = [
+      '#000000', '#ff0000', '#00ff00', '#0000ff',
+      '#ffff00', '#ff00ff', '#00ffff', '#ffffff',
+      '#808080', '#800000', '#008000', '#000080'
+    ];
+    
+    swatches.forEach(color => {
+      const swatch = document.createElement('div');
+      swatch.style.width = '20px';
+      swatch.style.height = '20px';
+      swatch.style.backgroundColor = color;
+      swatch.style.border = '1px solid var(--border)';
+      swatch.style.cursor = 'pointer';
+      swatch.title = color;
+      swatch.onclick = () => {
+        ensureColorUndo();
+        colorIn.value = color;
+        applyColor();
+      };
+      swatchRow.appendChild(swatch);
+    });
+    
+    wrap.appendChild(swatchRow);
+    
+    // Reset to default button
+    const resetColorBtn = document.createElement('button');
+    resetColorBtn.textContent = 'Reset to Default';
+    resetColorBtn.onclick = () => {
+      ctx.pushUndo();
+      delete j.size;
+      delete j.color;
+      ctx.redrawCanvasOnly();
+      ctx.renderInspector();
+    };
+    wrap.appendChild(resetColorBtn);
+    
+    // Delete button
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = 'Delete Junction';
+    deleteBtn.onclick = () => {
+      ctx.pushUndo();
+      if (j.manual) {
+        ctx.junctions.splice(jIdx, 1);
+      } else {
+        // Mark automatic junction as suppressed
+        ctx.junctions.splice(jIdx, 1);
+        ctx.junctions.push({ at: j.at, manual: true, suppressed: true });
+      }
+      ctx.selection = { kind: null, id: null, segIndex: null };
+      ctx.redrawCanvasOnly();
+      ctx.renderInspector();
+    };
+    wrap.appendChild(deleteBtn);
+    
+    inspector.appendChild(wrap);
+    return;
+  }
+
   // WIRE INSPECTOR
   if (ctx.selection.kind === 'wire') {
     const w = ctx.wires.find(x => x.id === ctx.selection.id);

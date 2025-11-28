@@ -1807,12 +1807,15 @@ import {
         if (j.suppressed) continue;
 
         const nc = NET_CLASSES[j.netId || 'default'] || NET_CLASSES.default;
+        // Use per-instance size if set, otherwise use global default
         // Custom sizes for better visibility: Smallest=15mils, Small=30mils, Default=40mils, Large=50mils, Largest=65mils (diameter)
-        const sizeMils = junctionDotSize === 'smallest' ? 15 : junctionDotSize === 'small' ? 30 : junctionDotSize === 'default' ? 40 : junctionDotSize === 'large' ? 50 : 65;
+        const sizeMils = j.size !== undefined ? j.size : 
+                        (junctionDotSize === 'smallest' ? 15 : junctionDotSize === 'small' ? 30 : junctionDotSize === 'default' ? 40 : junctionDotSize === 'large' ? 50 : 65);
         const diameterMm = sizeMils * 0.0254; // Convert mils to mm
         const radiusMm = diameterMm / 2;
         // Use fractional pixels for better differentiation (SVG supports sub-pixel rendering)
         const radiusPx = Math.max(1, radiusMm * (100 / 25.4));
+        // Use per-instance color if set, otherwise use netclass color
         let color = j.color ? j.color : rgba01ToCss(nc.junction.color);
         
         // Theme-aware black/white handling: if junction color is white or black,
@@ -1836,6 +1839,7 @@ import {
         dot.setAttribute('fill', color);
         dot.setAttribute('stroke', 'var(--bg)');
         dot.setAttribute('stroke-width', '1');
+        dot.setAttribute('data-junction-index', String(junctions.indexOf(j)));
         gJunctions.appendChild(dot);
       }
     }
@@ -2302,9 +2306,23 @@ import {
         comps.push({ c, d2 });
       }
     }
+    const juncs = [];
+    for (let i = 0; i < junctions.length; i++) {
+      const j = junctions[i];
+      if (inRect(j.at, r)) {
+        const d2 = (j.at.x - cx) * (j.at.x - cx) + (j.at.y - cy) * (j.at.y - cy);
+        juncs.push({ j, idx: i, d2 });
+      }
+    }
     // Decide priority based on Shift during drag
     const preferComponents = !!marquee.shiftPreferComponents;
     if (preferComponents) {
+      // Shift-drag priority: junctions > components > wires
+      if (juncs.length) {
+        juncs.sort((u, v) => u.d2 - v.d2);
+        selection = { kind: 'junction', id: juncs[0].idx, segIndex: null };
+        redraw(); return true;
+      }
       if (comps.length) {
         comps.sort((u, v) => u.d2 - v.d2);
         selection = { kind: 'component', id: comps[0].c.id, segIndex: null };
@@ -2317,6 +2335,7 @@ import {
         redraw(); return true;
       }
     } else {
+      // Normal drag priority: wires > components (junctions not selected without shift)
       if (segs.length) {
         segs.sort((u, v) => u.d2 - v.d2);
         const pick = segs[0];
@@ -2758,7 +2777,13 @@ import {
           bestPt = { x, y };
         }
       }
-      // Add to junctions if not already present
+      // Remove any suppressed junction at this location (user is manually placing one)
+      junctions = junctions.filter(j => {
+        const isSameLocation = Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3;
+        return !(isSameLocation && j.suppressed);
+      });
+      
+      // Add to junctions if not already present (excluding suppressed ones which we just removed)
       if (!junctions.some(j => Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3)) {
         pushUndo();
         

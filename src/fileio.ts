@@ -33,7 +33,7 @@ export interface FileIOContext {
   keyPt: (p: { x: number; y: number }) => string;
 
   // Selection
-  selection: { kind: string | null; id: string | null; segIndex: number | null };
+  selection: { kind: string | null; id: string | number | null; segIndex: number | null };
 
   // Drawing state
   drawing: {

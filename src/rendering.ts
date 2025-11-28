@@ -601,7 +601,7 @@ export function createEndpointCircle(
  * Update selection styling on component elements.
  */
 export function updateSelectionOutline(
-  selection: { kind: string | null; id: string | null; segIndex: number | null }
+  selection: { kind: string | null; id: string | number | null; segIndex: number | null }
 ): void {
   document.querySelectorAll('#components g.comp').forEach(g => {
     const id = g.getAttribute('data-id');
@@ -622,6 +622,19 @@ export function updateSelectionOutline(
       const valueSelected = selection.kind === 'value' && selection.id === id;
       valueText.style.fill = valueSelected ? 'var(--accent)' : 'var(--ink)';
       valueText.style.fontWeight = valueSelected ? 'bold' : 'normal';
+    }
+  });
+  
+  // Highlight selected junction dot
+  document.querySelectorAll('[data-junction-index]').forEach(dot => {
+    const idx = parseInt(dot.getAttribute('data-junction-index') || '-1');
+    const isSelected = selection.kind === 'junction' && typeof selection.id === 'number' && selection.id === idx;
+    if (isSelected) {
+      dot.setAttribute('stroke', 'var(--accent)');
+      dot.setAttribute('stroke-width', '3');
+    } else {
+      dot.setAttribute('stroke', 'var(--bg)');
+      dot.setAttribute('stroke-width', '1');
     }
   });
 }

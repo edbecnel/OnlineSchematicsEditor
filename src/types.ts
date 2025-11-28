@@ -31,7 +31,8 @@ export type Selection =
   | { kind: 'component'; id: string; segIndex: null }
   | { kind: 'wire'; id: string; segIndex: number | null }
   | { kind: 'label'; id: string; segIndex: null }    // component label text
-  | { kind: 'value'; id: string; segIndex: null };   // component value text
+  | { kind: 'value'; id: string; segIndex: null }    // component value text
+  | { kind: 'junction'; id: number; segIndex: null }; // junction dot (id is index in junctions array)
 
 // ====== Component Types ======
 

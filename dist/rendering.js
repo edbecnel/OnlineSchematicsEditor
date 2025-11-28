@@ -505,6 +505,19 @@ export function updateSelectionOutline(selection) {
             valueText.style.fontWeight = valueSelected ? 'bold' : 'normal';
         }
     });
+    // Highlight selected junction dot
+    document.querySelectorAll('[data-junction-index]').forEach(dot => {
+        const idx = parseInt(dot.getAttribute('data-junction-index') || '-1');
+        const isSelected = selection.kind === 'junction' && typeof selection.id === 'number' && selection.id === idx;
+        if (isSelected) {
+            dot.setAttribute('stroke', 'var(--accent)');
+            dot.setAttribute('stroke-width', '3');
+        }
+        else {
+            dot.setAttribute('stroke', 'var(--bg)');
+            dot.setAttribute('stroke-width', '1');
+        }
+    });
 }
 // ========================================================================================
 // ===== DRAWING OVERLAY (WIRE IN PROGRESS) =====
