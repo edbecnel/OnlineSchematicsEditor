@@ -600,11 +600,6 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
         // Mark as manual so custom properties persist through topology rebuilds
         if (!j.manual) {
           j.manual = true;
-          // Remove any other junctions at the same location (duplicates)
-          ctx.junctions = ctx.junctions.filter(other => 
-            other.id === j.id || 
-            (Math.abs(other.at.x - j.at.x) >= 1e-3 || Math.abs(other.at.y - j.at.y) >= 1e-3)
-          );
         }
         ctx.redrawCanvasOnly();
         ctx.renderInspector();
@@ -671,11 +666,6 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
       // Mark as manual so custom properties persist through topology rebuilds
       if (!j.manual) {
         j.manual = true;
-        // Remove any other junctions at the same location (duplicates)
-        ctx.junctions = ctx.junctions.filter(other => 
-          other.id === j.id || 
-          (Math.abs(other.at.x - j.at.x) >= 1e-3 || Math.abs(other.at.y - j.at.y) >= 1e-3)
-        );
       }
       ctx.redrawCanvasOnly();
     };
@@ -744,16 +734,11 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     deleteBtn.textContent = 'Delete Junction';
     deleteBtn.onclick = () => {
       ctx.pushUndo();
-      if (j.manual) {
-        const jIdx = ctx.junctions.indexOf(j);
-        if (jIdx !== -1) ctx.junctions.splice(jIdx, 1);
-      } else {
-        // Mark automatic junction as suppressed
-        const jIdx = ctx.junctions.indexOf(j);
-        if (jIdx !== -1) {
-          ctx.junctions.splice(jIdx, 1);
-          ctx.junctions.push({ id: ctx.uid('junction'), at: j.at, manual: true, suppressed: true });
-        }
+      // Always mark the location as suppressed so rebuildTopology doesn't recreate an automatic junction
+      const jIdx = ctx.junctions.indexOf(j);
+      if (jIdx !== -1) {
+        ctx.junctions.splice(jIdx, 1);
+        ctx.junctions.push({ id: ctx.uid('junction'), at: j.at, manual: true, suppressed: true });
       }
       ctx.selection = { kind: null, id: null, segIndex: null };
       ctx.redrawCanvasOnly();
