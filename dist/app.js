@@ -2505,7 +2505,58 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const wireSnapThresholdPx = wireSnapThreshold * scale;
         const seg = nearestSegmentAtPoint(p, wireSnapThresholdPx);
         if (seg && seg.q) {
-            // Snap to the projected point on the wire segment
+            // When grid snap is enabled, find the nearest grid point on the wire segment
+            if (snapMode !== 'off') {
+                const a = seg.w.points[seg.idx];
+                const b = seg.w.points[seg.idx + 1];
+                // Determine snap spacing
+                const gridUnits = snapMode === 'grid'
+                    ? (CURRENT_SNAP_USER_UNITS || baseSnapUser())
+                    : baseSnapUser(); // 50mil
+                // Find all grid points along the segment and pick the closest to mouse
+                let bestGridPoint = null;
+                let bestGridDist = Infinity;
+                const EPS = 0.01; // Tolerance for axis alignment check
+                if (Math.abs(a.x - b.x) < EPS) {
+                    // Vertical segment - iterate through y grid points
+                    const x = a.x;
+                    const minY = Math.min(a.y, b.y);
+                    const maxY = Math.max(a.y, b.y);
+                    const startGrid = Math.ceil(minY / gridUnits);
+                    const endGrid = Math.floor(maxY / gridUnits);
+                    for (let i = startGrid; i <= endGrid; i++) {
+                        const y = i * gridUnits;
+                        const dist = Math.hypot(p.x - x, p.y - y);
+                        if (dist < bestGridDist) {
+                            bestGridDist = dist;
+                            bestGridPoint = { x, y };
+                        }
+                    }
+                }
+                else if (Math.abs(a.y - b.y) < EPS) {
+                    // Horizontal segment - iterate through x grid points
+                    const y = a.y;
+                    const minX = Math.min(a.x, b.x);
+                    const maxX = Math.max(a.x, b.x);
+                    const startGrid = Math.ceil(minX / gridUnits);
+                    const endGrid = Math.floor(maxX / gridUnits);
+                    for (let i = startGrid; i <= endGrid; i++) {
+                        const x = i * gridUnits;
+                        const dist = Math.hypot(p.x - x, p.y - y);
+                        if (dist < bestGridDist) {
+                            bestGridDist = dist;
+                            bestGridPoint = { x, y };
+                        }
+                    }
+                }
+                // Return the nearest grid point if found, otherwise snap the projection
+                if (bestGridPoint) {
+                    return bestGridPoint;
+                }
+                // Fallback: snap the projected point if no grid intersections found
+                return { x: snap(seg.q.x), y: snap(seg.q.y) };
+            }
+            // No grid snap or no grid point found - use projected point
             return { x: seg.q.x, y: seg.q.y };
         }
         // Finally, fall back to grid snapping
