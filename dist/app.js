@@ -3023,7 +3023,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const tgt = e.target;
             const onComp = tgt && tgt.closest('g.comp');
             const onWire = tgt && tgt.closest('#wires g');
-            if (!onComp && !onWire) {
+            const onJunction = tgt && tgt.hasAttribute && tgt.hasAttribute('data-junction-id');
+            if (!onComp && !onWire && !onJunction) {
                 beginMarqueeAt(svgPoint(e), /*startedOnEmpty=*/ true, /*preferComponents=*/ e.shiftKey);
             }
         }
