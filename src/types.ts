@@ -29,7 +29,8 @@ export type SnapMode = 'grid' | '50mil' | 'off';
 export type Selection =
   | { kind: null; id: null; segIndex: null }
   | { kind: 'component'; id: string; segIndex: null }
-  | { kind: 'wire'; id: string; segIndex: number | null };
+  | { kind: 'wire'; id: string; segIndex: number | null }
+  | { kind: 'text-label'; id: string; segIndex: null };
 
 // ====== Component Types ======
 
@@ -91,6 +92,27 @@ export interface Component {
   // Symbol library metadata (for imported components)
   libraryId?: string;        // reference to symbol library
   symbolName?: string;       // original symbol name from library
+}
+
+// ====== Text Label Types ======
+
+/**
+ * Independent text label that can be placed anywhere and edited separately.
+ * Can be associated with a component (for label/value text) or standalone.
+ */
+export interface TextLabel {
+  id: string;
+  text: string;
+  x: number;                 // absolute position on canvas
+  y: number;
+  fontSize: number;          // in pixels
+  fontFamily: string;        // font name
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  anchor: 'start' | 'middle' | 'end';
+  parentComponentId?: string; // if associated with a component, the component's id
+  labelType?: 'label' | 'value'; // which component field this represents (if any)
 }
 
 // ====== KiCad-friendly Stroke Types ======

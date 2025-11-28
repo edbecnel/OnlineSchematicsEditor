@@ -349,6 +349,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // --- Core Model Arrays ---
     let components = [];
     let wires = [];
+    let textLabels = [];
     // Nets collection: user-defined nets for manual assignment
     let nets = new Set(['default']);
     let activeNetClass = 'default';
@@ -361,6 +362,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             components: JSON.parse(JSON.stringify(components)),
             wires: JSON.parse(JSON.stringify(wires)),
             junctions: JSON.parse(JSON.stringify(junctions)),
+            textLabels: JSON.parse(JSON.stringify(textLabels)),
             selection: { ...selection },
             counters: { ...counters },
             nets: new Set(nets),
@@ -375,6 +377,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         components = JSON.parse(JSON.stringify(state.components));
         wires = JSON.parse(JSON.stringify(state.wires));
         junctions = JSON.parse(JSON.stringify(state.junctions));
+        textLabels = JSON.parse(JSON.stringify(state.textLabels || []));
         selection = { ...state.selection };
         counters = { ...state.counters };
         nets = new Set(state.nets);
@@ -397,6 +400,57 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         renderNetList();
         renderInspector();
         syncWireToolbar(); // Update wire stroke toolbar to reflect restored defaults
+    }
+    // ====== Text Label Helpers ======
+    /**
+     * Create text labels for a component (label and value text)
+     */
+    function createLabelsForComponent(comp) {
+        // Determine label position based on component type
+        let labelX = comp.x;
+        let labelY = comp.y + 46;
+        let anchor = 'middle';
+        // Transistors have label to the right
+        if (comp.type === 'npn' || comp.type === 'pnp') {
+            labelX = comp.x + 60;
+            labelY = comp.y;
+            anchor = 'start';
+        }
+        // Create label text
+        const labelId = `label-${comp.id}`;
+        textLabels.push({
+            id: labelId,
+            text: comp.label,
+            x: labelX,
+            y: labelY,
+            fontSize: 12,
+            fontFamily: 'Arial, sans-serif',
+            bold: false,
+            italic: false,
+            underline: false,
+            anchor: anchor,
+            parentComponentId: comp.id,
+            labelType: 'label'
+        });
+        // Create value text if there's a value
+        if (comp.value && comp.value.trim()) {
+            const valueY = labelY + 16; // 16px below label
+            const valueId = `value-${comp.id}`;
+            textLabels.push({
+                id: valueId,
+                text: Components.formatValue(comp),
+                x: labelX,
+                y: valueY,
+                fontSize: 12,
+                fontFamily: 'Arial, sans-serif',
+                bold: false,
+                italic: false,
+                underline: false,
+                anchor: anchor,
+                parentComponentId: comp.id,
+                labelType: 'value'
+            });
+        }
     }
     function pushUndo() {
         // Capture current state before modification
