@@ -489,6 +489,8 @@ export function renderInspector(ctx, inspector, inspectorNone) {
                 // Convert nm to mils: nm / (0.0254 * NM_PER_MM)
                 const sizeMils = parsed.nm / (0.0254 * ctx.NM_PER_MM);
                 j.size = sizeMils;
+                // Mark as manual so custom properties persist through topology rebuilds
+                j.manual = true;
                 ctx.redrawCanvasOnly();
                 ctx.renderInspector();
             }
@@ -544,6 +546,8 @@ export function renderInspector(ctx, inspector, inspectorNone) {
             const b = parseInt(m.slice(4, 6), 16);
             const a = parseFloat(opacityIn.value) || 1;
             j.color = `rgba(${r},${g},${b},${a})`;
+            // Mark as manual so custom properties persist through topology rebuilds
+            j.manual = true;
             ctx.redrawCanvasOnly();
         };
         colorIn.onfocus = ensureColorUndo;
