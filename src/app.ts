@@ -1844,6 +1844,24 @@ import {
         dot.setAttribute('stroke', 'var(--bg)');
         dot.setAttribute('stroke-width', '1');
         dot.setAttribute('data-junction-id', j.id);
+        dot.style.cursor = 'pointer';
+        
+        // Add click handler to select junction
+        dot.addEventListener('pointerdown', (e) => {
+          if (mode === 'select' || mode === 'move') {
+            selection = { kind: 'junction', id: j.id, segIndex: null };
+            renderInspector();
+            Rendering.updateSelectionOutline(selection);
+            e.stopPropagation();
+          } else if (mode === 'none') {
+            setMode('select');
+            selection = { kind: 'junction', id: j.id, segIndex: null };
+            renderInspector();
+            Rendering.updateSelectionOutline(selection);
+            e.stopPropagation();
+          }
+        });
+        
         gJunctions.appendChild(dot);
       }
     }
