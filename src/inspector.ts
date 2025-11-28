@@ -6,6 +6,7 @@ import type {
   ResistorStyle, CapacitorSubtype, DiodeSubtype
 } from './types.js';
 import type { SWP } from './topology.js';
+import { nmToUnit, unitToNm } from './conversions.js';
 
 // Helper to create a row with label and control
 export function rowPair(lbl: string, control: HTMLElement): HTMLDivElement {
@@ -147,7 +148,7 @@ export interface InspectorContext {
   activeNetClass: string;
   globalUnits: 'mm' | 'in' | 'mils';
   defaultResistorStyle: ResistorStyle;
-  junctionDotSize: 'small' | 'medium' | 'large';
+  junctionDotSize: 'smallest' | 'small' | 'default' | 'large' | 'largest';
   NET_CLASSES: Record<string, NetClass>;
   THEME: Theme;
   NM_PER_MM: number;
@@ -380,16 +381,65 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
       ctx.redrawCanvasOnly();
     })));
     
-    // Position offsets
-    wrap.appendChild(rowPair('X Offset', number(c.labelOffsetX || 0, v => {
+    // Calculate global position from offsets
+    // Start with default label position in local space
+    let labelLocalX = c.x;
+    let labelLocalY = c.y + 46;
+    if (c.type === 'npn' || c.type === 'pnp') {
+      labelLocalX = c.x + 60;
+      labelLocalY = c.y;
+    }
+    // Add user offsets
+    labelLocalX += (c.labelOffsetX || 0);
+    labelLocalY += (c.labelOffsetY || 0);
+    
+    // Rotate to get global position (labels are counter-rotated in rendering)
+    // So we don't rotate them - they stay at their local position
+    const labelGlobalX = labelLocalX;
+    const labelGlobalY = labelLocalY;
+    
+    // Convert to current units for display
+    const labelGlobalXNm = ctx.pxToNm(labelGlobalX);
+    const labelGlobalYNm = ctx.pxToNm(labelGlobalY);
+    const labelGlobalXDisplay = nmToUnit(labelGlobalXNm, ctx.globalUnits);
+    const labelGlobalYDisplay = nmToUnit(labelGlobalYNm, ctx.globalUnits);
+    
+    // Determine precision based on units
+    let precision = 2;
+    if (ctx.globalUnits === 'mils') precision = 0;
+    if (ctx.globalUnits === 'in') precision = 4;
+    
+    wrap.appendChild(rowPair(`X (${ctx.globalUnits})`, number(parseFloat(labelGlobalXDisplay.toFixed(precision)), v => {
       ctx.pushUndo();
-      c.labelOffsetX = v;
+      // Convert from current units to px global position
+      const nmValue = unitToNm(v, ctx.globalUnits);
+      const globalX = ctx.nmToPx(nmValue);
+      
+      // Calculate default position
+      let defaultX = c.x;
+      if (c.type === 'npn' || c.type === 'pnp') {
+        defaultX = c.x + 60;
+      }
+      
+      // Calculate offset
+      c.labelOffsetX = globalX - defaultX;
       ctx.redrawCanvasOnly();
     })));
     
-    wrap.appendChild(rowPair('Y Offset', number(c.labelOffsetY || 0, v => {
+    wrap.appendChild(rowPair(`Y (${ctx.globalUnits})`, number(parseFloat(labelGlobalYDisplay.toFixed(precision)), v => {
       ctx.pushUndo();
-      c.labelOffsetY = v;
+      // Convert from current units to px global position
+      const nmValue = unitToNm(v, ctx.globalUnits);
+      const globalY = ctx.nmToPx(nmValue);
+      
+      // Calculate default position
+      let defaultY = c.y + 46;
+      if (c.type === 'npn' || c.type === 'pnp') {
+        defaultY = c.y;
+      }
+      
+      // Calculate offset
+      c.labelOffsetY = globalY - defaultY;
       ctx.redrawCanvasOnly();
     })));
     
@@ -423,16 +473,63 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
       ctx.redrawCanvasOnly();
     })));
     
-    // Position offsets
-    wrap.appendChild(rowPair('X Offset', number(c.valueOffsetX || 0, v => {
+    // Calculate global position from offsets
+    // Value default position is independent of label
+    let valueLocalX = c.x;
+    let valueLocalY = c.y + 62;
+    if (c.type === 'npn' || c.type === 'pnp') {
+      valueLocalX = c.x + 60;
+      valueLocalY = c.y + 16;
+    }
+    valueLocalX += (c.valueOffsetX || 0);
+    valueLocalY += (c.valueOffsetY || 0);
+    
+    // Values don't rotate (counter-rotated in rendering)
+    const valueGlobalX = valueLocalX;
+    const valueGlobalY = valueLocalY;
+    
+    // Convert to current units for display
+    const valueGlobalXNm = ctx.pxToNm(valueGlobalX);
+    const valueGlobalYNm = ctx.pxToNm(valueGlobalY);
+    const valueGlobalXDisplay = nmToUnit(valueGlobalXNm, ctx.globalUnits);
+    const valueGlobalYDisplay = nmToUnit(valueGlobalYNm, ctx.globalUnits);
+    
+    // Determine precision based on units
+    let precision = 2;
+    if (ctx.globalUnits === 'mils') precision = 0;
+    if (ctx.globalUnits === 'in') precision = 4;
+    
+    wrap.appendChild(rowPair(`X (${ctx.globalUnits})`, number(parseFloat(valueGlobalXDisplay.toFixed(precision)), v => {
       ctx.pushUndo();
-      c.valueOffsetX = v;
+      // Convert from current units to px global position
+      const nmValue = unitToNm(v, ctx.globalUnits);
+      const globalX = ctx.nmToPx(nmValue);
+      
+      // Calculate default value position (independent of label)
+      let defaultValueX = c.x;
+      if (c.type === 'npn' || c.type === 'pnp') {
+        defaultValueX = c.x + 60;
+      }
+      
+      // Calculate offset
+      c.valueOffsetX = globalX - defaultValueX;
       ctx.redrawCanvasOnly();
     })));
     
-    wrap.appendChild(rowPair('Y Offset', number(c.valueOffsetY || 0, v => {
+    wrap.appendChild(rowPair(`Y (${ctx.globalUnits})`, number(parseFloat(valueGlobalYDisplay.toFixed(precision)), v => {
       ctx.pushUndo();
-      c.valueOffsetY = v;
+      // Convert from current units to px global position
+      const nmValue = unitToNm(v, ctx.globalUnits);
+      const globalY = ctx.nmToPx(nmValue);
+      
+      // Calculate default value position (independent of label)
+      let defaultValueY = c.y + 62;
+      if (c.type === 'npn' || c.type === 'pnp') {
+        defaultValueY = c.y + 16;
+      }
+      
+      // Calculate offset
+      c.valueOffsetY = globalY - defaultValueY;
       ctx.redrawCanvasOnly();
     })));
     

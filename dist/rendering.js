@@ -103,14 +103,19 @@ export function buildSymbolGroup(c, GRID, defaultResistorStyle) {
     if (valText) {
         const value = document.createElementNS(SVG_NS, 'text');
         value.setAttribute('data-value-for', c.id); // Mark as value text for hit detection
-        // Value positioned below label by default
-        let valueX = labelX;
-        let valueY = (c.type === 'npn' || c.type === 'pnp') ? labelY + 16 : c.y + 62;
+        // Calculate value default position independent of label
+        let valueX = c.x;
+        let valueY = c.y + 62;
+        // For transistors, position value to the right (like label)
+        if (c.type === 'npn' || c.type === 'pnp') {
+            valueX = c.x + 60;
+            valueY = c.y + 16;
+        }
         // Apply user-defined offsets if present
         if (c.valueOffsetX !== undefined)
-            valueX += c.valueOffsetX - (c.labelOffsetX || 0);
+            valueX += c.valueOffsetX;
         if (c.valueOffsetY !== undefined)
-            valueY += c.valueOffsetY - (c.labelOffsetY || 0);
+            valueY += c.valueOffsetY;
         setAttrs(value, {
             x: valueX,
             y: valueY,
@@ -319,14 +324,14 @@ function drawBattery(c, x, y, GRID, line, add) {
     line(xPos, y, c.x + pinOffset, y);
     const plusText = document.createElementNS(SVG_NS, 'text');
     setAttrs(plusText, {
-        x: xPos + 16, y: y - 8, 'text-anchor': 'start',
+        x: xNeg - 16, y: y - 8, 'text-anchor': 'end',
         'font-size': '16', 'font-weight': 'bold', fill: 'var(--component)'
     });
     plusText.textContent = '+';
     add(plusText);
     const minusText = document.createElementNS(SVG_NS, 'text');
     setAttrs(minusText, {
-        x: xNeg - 16, y: y - 8, 'text-anchor': 'end',
+        x: xPos + 16, y: y - 8, 'text-anchor': 'start',
         'font-size': '16', 'font-weight': 'bold', fill: 'var(--component)'
     });
     minusText.textContent = '−';
@@ -442,7 +447,7 @@ export function ensureStroke(wire) {
  */
 export function createJunctionDot(j, junctionDotSize, NET_CLASSES, rgba01ToCssFn) {
     const nc = NET_CLASSES[j.netId || 'default'] || NET_CLASSES.default;
-    const sizeMils = junctionDotSize === 'small' ? 50 : junctionDotSize === 'medium' ? 70 : 90;
+    const sizeMils = junctionDotSize === 'smallest' ? 15 : junctionDotSize === 'small' ? 30 : junctionDotSize === 'default' ? 40 : junctionDotSize === 'large' ? 50 : 65;
     const diameterMm = sizeMils * 0.0254;
     const radiusMm = diameterMm / 2;
     const radiusPx = Math.max(1, radiusMm * (100 / 25.4));
@@ -545,7 +550,7 @@ export function renderDrawing(gDrawing, drawingPoints, cursor, orthoMode) {
  * Create preview junction dot shown while drawing wire.
  */
 export function createPreviewJunctionDot(at, junctionDotSize) {
-    const sizeMils = junctionDotSize === 'small' ? 50 : junctionDotSize === 'medium' ? 70 : 90;
+    const sizeMils = junctionDotSize === 'smallest' ? 15 : junctionDotSize === 'small' ? 30 : junctionDotSize === 'default' ? 40 : junctionDotSize === 'large' ? 50 : 65;
     const diameterMm = sizeMils * 0.0254;
     const radiusMm = diameterMm / 2;
     const radiusPx = Math.max(1, radiusMm * (100 / 25.4));

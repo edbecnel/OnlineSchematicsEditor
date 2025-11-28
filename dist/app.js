@@ -66,7 +66,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // Junction dots visibility toggle state (persisted)
     let showJunctionDots = (localStorage.getItem('junctionDots.visible') !== 'false');
     // Junction dot size setting (persisted): 'small' | 'medium' | 'large'
-    let junctionDotSize = localStorage.getItem('junctionDots.size') || 'small';
+    let junctionDotSize = localStorage.getItem('junctionDots.size') || 'default';
     // Tracking mode: when true, connection hints are enabled (persisted)
     let trackingMode = (localStorage.getItem('tracking.mode') !== 'false');
     // Default resistor style for project: 'ansi' (US zigzag) or 'iec' (rectangle) - persisted
@@ -350,6 +350,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     let components = [];
     let wires = [];
     let textLabels = [];
+    // --- Text Label Drag State (persists across redraws) ---
+    let textDragState = null;
     // Nets collection: user-defined nets for manual assignment
     let nets = new Set(['default']);
     let activeNetClass = 'default';
@@ -1375,6 +1377,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         updateComponentDOM(c);
                         updateCoordinateDisplay(c.x, c.y);
                         updateCoordinateInputs(c.x, c.y);
+                        renderInspector();
                     }
                 }
                 else {
@@ -1389,6 +1392,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         updateComponentDOM(c);
                         updateCoordinateDisplay(c.x, c.y);
                         updateCoordinateInputs(c.x, c.y);
+                        renderInspector();
                     }
                 }
             }
@@ -1404,6 +1408,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     updateComponentDOM(c);
                     updateCoordinateDisplay(c.x, c.y);
                     updateCoordinateInputs(c.x, c.y);
+                    renderInspector();
                 }
                 else {
                     let ny = snap(p.y + dragOff.y);
@@ -1416,6 +1421,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     updateComponentDOM(c);
                     updateCoordinateDisplay(c.x, c.y);
                     updateCoordinateInputs(c.x, c.y);
+                    renderInspector();
                 }
             }
             else {
@@ -1428,6 +1434,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     updateComponentDOM(c);
                     updateCoordinateDisplay(c.x, c.y);
                     updateCoordinateInputs(c.x, c.y);
+                    renderInspector();
                 }
             }
         });
@@ -1499,8 +1506,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const labelText = symbolGroup.querySelector(`[data-label-for="${c.id}"]`);
         const valueText = symbolGroup.querySelector(`[data-value-for="${c.id}"]`);
         if (labelText) {
-            let labelDragging = false;
-            let labelDragStart = { x: 0, y: 0 };
             labelText.addEventListener('pointerdown', (e) => {
                 if (mode === 'delete')
                     return;
@@ -1521,9 +1526,15 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }
                 if (mode !== 'move')
                     return;
-                labelDragging = true;
                 const pt = svgPoint(e);
-                labelDragStart = { x: pt.x, y: pt.y };
+                textDragState = {
+                    kind: 'label',
+                    componentId: c.id,
+                    startX: pt.x,
+                    startY: pt.y,
+                    startOffsetX: c.labelOffsetX || 0,
+                    startOffsetY: c.labelOffsetY || 0
+                };
                 pushUndo();
                 if (typeof labelText.setPointerCapture === 'function' && e.isPrimary) {
                     try {
@@ -1533,23 +1544,39 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }
             });
             labelText.addEventListener('pointermove', (e) => {
-                if (!labelDragging)
+                if (!textDragState || textDragState.kind !== 'label' || textDragState.componentId !== c.id)
                     return;
                 const pt = svgPoint(e);
-                const dx = pt.x - labelDragStart.x;
-                const dy = pt.y - labelDragStart.y;
-                c.labelOffsetX = (c.labelOffsetX || 0) + dx;
-                c.labelOffsetY = (c.labelOffsetY || 0) + dy;
-                labelDragStart = { x: pt.x, y: pt.y };
+                const dx = pt.x - textDragState.startX;
+                const dy = pt.y - textDragState.startY;
+                // Transform delta to component's local coordinate system (inverse rotation)
+                const radians = -(c.rot * Math.PI / 180);
+                const cos = Math.cos(radians);
+                const sin = Math.sin(radians);
+                const localDx = dx * cos - dy * sin;
+                const localDy = dx * sin + dy * cos;
+                // Snap to 50 mil grid (GRID/5 = 5px)
+                const snapSize = GRID / 5;
+                c.labelOffsetX = Math.round((textDragState.startOffsetX + localDx) / snapSize) * snapSize;
+                c.labelOffsetY = Math.round((textDragState.startOffsetY + localDy) / snapSize) * snapSize;
                 redrawCanvasOnly();
+                Rendering.updateSelectionOutline(selection); // Reapply selection highlighting
+                renderInspector(); // Update inspector to show live offset values
             });
-            labelText.addEventListener('pointerup', () => {
-                labelDragging = false;
+            labelText.addEventListener('pointerup', (e) => {
+                if (textDragState && textDragState.kind === 'label' && textDragState.componentId === c.id) {
+                    if (typeof labelText.releasePointerCapture === 'function' && e.isPrimary) {
+                        try {
+                            labelText.releasePointerCapture(e.pointerId);
+                        }
+                        catch (_) { }
+                    }
+                    textDragState = null;
+                    renderInspector(); // Update inspector to show final offset values
+                }
             });
         }
         if (valueText) {
-            let valueDragging = false;
-            let valueDragStart = { x: 0, y: 0 };
             valueText.addEventListener('pointerdown', (e) => {
                 if (mode === 'delete')
                     return;
@@ -1570,9 +1597,15 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }
                 if (mode !== 'move')
                     return;
-                valueDragging = true;
                 const pt = svgPoint(e);
-                valueDragStart = { x: pt.x, y: pt.y };
+                textDragState = {
+                    kind: 'value',
+                    componentId: c.id,
+                    startX: pt.x,
+                    startY: pt.y,
+                    startOffsetX: c.valueOffsetX || 0,
+                    startOffsetY: c.valueOffsetY || 0
+                };
                 pushUndo();
                 if (typeof valueText.setPointerCapture === 'function' && e.isPrimary) {
                     try {
@@ -1582,18 +1615,36 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }
             });
             valueText.addEventListener('pointermove', (e) => {
-                if (!valueDragging)
+                if (!textDragState || textDragState.kind !== 'value' || textDragState.componentId !== c.id)
                     return;
                 const pt = svgPoint(e);
-                const dx = pt.x - valueDragStart.x;
-                const dy = pt.y - valueDragStart.y;
-                c.valueOffsetX = (c.valueOffsetX || 0) + dx;
-                c.valueOffsetY = (c.valueOffsetY || 0) + dy;
-                valueDragStart = { x: pt.x, y: pt.y };
+                const dx = pt.x - textDragState.startX;
+                const dy = pt.y - textDragState.startY;
+                // Transform delta to component's local coordinate system (inverse rotation)
+                const radians = -(c.rot * Math.PI / 180);
+                const cos = Math.cos(radians);
+                const sin = Math.sin(radians);
+                const localDx = dx * cos - dy * sin;
+                const localDy = dx * sin + dy * cos;
+                // Snap to 50 mil grid (GRID/5 = 5px)
+                const snapSize = GRID / 5;
+                c.valueOffsetX = Math.round((textDragState.startOffsetX + localDx) / snapSize) * snapSize;
+                c.valueOffsetY = Math.round((textDragState.startOffsetY + localDy) / snapSize) * snapSize;
                 redrawCanvasOnly();
+                Rendering.updateSelectionOutline(selection); // Reapply selection highlighting
+                renderInspector(); // Update inspector to show live offset values
             });
-            valueText.addEventListener('pointerup', () => {
-                valueDragging = false;
+            valueText.addEventListener('pointerup', (e) => {
+                if (textDragState && textDragState.kind === 'value' && textDragState.componentId === c.id) {
+                    if (typeof valueText.releasePointerCapture === 'function' && e.isPrimary) {
+                        try {
+                            valueText.releasePointerCapture(e.pointerId);
+                        }
+                        catch (_) { }
+                    }
+                    textDragState = null;
+                    renderInspector(); // Update inspector to show final offset values
+                }
             });
         }
         return g;
@@ -1688,8 +1739,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 if (j.suppressed)
                     continue;
                 const nc = NET_CLASSES[j.netId || 'default'] || NET_CLASSES.default;
-                // Custom sizes for better visibility: Small=50mils, Medium=70mils, Large=90mils (diameter)
-                const sizeMils = junctionDotSize === 'small' ? 50 : junctionDotSize === 'medium' ? 70 : 90;
+                // Custom sizes for better visibility: Smallest=15mils, Small=30mils, Default=40mils, Large=50mils, Largest=65mils (diameter)
+                const sizeMils = junctionDotSize === 'smallest' ? 15 : junctionDotSize === 'small' ? 30 : junctionDotSize === 'default' ? 40 : junctionDotSize === 'large' ? 50 : 65;
                 const diameterMm = sizeMils * 0.0254; // Convert mils to mm
                 const radiusMm = diameterMm / 2;
                 // Use fractional pixels for better differentiation (SVG supports sub-pixel rendering)
@@ -3366,15 +3417,22 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     pushUndo();
                     const comp = components.find(c => c.id === selection.id);
                     if (comp) {
+                        // Transform delta to component's local coordinate system (inverse rotation)
+                        const radians = -(comp.rot * Math.PI / 180);
+                        const cos = Math.cos(radians);
+                        const sin = Math.sin(radians);
+                        const localDx = dx * cos - dy * sin;
+                        const localDy = dx * sin + dy * cos;
                         if (selection.kind === 'label') {
-                            comp.labelOffsetX = (comp.labelOffsetX || 0) + dx;
-                            comp.labelOffsetY = (comp.labelOffsetY || 0) + dy;
+                            comp.labelOffsetX = (comp.labelOffsetX || 0) + localDx;
+                            comp.labelOffsetY = (comp.labelOffsetY || 0) + localDy;
                         }
                         else if (selection.kind === 'value') {
-                            comp.valueOffsetX = (comp.valueOffsetX || 0) + dx;
-                            comp.valueOffsetY = (comp.valueOffsetY || 0) + dy;
+                            comp.valueOffsetX = (comp.valueOffsetX || 0) + localDx;
+                            comp.valueOffsetY = (comp.valueOffsetY || 0) + localDy;
                         }
                         redrawCanvasOnly();
+                        Rendering.updateSelectionOutline(selection); // Reapply selection highlighting
                         renderInspector(); // Update inspector to show new offset values
                     }
                 }
@@ -3676,7 +3734,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             }
                         }
                         if (intersection) {
-                            const sizeMils = junctionDotSize === 'small' ? 50 : junctionDotSize === 'medium' ? 70 : 90;
+                            const sizeMils = junctionDotSize === 'smallest' ? 15 : junctionDotSize === 'small' ? 30 : junctionDotSize === 'default' ? 40 : junctionDotSize === 'large' ? 50 : 65;
                             const diameterMm = sizeMils * 0.0254;
                             const radiusMm = diameterMm / 2;
                             const radiusPx = Math.max(1, radiusMm * (100 / 25.4));

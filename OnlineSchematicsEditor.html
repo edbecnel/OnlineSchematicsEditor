@@ -192,17 +192,14 @@
     .junction-size-option {
       flex: 1;
       display: flex;
-      flex-direction: column;
       align-items: center;
-      gap: .25rem;
-      padding: .4rem .3rem;
+      justify-content: center;
+      padding: .3rem;
       min-width: 0;
-      font-size: .8rem;
     }
 
     .junction-size-option svg {
       display: block;
-      margin: 0 auto;
     }
 
     .junction-size-option.selected {
@@ -1150,24 +1147,32 @@
           <div class="row"><label>Junction Dot Size</label></div>
           <div class="row">
             <div id="junctionDotSizeSelect" class="junction-size-selector">
-              <button type="button" class="junction-size-option selected" data-size="small"
-                title="Small (30 mils / 0.762mm)">
-                <svg width="32" height="20" viewBox="0 0 32 20">
-                  <circle cx="16" cy="10" r="3.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+              <button type="button" class="junction-size-option" data-size="smallest"
+                title="Smallest (15 mils / 0.381mm)">
+                <svg width="24" height="24" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
                 </svg>
-                <span>Small</span>
               </button>
-              <button type="button" class="junction-size-option" data-size="medium" title="Medium (40 mils / 1.016mm)">
-                <svg width="32" height="20" viewBox="0 0 32 20">
-                  <circle cx="16" cy="10" r="4.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+              <button type="button" class="junction-size-option" data-size="small"
+                title="Small (30 mils / 0.762mm)">
+                <svg width="24" height="24" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="3.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
                 </svg>
-                <span>Medium</span>
+              </button>
+              <button type="button" class="junction-size-option selected" data-size="default" title="Default (40 mils / 1.016mm)">
+                <svg width="24" height="24" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="4.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+                </svg>
               </button>
               <button type="button" class="junction-size-option" data-size="large" title="Large (50 mils / 1.27mm)">
-                <svg width="32" height="20" viewBox="0 0 32 20">
-                  <circle cx="16" cy="10" r="5.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+                <svg width="24" height="24" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="5.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
                 </svg>
-                <span>Large</span>
+              </button>
+              <button type="button" class="junction-size-option" data-size="largest" title="Largest (65 mils / 1.651mm)">
+                <svg width="24" height="24" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="6.5" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+                </svg>
               </button>
             </div>
           </div>
