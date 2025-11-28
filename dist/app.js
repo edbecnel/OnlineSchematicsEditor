@@ -6242,8 +6242,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         }
         topology = { nodes: [...nodes.values()], edges, swps, compToSwp };
         // --- JUNCTION LOGIC: Add junctions for wire-to-wire T-junctions (including at component pins) ---
-        // Preserve manually placed junctions, clear auto-generated ones
+        // Preserve manually placed junctions, keep automatic junctions for ID reuse
         const manualJunctions = junctions.filter(j => j.manual);
+        const oldAutomaticJunctions = junctions.filter(j => !j.manual);
         junctions = [...manualJunctions];
         // Build a set of all component pin positions (rounded)
         const pinKeys = new Set();
@@ -6291,9 +6292,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             break;
                         }
                     }
-                    // Add automatic junction without size/color overrides (will use netclass defaults at render time)
+                    // Check if an automatic junction already exists at this location (preserve its ID)
+                    const existingAuto = oldAutomaticJunctions.find(j => Math.abs(j.at.x - node.x) < 1e-3 && Math.abs(j.at.y - node.y) < 1e-3);
+                    // Add automatic junction, reusing ID if one existed before
                     junctions.push({
-                        id: State.uid('junction'),
+                        id: existingAuto ? existingAuto.id : State.uid('junction'),
                         at: { x: node.x, y: node.y },
                         netId
                     });
