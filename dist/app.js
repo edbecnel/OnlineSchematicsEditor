@@ -2879,17 +2879,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             if (idx !== -1) {
                 const junction = junctions[idx];
                 pushUndo();
-                // If it's a manual junction, just remove it
-                // If it's an automatic junction, mark the location as suppressed
-                if (junction.manual) {
-                    junctions.splice(idx, 1);
-                }
-                else {
-                    // Remove the automatic junction and add a suppressed marker at this location
-                    junctions.splice(idx, 1);
-                    // Add a manual junction with suppressed flag to prevent auto-recreation
-                    junctions.push({ id: State.uid('junction'), at: junction.at, manual: true, suppressed: true });
-                }
+                // Always add suppressed marker to prevent automatic junction from being recreated
+                junctions.splice(idx, 1);
+                junctions.push({ id: State.uid('junction'), at: junction.at, manual: true, suppressed: true });
                 redraw();
             }
             // Stay in delete-junction mode to allow deleting multiple dots
