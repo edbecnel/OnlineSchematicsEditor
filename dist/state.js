@@ -25,7 +25,8 @@ export let counters = {
     ground: 1,
     battery: 1,
     ac: 1,
-    wire: 1
+    wire: 1,
+    junction: 1
 };
 /**
  * Generate unique ID with prefix

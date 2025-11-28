@@ -39,6 +39,7 @@ export type CounterMap = {
   battery: number;
   ac: number;
   wire: number;
+  junction: number;
 };
 
 export let counters: CounterMap = {
@@ -51,7 +52,8 @@ export let counters: CounterMap = {
   ground: 1,
   battery: 1,
   ac: 1,
-  wire: 1
+  wire: 1,
+  junction: 1
 };
 
 /**
