@@ -2322,6 +2322,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const juncs = [];
         for (let i = 0; i < junctions.length; i++) {
             const j = junctions[i];
+            // Skip suppressed junctions (invisible markers)
+            if (j.suppressed)
+                continue;
             if (inRect(j.at, r)) {
                 const d2 = (j.at.x - cx) * (j.at.x - cx) + (j.at.y - cy) * (j.at.y - cy);
                 juncs.push({ j, d2 });
