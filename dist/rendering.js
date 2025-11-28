@@ -65,35 +65,64 @@ export function buildSymbolGroup(c, GRID, defaultResistorStyle) {
             drawGround(x, y, line);
             break;
     }
-    // Label and voltage text
+    // Label text (with optional offset for independent positioning)
     const label = document.createElementNS(SVG_NS, 'text');
+    label.setAttribute('data-label-for', c.id); // Mark as label text for hit detection
     const rot = ((c.rot % 360) + 360) % 360;
+    // Calculate default label position based on component type
+    let labelX = c.x;
+    let labelY = c.y + 46;
+    let labelAnchor = 'middle';
     // For transistors, position label to the right (in local rotated space)
     if (c.type === 'npn' || c.type === 'pnp') {
-        // Position in local space, counter-rotate text around its own position
-        setAttrs(label, {
-            x: c.x + 60,
-            y: c.y,
-            'text-anchor': 'start',
-            'dominant-baseline': 'middle',
-            'font-size': '12',
-            fill: 'var(--ink)',
-            transform: `rotate(${-c.rot} ${c.x + 60} ${c.y})`
-        });
+        labelX = c.x + 60;
+        labelY = c.y;
+        labelAnchor = 'start';
     }
-    else {
-        setAttrs(label, {
-            x: c.x,
-            y: c.y + 46,
-            'text-anchor': 'middle',
-            'font-size': '12',
-            fill: 'var(--ink)',
-            transform: `rotate(${-c.rot} ${c.x} ${c.y + 46})`
-        });
-    }
-    const valText = formatValue(c);
-    label.textContent = valText ? `${c.label} (${valText})` : c.label;
+    // Apply user-defined offsets if present
+    if (c.labelOffsetX !== undefined)
+        labelX += c.labelOffsetX;
+    if (c.labelOffsetY !== undefined)
+        labelY += c.labelOffsetY;
+    setAttrs(label, {
+        x: labelX,
+        y: labelY,
+        'text-anchor': labelAnchor,
+        'dominant-baseline': c.type === 'npn' || c.type === 'pnp' ? 'middle' : 'auto',
+        'font-size': '12',
+        fill: 'var(--ink)',
+        transform: `rotate(${-c.rot} ${labelX} ${labelY})`,
+        'pointer-events': 'all',
+        'cursor': 'move'
+    });
+    label.textContent = c.label;
     gg.appendChild(label);
+    // Value text (separate from label, also with optional offset)
+    const valText = formatValue(c);
+    if (valText) {
+        const value = document.createElementNS(SVG_NS, 'text');
+        value.setAttribute('data-value-for', c.id); // Mark as value text for hit detection
+        // Value positioned below label by default
+        let valueX = labelX;
+        let valueY = (c.type === 'npn' || c.type === 'pnp') ? labelY + 16 : c.y + 62;
+        // Apply user-defined offsets if present
+        if (c.valueOffsetX !== undefined)
+            valueX += c.valueOffsetX - (c.labelOffsetX || 0);
+        if (c.valueOffsetY !== undefined)
+            valueY += c.valueOffsetY - (c.labelOffsetY || 0);
+        setAttrs(value, {
+            x: valueX,
+            y: valueY,
+            'text-anchor': labelAnchor,
+            'font-size': '12',
+            fill: 'var(--ink)',
+            transform: `rotate(${-c.rot} ${valueX} ${valueY})`,
+            'pointer-events': 'all',
+            'cursor': 'move'
+        });
+        value.textContent = valText;
+        gg.appendChild(value);
+    }
     if (c.type === 'battery' || c.type === 'ac') {
         const vtxt = document.createElementNS(SVG_NS, 'text');
         setAttrs(vtxt, {
@@ -455,6 +484,19 @@ export function updateSelectionOutline(selection) {
         const id = g.getAttribute('data-id');
         const on = selection.kind === 'component' && selection.id === id;
         g.classList.toggle('selected', !!on);
+        // Highlight label or value text if selected
+        const labelText = g.querySelector(`[data-label-for="${id}"]`);
+        const valueText = g.querySelector(`[data-value-for="${id}"]`);
+        if (labelText) {
+            const labelSelected = selection.kind === 'label' && selection.id === id;
+            labelText.style.fill = labelSelected ? 'var(--accent)' : 'var(--ink)';
+            labelText.style.fontWeight = labelSelected ? 'bold' : 'normal';
+        }
+        if (valueText) {
+            const valueSelected = selection.kind === 'value' && selection.id === id;
+            valueText.style.fill = valueSelected ? 'var(--accent)' : 'var(--ink)';
+            valueText.style.fontWeight = valueSelected ? 'bold' : 'normal';
+        }
     });
 }
 // ========================================================================================

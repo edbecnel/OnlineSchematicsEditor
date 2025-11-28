@@ -366,6 +366,92 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     return;
   }
 
+  // LABEL TEXT INSPECTOR
+  if (ctx.selection.kind === 'label') {
+    const c = ctx.components.find(x => x.id === ctx.selection.id);
+    inspectorNone.style.display = c ? 'none' : 'block';
+    if (!c) return;
+    const wrap = document.createElement('div');
+
+    wrap.appendChild(rowPair('Component', text(c.id, true)));
+    wrap.appendChild(rowPair('Label Text', input(c.label, v => {
+      ctx.pushUndo();
+      c.label = v;
+      ctx.redrawCanvasOnly();
+    })));
+    
+    // Position offsets
+    wrap.appendChild(rowPair('X Offset', number(c.labelOffsetX || 0, v => {
+      ctx.pushUndo();
+      c.labelOffsetX = v;
+      ctx.redrawCanvasOnly();
+    })));
+    
+    wrap.appendChild(rowPair('Y Offset', number(c.labelOffsetY || 0, v => {
+      ctx.pushUndo();
+      c.labelOffsetY = v;
+      ctx.redrawCanvasOnly();
+    })));
+    
+    // Reset button
+    const resetBtn = document.createElement('button');
+    resetBtn.textContent = 'Reset Position';
+    resetBtn.onclick = () => {
+      ctx.pushUndo();
+      c.labelOffsetX = 0;
+      c.labelOffsetY = 0;
+      ctx.redrawCanvasOnly();
+      ctx.renderInspector();
+    };
+    wrap.appendChild(resetBtn);
+
+    inspector.appendChild(wrap);
+    return;
+  }
+
+  // VALUE TEXT INSPECTOR
+  if (ctx.selection.kind === 'value') {
+    const c = ctx.components.find(x => x.id === ctx.selection.id);
+    inspectorNone.style.display = c ? 'none' : 'block';
+    if (!c) return;
+    const wrap = document.createElement('div');
+
+    wrap.appendChild(rowPair('Component', text(c.id, true)));
+    wrap.appendChild(rowPair('Value Text', input(c.value || '', v => {
+      ctx.pushUndo();
+      c.value = v;
+      ctx.redrawCanvasOnly();
+    })));
+    
+    // Position offsets
+    wrap.appendChild(rowPair('X Offset', number(c.valueOffsetX || 0, v => {
+      ctx.pushUndo();
+      c.valueOffsetX = v;
+      ctx.redrawCanvasOnly();
+    })));
+    
+    wrap.appendChild(rowPair('Y Offset', number(c.valueOffsetY || 0, v => {
+      ctx.pushUndo();
+      c.valueOffsetY = v;
+      ctx.redrawCanvasOnly();
+    })));
+    
+    // Reset button
+    const resetBtn = document.createElement('button');
+    resetBtn.textContent = 'Reset Position';
+    resetBtn.onclick = () => {
+      ctx.pushUndo();
+      c.valueOffsetX = 0;
+      c.valueOffsetY = 0;
+      ctx.redrawCanvasOnly();
+      ctx.renderInspector();
+    };
+    wrap.appendChild(resetBtn);
+
+    inspector.appendChild(wrap);
+    return;
+  }
+
   // WIRE INSPECTOR
   if (ctx.selection.kind === 'wire') {
     const w = ctx.wires.find(x => x.id === ctx.selection.id);

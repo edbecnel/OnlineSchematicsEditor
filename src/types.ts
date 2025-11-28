@@ -30,7 +30,8 @@ export type Selection =
   | { kind: null; id: null; segIndex: null }
   | { kind: 'component'; id: string; segIndex: null }
   | { kind: 'wire'; id: string; segIndex: number | null }
-  | { kind: 'text-label'; id: string; segIndex: null };
+  | { kind: 'label'; id: string; segIndex: null }    // component label text
+  | { kind: 'value'; id: string; segIndex: null };   // component value text
 
 // ====== Component Types ======
 
@@ -74,7 +75,11 @@ export interface Component {
   y: number;
   rot: number;               // degrees, multiples of 90
   label: string;
+  labelOffsetX?: number;     // label X offset from default position
+  labelOffsetY?: number;     // label Y offset from default position
   value?: string;
+  valueOffsetX?: number;     // value X offset from default position
+  valueOffsetY?: number;     // value Y offset from default position
   props?: {
     unit?: string;           // Ω / F / H symbol for R/C/L
     subtype?: DiodeSubtype;  // diode subtype

@@ -1564,7 +1564,103 @@ import {
     g.addEventListener('pointercancel', () => { dragging = false; });
 
     // draw symbol via helper
-    g.appendChild(Rendering.buildSymbolGroup(c, GRID, defaultResistorStyle));
+    const symbolGroup = Rendering.buildSymbolGroup(c, GRID, defaultResistorStyle);
+    g.appendChild(symbolGroup);
+    
+    // Add click handlers for label and value text for independent selection/movement
+    const labelText = symbolGroup.querySelector(`[data-label-for="${c.id}"]`) as SVGTextElement;
+    const valueText = symbolGroup.querySelector(`[data-value-for="${c.id}"]`) as SVGTextElement;
+    
+    if (labelText) {
+      let labelDragging = false;
+      let labelDragStart = { x: 0, y: 0 };
+      
+      labelText.addEventListener('pointerdown', (e) => {
+        if (mode === 'delete') return;
+        if (mode === 'none') setMode('select');
+        if (!(mode === 'select' || mode === 'move')) return;
+        if (e.button !== 0) return;
+        
+        e.stopPropagation(); // Prevent component selection
+        selection = { kind: 'label', id: c.id, segIndex: null };
+        renderInspector(); 
+        Rendering.updateSelectionOutline(selection);
+        
+        if (mode !== 'move') return;
+        
+        labelDragging = true;
+        const pt = svgPoint(e);
+        labelDragStart = { x: pt.x, y: pt.y };
+        pushUndo();
+        
+        if (typeof labelText.setPointerCapture === 'function' && e.isPrimary) {
+          try { labelText.setPointerCapture(e.pointerId); } catch (_) { }
+        }
+      });
+      
+      labelText.addEventListener('pointermove', (e) => {
+        if (!labelDragging) return;
+        const pt = svgPoint(e);
+        const dx = pt.x - labelDragStart.x;
+        const dy = pt.y - labelDragStart.y;
+        
+        c.labelOffsetX = (c.labelOffsetX || 0) + dx;
+        c.labelOffsetY = (c.labelOffsetY || 0) + dy;
+        
+        labelDragStart = { x: pt.x, y: pt.y };
+        redrawCanvasOnly();
+      });
+      
+      labelText.addEventListener('pointerup', () => {
+        labelDragging = false;
+      });
+    }
+    
+    if (valueText) {
+      let valueDragging = false;
+      let valueDragStart = { x: 0, y: 0 };
+      
+      valueText.addEventListener('pointerdown', (e) => {
+        if (mode === 'delete') return;
+        if (mode === 'none') setMode('select');
+        if (!(mode === 'select' || mode === 'move')) return;
+        if (e.button !== 0) return;
+        
+        e.stopPropagation(); // Prevent component selection
+        selection = { kind: 'value', id: c.id, segIndex: null };
+        renderInspector();
+        Rendering.updateSelectionOutline(selection);
+        
+        if (mode !== 'move') return;
+        
+        valueDragging = true;
+        const pt = svgPoint(e);
+        valueDragStart = { x: pt.x, y: pt.y };
+        pushUndo();
+        
+        if (typeof valueText.setPointerCapture === 'function' && e.isPrimary) {
+          try { valueText.setPointerCapture(e.pointerId); } catch (_) { }
+        }
+      });
+      
+      valueText.addEventListener('pointermove', (e) => {
+        if (!valueDragging) return;
+        const pt = svgPoint(e);
+        const dx = pt.x - valueDragStart.x;
+        const dy = pt.y - valueDragStart.y;
+        
+        c.valueOffsetX = (c.valueOffsetX || 0) + dx;
+        c.valueOffsetY = (c.valueOffsetY || 0) + dy;
+        
+        valueDragStart = { x: pt.x, y: pt.y };
+        redrawCanvasOnly();
+      });
+      
+      valueText.addEventListener('pointerup', () => {
+        valueDragging = false;
+      });
+    }
+    
     return g;
   }
 
