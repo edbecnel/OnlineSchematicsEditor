@@ -2789,14 +2789,16 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     bestPt = { x, y };
                 }
             }
-            // Remove any suppressed junction at this location (user is manually placing one)
-            junctions = junctions.filter(j => {
-                const isSameLocation = Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3;
-                return !(isSameLocation && j.suppressed);
-            });
-            // Add to junctions if not already present (excluding suppressed ones which we just removed)
-            if (!junctions.some(j => Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3)) {
+            // Remove any existing junction at this location (suppressed or automatic)
+            // When user manually places a junction, it should replace any automatic one
+            const existingJunction = junctions.find(j => Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3);
+            // Only add junction if none exists, or if existing one is automatic/suppressed (replace it)
+            if (!existingJunction || !existingJunction.manual || existingJunction.suppressed) {
                 pushUndo();
+                // Remove existing automatic or suppressed junction
+                if (existingJunction) {
+                    junctions = junctions.filter(j => j.id !== existingJunction.id);
+                }
                 // Determine the color for the junction dot
                 let junctionColor = undefined;
                 // Check if we're on a wire endpoint or segment
