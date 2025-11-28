@@ -3314,17 +3314,19 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }
             }
         }
-        // Arrow-key move when component is selected
-        if (selection.kind === 'component' && e.key.startsWith('Arrow')) {
+        // Arrow-key move when component, label, or value is selected
+        if ((selection.kind === 'component' || selection.kind === 'label' || selection.kind === 'value') && e.key.startsWith('Arrow')) {
             // If in Select mode, automatically switch to Move mode
             if (mode === 'select') {
                 setMode('move');
-                // Show coordinate inputs immediately after switching to Move mode
-                const comp = components.find(c => c.id === selection.id);
-                if (comp) {
-                    updateCoordinateDisplay(comp.x, comp.y);
-                    updateCoordinateInputs(comp.x, comp.y);
-                    showCoordinateInputs();
+                // Show coordinate inputs immediately after switching to Move mode (only for components)
+                if (selection.kind === 'component') {
+                    const comp = components.find(c => c.id === selection.id);
+                    if (comp) {
+                        updateCoordinateDisplay(comp.x, comp.y);
+                        updateCoordinateInputs(comp.x, comp.y);
+                        showCoordinateInputs();
+                    }
                 }
             }
             // Calculate step size:
@@ -3349,12 +3351,32 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 dy = step;
             if (dx !== 0 || dy !== 0) {
                 e.preventDefault();
-                moveSelectedBy(dx, dy);
-                // Update coordinate display and inputs after move
-                const comp = components.find(c => c.id === selection.id);
-                if (comp) {
-                    updateCoordinateDisplay(comp.x, comp.y);
-                    updateCoordinateInputs(comp.x, comp.y);
+                // Move label or value text (update offsets)
+                if (selection.kind === 'label' || selection.kind === 'value') {
+                    pushUndo();
+                    const comp = components.find(c => c.id === selection.id);
+                    if (comp) {
+                        if (selection.kind === 'label') {
+                            comp.labelOffsetX = (comp.labelOffsetX || 0) + dx;
+                            comp.labelOffsetY = (comp.labelOffsetY || 0) + dy;
+                        }
+                        else if (selection.kind === 'value') {
+                            comp.valueOffsetX = (comp.valueOffsetX || 0) + dx;
+                            comp.valueOffsetY = (comp.valueOffsetY || 0) + dy;
+                        }
+                        redrawCanvasOnly();
+                        renderInspector(); // Update inspector to show new offset values
+                    }
+                }
+                else {
+                    // Move component
+                    moveSelectedBy(dx, dy);
+                    // Update coordinate display and inputs after move
+                    const comp = components.find(c => c.id === selection.id);
+                    if (comp) {
+                        updateCoordinateDisplay(comp.x, comp.y);
+                        updateCoordinateInputs(comp.x, comp.y);
+                    }
                 }
             }
         }
