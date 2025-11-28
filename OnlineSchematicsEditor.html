@@ -24,11 +24,12 @@
       --pin: #93c5fd;
       --component: #e2e8f0;
       --ghost: #64748b;
+      --light-bg: #e8e8e8;
     }
 
     /* Light theme */
     [data-theme="light"] {
-      --bg: #e8e8e8;
+      --bg: var(--light-bg);
       --panel: #f5f5f5;
       --ink: #333333;
       --muted: #666666;
@@ -211,6 +212,21 @@
 
     [data-theme="light"] .junction-size-option.selected {
       background: rgba(59, 130, 246, 0.1);
+    }
+
+    .color-swatch {
+      transition: all 0.2s ease;
+    }
+
+    .color-swatch:hover {
+      transform: scale(1.1);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .color-swatch.selected {
+      border-color: var(--accent) !important;
+      border-width: 3px !important;
+      box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
     }
 
     header .group {
@@ -1156,6 +1172,21 @@
             </div>
           </div>
           <div class="row hint">Visual size of junction dots</div>
+          <div class="row"><label>Light Theme Background</label></div>
+          <div class="row">
+            <div id="lightBgColorSwatches" style="display: flex; gap: 0.25rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+              <button type="button" class="color-swatch" data-color="#e8e8e8" data-permanent="true" title="Default Gray" style="background: #e8e8e8; width: 32px; height: 32px; border: 2px solid var(--muted); border-radius: 4px; cursor: pointer;"></button>
+              <button type="button" class="color-swatch" data-color="#FFFEDF" data-permanent="true" title="Warm Cream" style="background: #FFFEDF; width: 32px; height: 32px; border: 2px solid var(--muted); border-radius: 4px; cursor: pointer;"></button>
+              <button type="button" class="color-swatch" data-color="#ffffff" data-permanent="true" title="Pure White" style="background: #ffffff; width: 32px; height: 32px; border: 2px solid var(--muted); border-radius: 4px; cursor: pointer;"></button>
+              <button type="button" class="color-swatch" data-color="#f0f4f8" data-permanent="true" title="Cool Blue" style="background: #f0f4f8; width: 32px; height: 32px; border: 2px solid var(--muted); border-radius: 4px; cursor: pointer;"></button>
+              <button type="button" class="color-swatch" data-color="#f5f5dc" data-permanent="true" title="Beige" style="background: #f5f5dc; width: 32px; height: 32px; border: 2px solid var(--muted); border-radius: 4px; cursor: pointer;"></button>
+            </div>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <input type="color" id="lightBgColorPicker" value="#e8e8e8" style="flex: 1; height: 32px; cursor: pointer;" title="Choose custom color">
+              <button type="button" id="deleteCustomColorBtn" style="width: 32px; height: 32px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 16px;" title="Delete selected custom color">✕</button>
+            </div>
+          </div>
+          <div class="row hint">Background color for light theme</div>
           <hr style="border-color:#22262f; margin:1rem 0" />
           <h2>Nets</h2>
           <div id="netList" class="hint">—</div>

@@ -1185,6 +1185,134 @@ import {
     if (themeBtn) {
       themeBtn.addEventListener('click', toggleTheme);
     }
+  })();
+
+  // Light theme background color customization
+  (function attachLightBgColorPicker() {
+    const colorPicker = document.getElementById('lightBgColorPicker') as HTMLInputElement | null;
+    const swatchContainer = document.getElementById('lightBgColorSwatches') as HTMLDivElement | null;
+    const deleteBtn = document.getElementById('deleteCustomColorBtn') as HTMLButtonElement | null;
+    
+    if (!colorPicker || !swatchContainer || !deleteBtn) return;
+
+    // Load saved color or use default
+    const savedColor = localStorage.getItem('lightBgColor') || '#e8e8e8';
+    
+    // Load custom colors from localStorage
+    let customColors: string[] = [];
+    try {
+      const saved = localStorage.getItem('lightBgCustomColors');
+      if (saved) {
+        customColors = JSON.parse(saved);
+      }
+    } catch (e) {
+      customColors = [];
+    }
+    
+    function saveCustomColors() {
+      localStorage.setItem('lightBgCustomColors', JSON.stringify(customColors));
+    }
+    
+    function addCustomSwatch(color: string) {
+      const customSwatch = document.createElement('button');
+      customSwatch.type = 'button';
+      customSwatch.className = 'color-swatch';
+      customSwatch.setAttribute('data-color', color);
+      customSwatch.title = 'Custom';
+      customSwatch.style.cssText = `background: ${color}; width: 32px; height: 32px; border: 2px solid var(--muted); border-radius: 4px; cursor: pointer;`;
+      swatchContainer.appendChild(customSwatch);
+    }
+    
+    function applyLightBgColor(color: string, updatePicker: boolean = true) {
+      document.documentElement.style.setProperty('--light-bg', color);
+      localStorage.setItem('lightBgColor', color);
+      if (updatePicker) {
+        colorPicker.value = color;
+      }
+      
+      // Update swatch selection
+      const swatches = swatchContainer.querySelectorAll('.color-swatch');
+      swatches.forEach(swatch => {
+        const swatchColor = (swatch as HTMLElement).getAttribute('data-color');
+        if (swatchColor?.toLowerCase() === color.toLowerCase()) {
+          swatch.classList.add('selected');
+        } else {
+          swatch.classList.remove('selected');
+        }
+      });
+      
+      // Update delete button visibility
+      const selectedSwatch = Array.from(swatches).find(s => 
+        (s as HTMLElement).getAttribute('data-color')?.toLowerCase() === color.toLowerCase()
+      ) as HTMLElement | undefined;
+      
+      const isPermanent = selectedSwatch?.getAttribute('data-permanent') === 'true';
+      deleteBtn.style.display = isPermanent ? 'none' : 'block';
+    }
+    
+    // Restore custom color swatches
+    customColors.forEach(color => addCustomSwatch(color));
+    
+    // Apply saved color on load
+    applyLightBgColor(savedColor);
+    
+    // Color picker live preview (no swatch creation)
+    colorPicker.addEventListener('input', (e) => {
+      const color = (e.target as HTMLInputElement).value;
+      applyLightBgColor(color, false);
+    });
+    
+    // Color picker closed - add to swatches if custom
+    colorPicker.addEventListener('change', (e) => {
+      const color = (e.target as HTMLInputElement).value;
+      applyLightBgColor(color, false);
+      
+      // Check if this color already exists in swatches
+      const swatches = swatchContainer.querySelectorAll('.color-swatch');
+      const existingSwatch = Array.from(swatches).find(s => 
+        (s as HTMLElement).getAttribute('data-color')?.toLowerCase() === color.toLowerCase()
+      );
+      
+      // Only add if it's not already there
+      if (!existingSwatch) {
+        addCustomSwatch(color);
+        customColors.push(color);
+        saveCustomColors();
+        applyLightBgColor(color, false); // Update selection to new swatch
+      }
+    });
+    
+    // Swatch clicks
+    swatchContainer.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      if (target.classList.contains('color-swatch')) {
+        const color = target.getAttribute('data-color');
+        if (color) {
+          applyLightBgColor(color);
+        }
+      }
+    });
+    
+    // Delete button
+    deleteBtn.addEventListener('click', () => {
+      const currentColor = localStorage.getItem('lightBgColor') || '#e8e8e8';
+      const swatches = Array.from(swatchContainer.querySelectorAll('.color-swatch')) as HTMLElement[];
+      const selectedSwatch = swatches.find(s => 
+        s.getAttribute('data-color')?.toLowerCase() === currentColor.toLowerCase()
+      );
+      
+      if (selectedSwatch && selectedSwatch.getAttribute('data-permanent') !== 'true') {
+        // Remove from custom colors array
+        customColors = customColors.filter(c => c.toLowerCase() !== currentColor.toLowerCase());
+        saveCustomColors();
+        
+        // Remove the swatch
+        selectedSwatch.remove();
+        
+        // Switch to default color
+        applyLightBgColor('#e8e8e8');
+      }
+    });
   })();  // ====== Component Drawing ======
 
   function drawComponent(c) {
@@ -1471,7 +1599,23 @@ import {
         const radiusMm = diameterMm / 2;
         // Use fractional pixels for better differentiation (SVG supports sub-pixel rendering)
         const radiusPx = Math.max(1, radiusMm * (100 / 25.4));
-        const color = j.color ? j.color : rgba01ToCss(nc.junction.color);
+        let color = j.color ? j.color : rgba01ToCss(nc.junction.color);
+        
+        // Theme-aware black/white handling: if junction color is white or black,
+        // render as black in light mode and white in dark mode
+        const colorLower = color.toLowerCase().replace(/\s/g, '');
+        const isWhite = colorLower === '#ffffff' || colorLower === '#fff' || 
+                       colorLower === 'rgb(255,255,255)' || colorLower === 'rgba(255,255,255,1)' ||
+                       colorLower === 'white';
+        const isBlack = colorLower === '#000000' || colorLower === '#000' || 
+                       colorLower === 'rgb(0,0,0)' || colorLower === 'rgba(0,0,0,1)' ||
+                       colorLower === 'black';
+        
+        if (isWhite || isBlack) {
+          // Use theme-aware wire color variable
+          color = 'var(--wire)';
+        }
+        
         const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         setAttr(dot, 'cx', j.at.x); setAttr(dot, 'cy', j.at.y);
         setAttr(dot, 'r', radiusPx);
@@ -2345,7 +2489,66 @@ import {
       // Add to junctions if not already present
       if (!junctions.some(j => Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3)) {
         pushUndo();
-        junctions.push({ at: { x: bestPt.x, y: bestPt.y }, manual: true });
+        
+        // Determine the color for the junction dot
+        let junctionColor: string | undefined = undefined;
+        
+        // Check if we're on a wire endpoint or segment
+        const TOL_COLOR = 1; // Very tight tolerance for exact position match
+        for (const w of wires) {
+          // Check endpoints
+          for (const pt of w.points) {
+            if (Math.hypot(pt.x - bestPt.x, pt.y - bestPt.y) < TOL_COLOR) {
+              ensureStroke(w);
+              const eff = effectiveStroke(w, Netlist.netClassForWire(w, NET_CLASSES, activeNetClass), THEME);
+              junctionColor = rgba01ToCss(eff.color);
+              break;
+            }
+          }
+          if (junctionColor) break;
+          
+          // Check if on a wire segment
+          for (let i = 0; i < w.points.length - 1; i++) {
+            const a = w.points[i];
+            const b = w.points[i + 1];
+            // Check if point lies on this segment
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const len = Math.hypot(dx, dy);
+            if (len < 1e-6) continue;
+            
+            // Check if bestPt is on the line segment
+            const t = ((bestPt.x - a.x) * dx + (bestPt.y - a.y) * dy) / (len * len);
+            if (t >= 0 && t <= 1) {
+              const closestX = a.x + t * dx;
+              const closestY = a.y + t * dy;
+              if (Math.hypot(closestX - bestPt.x, closestY - bestPt.y) < TOL_COLOR) {
+                ensureStroke(w);
+                const eff = effectiveStroke(w, Netlist.netClassForWire(w, NET_CLASSES, activeNetClass), THEME);
+                junctionColor = rgba01ToCss(eff.color);
+                break;
+              }
+            }
+          }
+          if (junctionColor) break;
+        }
+        
+        // If not on a wire, check if on a component pin
+        if (!junctionColor) {
+          for (const c of components) {
+            const pins = Components.compPinPositions(c);
+            for (const pin of pins) {
+              if (Math.hypot(pin.x - bestPt.x, pin.y - bestPt.y) < TOL_COLOR) {
+                // Use component color (stroke color from its symbol)
+                junctionColor = 'var(--component)';
+                break;
+              }
+            }
+            if (junctionColor) break;
+          }
+        }
+        
+        junctions.push({ at: { x: bestPt.x, y: bestPt.y }, manual: true, color: junctionColor });
         redraw();
       }
       // Stay in place-junction mode to allow placing multiple dots

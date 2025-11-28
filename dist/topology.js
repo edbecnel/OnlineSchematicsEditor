@@ -428,13 +428,59 @@ function detectJunctions(nodes, edges, wires, components, compPinPositions, exis
                         break;
                     }
                 }
-                // Use the default size/color from the net class
+                // Determine the color from the actual wire
+                // Priority: wire passing through (mid-segment) > wire ending at junction
+                let junctionColor = undefined;
+                // First pass: prioritize wires passing through (T-junction bar)
+                for (const wid of wireIds) {
+                    const w = wires.find(w => w.id === wid);
+                    if (w) {
+                        // Check if this wire passes through the junction (not at endpoint)
+                        const isStart = (Math.round(w.points[0].x) === node.x &&
+                            Math.round(w.points[0].y) === node.y);
+                        const isEnd = (Math.round(w.points[w.points.length - 1].x) === node.x &&
+                            Math.round(w.points[w.points.length - 1].y) === node.y);
+                        const passingThrough = !isStart && !isEnd;
+                        if (passingThrough) {
+                            const nc = NET_CLASSES[netId] || NET_CLASSES.default;
+                            if (w.stroke) {
+                                junctionColor = rgba01ToCss(w.stroke.color);
+                            }
+                            else if (w.color) {
+                                junctionColor = w.color;
+                            }
+                            else {
+                                junctionColor = rgba01ToCss(nc.wire.color);
+                            }
+                            break; // Use first passing-through wire
+                        }
+                    }
+                }
+                // Second pass: if no passing-through wire, use any wire at this junction
+                if (!junctionColor) {
+                    for (const wid of wireIds) {
+                        const w = wires.find(w => w.id === wid);
+                        if (w) {
+                            const nc = NET_CLASSES[netId] || NET_CLASSES.default;
+                            if (w.stroke) {
+                                junctionColor = rgba01ToCss(w.stroke.color);
+                            }
+                            else if (w.color) {
+                                junctionColor = w.color;
+                            }
+                            else {
+                                junctionColor = rgba01ToCss(nc.wire.color);
+                            }
+                            break;
+                        }
+                    }
+                }
                 const nc = NET_CLASSES[netId] || NET_CLASSES.default;
                 newJunctions.push({
                     at: { x: node.x, y: node.y },
                     netId,
                     size: nc.junction.size,
-                    color: rgba01ToCss(nc.junction.color)
+                    color: junctionColor
                 });
             }
         }
