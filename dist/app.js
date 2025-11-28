@@ -6269,13 +6269,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             break;
                         }
                     }
-                    // Use the default size/color from the net class
-                    const nc = NET_CLASSES[netId] || NET_CLASSES.default;
+                    // Add automatic junction without size/color overrides (will use netclass defaults at render time)
                     junctions.push({
                         at: { x: node.x, y: node.y },
-                        netId,
-                        size: nc.junction.size,
-                        color: rgba01ToCss(nc.junction.color)
+                        netId
                     });
                 }
             }
