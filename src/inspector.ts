@@ -603,8 +603,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
           // Remove any other junctions at the same location (duplicates)
           ctx.junctions = ctx.junctions.filter(other => 
             other.id === j.id || 
-            Math.abs(other.at.x - j.at.x) >= 1e-3 || 
-            Math.abs(other.at.y - j.at.y) >= 1e-3
+            (Math.abs(other.at.x - j.at.x) >= 1e-3 || Math.abs(other.at.y - j.at.y) >= 1e-3)
           );
         }
         ctx.redrawCanvasOnly();
@@ -675,8 +674,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
         // Remove any other junctions at the same location (duplicates)
         ctx.junctions = ctx.junctions.filter(other => 
           other.id === j.id || 
-          Math.abs(other.at.x - j.at.x) >= 1e-3 || 
-          Math.abs(other.at.y - j.at.y) >= 1e-3
+          (Math.abs(other.at.x - j.at.x) >= 1e-3 || Math.abs(other.at.y - j.at.y) >= 1e-3)
         );
       }
       ctx.redrawCanvasOnly();

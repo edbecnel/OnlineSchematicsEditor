@@ -494,8 +494,7 @@ export function renderInspector(ctx, inspector, inspectorNone) {
                     j.manual = true;
                     // Remove any other junctions at the same location (duplicates)
                     ctx.junctions = ctx.junctions.filter(other => other.id === j.id ||
-                        Math.abs(other.at.x - j.at.x) >= 1e-3 ||
-                        Math.abs(other.at.y - j.at.y) >= 1e-3);
+                        (Math.abs(other.at.x - j.at.x) >= 1e-3 || Math.abs(other.at.y - j.at.y) >= 1e-3));
                 }
                 ctx.redrawCanvasOnly();
                 ctx.renderInspector();
@@ -557,8 +556,7 @@ export function renderInspector(ctx, inspector, inspectorNone) {
                 j.manual = true;
                 // Remove any other junctions at the same location (duplicates)
                 ctx.junctions = ctx.junctions.filter(other => other.id === j.id ||
-                    Math.abs(other.at.x - j.at.x) >= 1e-3 ||
-                    Math.abs(other.at.y - j.at.y) >= 1e-3);
+                    (Math.abs(other.at.x - j.at.x) >= 1e-3 || Math.abs(other.at.y - j.at.y) >= 1e-3));
             }
             ctx.redrawCanvasOnly();
         };
