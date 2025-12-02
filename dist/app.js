@@ -18,6 +18,7 @@ import * as Netlist from './netlist.js';
 import * as Inspector from './inspector.js';
 import * as FileIO from './fileio.js';
 import * as Move from './move.js';
+import * as Input from './input.js';
 import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
 (function () {
     // --- Add UI for Place/Delete Junction Dot ---
@@ -132,6 +133,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         redrawGrid();
         // Re-render canvas overlays (endpoint circles, wires) so overlays stay aligned after zoom
         redrawCanvasOnly();
+        // Update marquee stroke-width to maintain 1px appearance at any zoom level
+        Input.updateMarqueeStroke(marquee.rectEl, zoom);
         updateZoomUI();
     }
     // keep grid filling canvas on window resizes
@@ -2275,6 +2278,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         marquee.rectEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         marquee.rectEl.setAttribute('class', 'marquee');
         gOverlay.appendChild(marquee.rectEl);
+        // Set initial stroke-width based on current zoom
+        Input.updateMarqueeStroke(marquee.rectEl, zoom);
         updateMarqueeTo(p);
     }
     function updateMarqueeTo(p) {

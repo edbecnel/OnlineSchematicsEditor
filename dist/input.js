@@ -11,8 +11,9 @@ export function beginMarqueeAt(ctx, p, startedOnEmpty, preferComponents) {
         ctx.marquee.rectEl.remove();
     ctx.marquee.rectEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     ctx.marquee.rectEl.setAttribute('class', 'marquee');
-    ctx.marquee.rectEl.setAttribute('vector-effect', 'non-scaling-stroke');
     ctx.gOverlay.appendChild(ctx.marquee.rectEl);
+    // Set initial stroke-width based on current zoom
+    updateMarqueeStroke(ctx.marquee.rectEl, ctx.zoom);
     updateMarqueeTo(ctx, p);
 }
 export function updateMarqueeTo(ctx, p) {
@@ -29,6 +30,18 @@ export function updateMarqueeTo(ctx, p) {
     ctx.marquee.rectEl.setAttribute('y', String(y1));
     ctx.marquee.rectEl.setAttribute('width', String(w));
     ctx.marquee.rectEl.setAttribute('height', String(h));
+}
+/**
+ * Update marquee stroke-width to maintain 1px appearance at any zoom level.
+ * Called from applyZoom() to adjust stroke-width inversely with zoom.
+ */
+export function updateMarqueeStroke(marqueeEl, zoom) {
+    if (!marqueeEl)
+        return;
+    const strokeWidth = 1 / zoom;
+    const dashArray = `${6 / zoom} ${4 / zoom}`;
+    marqueeEl.setAttribute('stroke-width', String(strokeWidth));
+    marqueeEl.setAttribute('stroke-dasharray', dashArray);
 }
 export function finishMarquee(ctx) {
     if (!ctx.marquee.active || !ctx.marquee.start || !ctx.marquee.end)
