@@ -5394,16 +5394,97 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             if (!target)
                 return;
             const size = target.getAttribute('data-size');
-            if (size) {
+            if (size && size !== 'custom') {
+                // Map preset size to mils value
+                const sizeInMils = size === 'smallest' ? 15 : size === 'small' ? 30 : size === 'default' ? 40 : size === 'large' ? 50 : 65;
                 junctionDotSize = size;
                 localStorage.setItem('junctionDots.size', size);
                 updateJunctionSizeSelection(size);
+                // Update custom size input to show the preset value
+                if (junctionCustomSizeInput) {
+                    junctionCustomSize = sizeInMils;
+                    const sizeNm = sizeInMils * 0.0254 * NM_PER_MM;
+                    junctionCustomSizeInput.value = formatDimForDisplay(sizeNm, globalUnits);
+                    localStorage.setItem('junctionDots.customSize', String(sizeInMils));
+                }
+                updateCustomJunctionPreview();
                 redraw(); // Redraw to apply new junction dot size immediately
+            }
+            else if (size === 'custom' && junctionCustomSize !== null) {
+                // Clicking custom preview selects it
+                junctionDotSize = 'default'; // Reset to a preset since custom is not a preset
+                updateJunctionSizeSelection('default');
+                redraw();
             }
         });
         // Custom junction size input
         const junctionCustomSizeInput = $q('#junctionCustomSizeInput');
         const junctionCustomSizeLabel = $q('#junctionCustomSizeLabel');
+        const junctionCustomPreview = $q('#junctionCustomPreview');
+        const junctionCustomPreviewSvg = $q('#junctionCustomPreviewSvg');
+        // Function to update the custom junction preview button
+        const updateCustomJunctionPreview = () => {
+            if (!junctionCustomPreview || !junctionCustomPreviewSvg)
+                return;
+            if (junctionCustomSize !== null && junctionCustomSize > 0) {
+                // Show the preview button
+                junctionCustomPreview.style.display = 'flex';
+                // Calculate radius in SVG units (approximate scaling to match other buttons)
+                // The preview buttons use a 24x24 viewBox with center at 12,12
+                // Scale: roughly 1 mil ≈ 0.1 SVG units for visual consistency
+                const radiusSvg = junctionCustomSize * 0.1;
+                const maxRadius = 10; // Maximum radius that fits well in the button
+                // Clear previous content
+                junctionCustomPreviewSvg.innerHTML = '';
+                if (radiusSvg <= maxRadius) {
+                    // Show as filled circle
+                    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    circle.setAttribute('cx', '12');
+                    circle.setAttribute('cy', '12');
+                    circle.setAttribute('r', String(radiusSvg));
+                    circle.setAttribute('fill', 'currentColor');
+                    circle.setAttribute('stroke', 'var(--bg)');
+                    circle.setAttribute('stroke-width', '1');
+                    junctionCustomPreviewSvg.appendChild(circle);
+                }
+                else {
+                    // Show as empty circle with + sign for oversized
+                    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    circle.setAttribute('cx', '12');
+                    circle.setAttribute('cy', '12');
+                    circle.setAttribute('r', '9');
+                    circle.setAttribute('fill', 'none');
+                    circle.setAttribute('stroke', 'currentColor');
+                    circle.setAttribute('stroke-width', '1.5');
+                    junctionCustomPreviewSvg.appendChild(circle);
+                    // Add + sign
+                    const plusV = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    plusV.setAttribute('x1', '12');
+                    plusV.setAttribute('y1', '8');
+                    plusV.setAttribute('x2', '12');
+                    plusV.setAttribute('y2', '16');
+                    plusV.setAttribute('stroke', 'currentColor');
+                    plusV.setAttribute('stroke-width', '1.5');
+                    junctionCustomPreviewSvg.appendChild(plusV);
+                    const plusH = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    plusH.setAttribute('x1', '8');
+                    plusH.setAttribute('y1', '12');
+                    plusH.setAttribute('x2', '16');
+                    plusH.setAttribute('y2', '12');
+                    plusH.setAttribute('stroke', 'currentColor');
+                    plusH.setAttribute('stroke-width', '1.5');
+                    junctionCustomPreviewSvg.appendChild(plusH);
+                }
+                // Update tooltip
+                const sizeNm = junctionCustomSize * 0.0254 * NM_PER_MM;
+                const displayValue = formatDimForDisplay(sizeNm, globalUnits);
+                junctionCustomPreview.title = `Custom (${displayValue})`;
+            }
+            else {
+                // Hide the preview button if no custom size
+                junctionCustomPreview.style.display = 'none';
+            }
+        };
         // Make function available to setGlobalUnits
         updateJunctionSizeUI = () => {
             if (junctionCustomSizeLabel) {
@@ -5414,6 +5495,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 const sizeNm = junctionCustomSize * 0.0254 * NM_PER_MM;
                 junctionCustomSizeInput.value = formatDimForDisplay(sizeNm, globalUnits);
             }
+            updateCustomJunctionPreview();
         };
         if (junctionCustomSizeInput) {
             // Initialize with current value
@@ -5431,6 +5513,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     localStorage.removeItem('junctionDots.customSize');
                     junctionCustomSizeInput.value = '';
                 }
+                updateCustomJunctionPreview();
                 redraw();
             });
         }
