@@ -407,80 +407,89 @@ export function beginSwpMove(ctx: MoveContext, c: Component): MoveCollapseCtx | 
 }
 
 // Finish SWP-based move: rebuild wire segments with proper stroke assignment
-export function finishSwpMove(ctx: MoveContext, c: Component): void {
+export function finishSwpMove(ctx: MoveContext, c: Component, skipRedraw = false): void {
   if (!ctx.moveCollapseCtx || ctx.moveCollapseCtx.kind !== 'swp') return;
   const mc = ctx.moveCollapseCtx;
   const axis = mc.axis;
   
-  // Safety clamp: ensure the component's pins sit within [lo, hi]
-  const myHalf = halfPinSpan(ctx, c, axis);
-  let ctr = compCenterAlongAxis(c, axis);
-  if (ctr - myHalf < mc.ends.lo) ctr = mc.ends.lo + myHalf;
-  if (ctr + myHalf > mc.ends.hi) ctr = mc.ends.hi - myHalf;
-  if (axis === 'x') {
-    c.x = ctr;
-    c.y = mc.fixed;
-  } else {
-    c.y = ctr;
-    c.x = mc.fixed;
-  }
-  ctx.updateComponentDOM(c);
+  // Component is at its current position
+  const pins = ctx.compPinPositions(c).map(p => ({ x: ctx.snapToBaseScalar(p.x), y: ctx.snapToBaseScalar(p.y) }));
+  const onSwpLine = axis === 'x' ? 
+    (ctx.eqN(pins[0].y, mc.fixed) && ctx.eqN(pins[1].y, mc.fixed)) :
+    (ctx.eqN(pins[0].x, mc.fixed) && ctx.eqN(pins[1].x, mc.fixed));
   
   const lo = mc.ends.lo, hi = mc.ends.hi;
   const EPS = 0.5;
   
-  // Keep ONLY components whose two pins lie within this SWP's endpoints
-  const inSwpComps = ctx.components.filter(o => {
-    const pins = ctx.compPinPositions(o);
-    if (axis === 'x') {
-      if (!(ctx.eqN(pins[0].y, mc.fixed) && ctx.eqN(pins[1].y, mc.fixed))) return false;
-      const sp = pinSpanAlongAxis(ctx, o, 'x');
-      return sp.lo >= lo - EPS && sp.hi <= hi + EPS;
-    } else {
-      if (!(ctx.eqN(pins[0].x, mc.fixed) && ctx.eqN(pins[1].x, mc.fixed))) return false;
-      const sp = pinSpanAlongAxis(ctx, o, 'y');
-      return sp.lo >= lo - EPS && sp.hi <= hi + EPS;
-    }
-  }).sort((a, b) => compCenterAlongAxis(a, axis) - compCenterAlongAxis(b, axis));
-
-  // Sweep lo→hi, carving gaps at each component's pin span
-  const newSegs = [];
-  let cursor = lo;
-  for (const o of inSwpComps) {
-    const sp = pinSpanAlongAxis(ctx, o, axis);
-    const a = (axis === 'x') ? { x: cursor, y: mc.fixed } : { x: mc.fixed, y: cursor };
-    const b = (axis === 'x') ? { x: sp.lo, y: mc.fixed } : { x: mc.fixed, y: sp.lo };
-    if ((axis === 'x' ? a.x < b.x : a.y < b.y)) {
-      const chosenStroke = findBestStroke(ctx, mc, a, b, axis);
-      newSegs.push({
-        id: ctx.uid('wire'),
-        points: [a, b],
-        color: chosenStroke ? ctx.rgba01ToCss(chosenStroke.color) : mc.color,
-        stroke: chosenStroke
-      });
-    }
-    cursor = sp.hi;
+  // Calculate the component's through-line axis
+  const compAxis = Math.abs(pins[1].x - pins[0].x) > Math.abs(pins[1].y - pins[0].y) ? 'x' : 'y';
+  
+  // Original SWP endpoints (where perpendicular wires are connected)
+  const oldSwpStart = axis === 'x' ? { x: lo, y: mc.fixed } : { x: mc.fixed, y: lo };
+  const oldSwpEnd = axis === 'x' ? { x: hi, y: mc.fixed } : { x: mc.fixed, y: hi };
+  
+  // Calculate new through-line endpoints (extend to intersect perpendiculars from original SWP endpoints)
+  let newSwpStart, newSwpEnd;
+  
+  if (compAxis === 'x') {
+    // Component is horizontal - through-line extends at constant Y
+    newSwpStart = { x: oldSwpStart.x, y: pins[0].y };
+    newSwpEnd = { x: oldSwpEnd.x, y: pins[1].y };
+  } else {
+    // Component is vertical - through-line extends at constant X
+    newSwpStart = { x: pins[0].x, y: oldSwpStart.y };
+    newSwpEnd = { x: pins[1].x, y: oldSwpEnd.y };
   }
   
-  // Tail segment (last gap → end)
-  const tailA = (axis === 'x') ? { x: cursor, y: mc.fixed } : { x: mc.fixed, y: cursor };
-  const tailB = (axis === 'x') ? { x: hi, y: mc.fixed } : { x: mc.fixed, y: hi };
-  if ((axis === 'x' ? tailA.x < tailB.x : tailA.y < tailB.y)) {
-    const chosenStroke = findBestStroke(ctx, mc, tailA, tailB, axis);
-    newSegs.push({
-      id: ctx.uid('wire'),
-      points: [tailA, tailB],
-      color: chosenStroke ? ctx.rgba01ToCss(chosenStroke.color) : mc.color,
-      stroke: chosenStroke
-    });
-  }
+  // Create two wire segments: newSwpStart -> pins[0] and pins[1] -> newSwpEnd (gap through component)
+  const newSegs = [];
+  const chosenStroke = (mc as any).origWireSnapshot?.[0]?.stroke;
+  
+  // Segment from new SWP start to component first pin
+  newSegs.push({
+    id: ctx.uid('wire'),
+    points: [newSwpStart, pins[0]],
+    color: mc.color,
+    stroke: chosenStroke
+  } as any);
+  
+  // NO segment through component - this creates the gap
+  
+  // Segment from component second pin to new SWP end
+  newSegs.push({
+    id: ctx.uid('wire'),
+    points: [pins[1], newSwpEnd],
+    color: mc.color,
+    stroke: chosenStroke
+  } as any);
   
   // Replace collapsed wire with new segments
-  ctx.wires = ctx.wires.filter(w => w.id !== mc.collapsedId).concat(newSegs as any);
+  ctx.wires = ctx.wires.filter(w => w.id !== mc.collapsedId).concat(newSegs);
+  
+  // Update perpendicular wires to connect to the NEW through-line endpoints
+  const endpointMapping = [
+    { old: oldSwpStart, new: newSwpStart },
+    { old: oldSwpEnd, new: newSwpEnd }
+  ];
+  
+  for (const mapping of endpointMapping) {
+    const connectedWires = ctx.wiresEndingAt(mapping.old).filter(w => w.id !== mc.collapsedId);
+    for (const wire of connectedWires) {
+      // Determine which endpoint of this wire is connected to the old SWP endpoint
+      const matchStart = ctx.eqPtEps(wire.points[0], mapping.old, 1);
+      const endpointIndex = matchStart ? 0 : wire.points.length - 1;
+      
+      // Update this endpoint to the new through-line endpoint
+      wire.points[endpointIndex] = { x: mapping.new.x, y: mapping.new.y };
+    }
+  }
+  
   ctx.moveCollapseCtx = null;
   ctx.lastMoveCompId = null;
   ctx.rebuildTopology();
-  ctx.redraw();
+  if (!skipRedraw) {
+    ctx.redraw();
+  }
 }
 
 // Helper to find the best stroke for a wire segment based on original segments

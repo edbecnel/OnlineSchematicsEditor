@@ -198,6 +198,27 @@ import {
     ghostConnectingWires: Array<{ from: Point; to: Point }>; // Visual feedback for connecting wires
     dragging: boolean;
   } | null = null;
+  
+  // Global state for lateral component dragging (breaking free from SWP)
+  let componentDragState: {
+    component: Component;
+    wires: Array<{
+      wire: Wire;
+      pinIndex: number;
+      originalPoints: Point[]; // Original wire geometry
+      originalPinPosition: Point;
+      axis: 'x' | 'y';
+      isStart: boolean;
+      shouldBreakAtFarEnd: boolean; // True if junction/component at far end
+      farEndpoint: Point; // Far endpoint position for ghost wire
+      perpendicularWires: Array<{ // Perpendicular wires connected at far end that need stretching
+        wire: Wire;
+        endpointIndex: number; // 0 or 1, which endpoint connects to our far end
+        originalPoints: Point[];
+      }>;
+    }>;
+    ghostWires: Array<{ from: Point; to: Point }>;
+  } | null = null;
 
   // Suppress the next contextmenu after right-click finishing a wire
   let suppressNextContextMenu = false;
@@ -1437,6 +1458,7 @@ import {
 
     // ---- Drag + selection (mouse) ----
     let dragging = false, dragOff = { x: 0, y: 0 }, slideCtx = null, dragStart = null;
+    const componentInstanceId = Math.random(); // Track if component is recreated
     g.addEventListener('pointerdown', (e) => {
       if (mode === 'delete') { removeComponent(c.id); return; }
       // If no action is active, automatically activate Select mode when
@@ -1463,6 +1485,8 @@ import {
       draggedComponentId = c.id;
       updateEndpointCircles(); // Hide this component's circles
       dragOff.x = c.x - pt.x; dragOff.y = c.y - pt.y;
+      // Clear any previous drag state from prior sessions
+      componentDragState = null;
       // Prepare SWP-aware context (collapse SWP to a single straight run)
       slideCtx = null; // fallback only if no SWP detected
       rebuildTopology();
@@ -1492,37 +1516,231 @@ import {
       e.stopPropagation();
     });
     g.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
+      if (!dragging) {
+        return;
+      }
       const p = svgPoint(e);
-      // Prefer SWP move if active
+      
+      // SWP move: allow free movement in both inline and lateral directions
+      // Show stretched SWP wire through component and rubber-band perpendicular wires
       if (moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
         const mc = moveCollapseCtx;
-        if (mc.axis === 'x') {
-          let cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
-          let nx = cand.x;
-          nx = Math.max(mc.minCenter, Math.min(mc.maxCenter, nx));
-          const candX = nx, candY = mc.fixed;
-          if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
-            c.x = candX; c.y = candY; mc.lastCenter = candX;
-            updateComponentDOM(c);
-            updateCoordinateDisplay(c.x, c.y);
-            updateCoordinateInputs(c.x, c.y);
-            renderInspector();
+        const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
+        
+        // Allow free movement in both directions
+        const candX = cand.x;
+        const candY = cand.y;
+        
+        if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
+          c.x = candX;
+          c.y = candY;
+          updateComponentDOM(c);
+          updateCoordinateDisplay(c.x, c.y);
+          updateCoordinateInputs(c.x, c.y);
+          renderInspector();
+          
+          // Create ghost wires showing stretched SWP through component and rubber-banded perpendiculars
+          if (!componentDragState) {
+            componentDragState = { component: c, wires: [], ghostWires: [] };
           }
-        } else {
-          let cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
-          let ny = cand.y;
-          ny = Math.max(mc.minCenter, Math.min(mc.maxCenter, ny));
-          const candX = mc.fixed, candY = ny;
-          if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
-            c.y = candY; c.x = candX; mc.lastCenter = ny;
-            updateComponentDOM(c);
-            updateCoordinateDisplay(c.x, c.y);
-            updateCoordinateInputs(c.x, c.y);
-            renderInspector();
+          componentDragState.ghostWires = [];
+          
+          // Get actual component pin positions at current location
+          const pins = Components.compPinPositions(c).map(p => ({ 
+            x: snapToBaseScalar(p.x), 
+            y: snapToBaseScalar(p.y) 
+          }));
+          
+          // Calculate the component's through-line axis (the line between its pins)
+          const compAxis = Math.abs(pins[1].x - pins[0].x) > Math.abs(pins[1].y - pins[0].y) ? 'x' : 'y';
+          
+          // Find where the through-line intersects with perpendiculars from original SWP endpoints
+          const origSwpStart = mc.axis === 'x' ? { x: mc.ends.lo, y: mc.fixed } : { x: mc.fixed, y: mc.ends.lo };
+          const origSwpEnd = mc.axis === 'x' ? { x: mc.ends.hi, y: mc.fixed } : { x: mc.fixed, y: mc.ends.hi };
+          
+          // Extend the through-line to intersect with perpendiculars from original SWP endpoints
+          let throughLineStart, throughLineEnd;
+          
+          if (compAxis === 'x') {
+            // Component is horizontal - through-line extends horizontally at the component's Y
+            // The perpendiculars from original SWP endpoints are vertical, intersecting at origSwpStart.x and origSwpEnd.x
+            const throughY = (pins[0].y + pins[1].y) / 2; // Use average Y of pins
+            throughLineStart = { x: origSwpStart.x, y: throughY };
+            throughLineEnd = { x: origSwpEnd.x, y: throughY };
+          } else {
+            // Component is vertical - through-line extends vertically at the component's X
+            // The perpendiculars from original SWP endpoints are horizontal, intersecting at origSwpStart.y and origSwpEnd.y
+            const throughX = (pins[0].x + pins[1].x) / 2; // Use average X of pins
+            throughLineStart = { x: throughX, y: origSwpStart.y };
+            throughLineEnd = { x: throughX, y: origSwpEnd.y };
+          }
+          
+          // Draw the ghost through-line segments with gap through component
+          // For horizontal component: draw horizontal lines from intersection points to pins
+          // For vertical component: draw vertical lines from intersection points to pins
+          
+          console.log('Component axis:', compAxis);
+          console.log('Pins:', pins);
+          console.log('throughLineStart:', throughLineStart);
+          console.log('throughLineEnd:', throughLineEnd);
+          
+          // Determine which pin is closer to which endpoint
+          const dist0ToStart = Math.hypot(pins[0].x - throughLineStart.x, pins[0].y - throughLineStart.y);
+          const dist1ToStart = Math.hypot(pins[1].x - throughLineStart.x, pins[1].y - throughLineStart.y);
+          
+          if (dist0ToStart < dist1ToStart) {
+            // pins[0] is closer to throughLineStart, pins[1] to throughLineEnd
+            console.log('Adding ghost wire from', throughLineStart, 'to', pins[0]);
+            componentDragState.ghostWires.push({ from: throughLineStart, to: pins[0] });
+            console.log('Adding ghost wire from', pins[1], 'to', throughLineEnd);
+            componentDragState.ghostWires.push({ from: pins[1], to: throughLineEnd });
+          } else {
+            // pins[1] is closer to throughLineStart, pins[0] to throughLineEnd
+            console.log('Adding ghost wire from', throughLineStart, 'to', pins[1]);
+            componentDragState.ghostWires.push({ from: throughLineStart, to: pins[1] });
+            console.log('Adding ghost wire from', pins[0], 'to', throughLineEnd);
+            componentDragState.ghostWires.push({ from: pins[0], to: throughLineEnd });
+          }
+          
+          console.log('Total ghost wires so far:', componentDragState.ghostWires.length);
+          
+          // Also draw ghost perpendicular wires connected to the through-line endpoints
+          // For multi-segment wires, we need to draw each segment individually to preserve the wire's shape
+          const perpWiresAtStart = wiresEndingAt(origSwpStart).filter(w => w.id !== mc.collapsedId);
+          const perpWiresAtEnd = wiresEndingAt(origSwpEnd).filter(w => w.id !== mc.collapsedId);
+          
+          for (const wire of perpWiresAtStart) {
+            const matchStart = Geometry.eqPtEps(wire.points[0], origSwpStart, 1);
+            // Create ghost wire with updated endpoint at throughLineStart
+            const ghostPoints = matchStart 
+              ? [throughLineStart, ...wire.points.slice(1)]
+              : [...wire.points.slice(0, -1), throughLineStart];
+            
+            // Draw each segment of the ghost wire
+            for (let i = 0; i < ghostPoints.length - 1; i++) {
+              componentDragState.ghostWires.push({ from: ghostPoints[i], to: ghostPoints[i + 1] });
+            }
+          }
+          
+          for (const wire of perpWiresAtEnd) {
+            const matchStart = Geometry.eqPtEps(wire.points[0], origSwpEnd, 1);
+            // Create ghost wire with updated endpoint at throughLineEnd
+            const ghostPoints = matchStart 
+              ? [throughLineEnd, ...wire.points.slice(1)]
+              : [...wire.points.slice(0, -1), throughLineEnd];
+            
+            // Draw each segment of the ghost wire
+            for (let i = 0; i < ghostPoints.length - 1; i++) {
+              componentDragState.ghostWires.push({ from: ghostPoints[i], to: ghostPoints[i + 1] });
+            }
+          }
+          
+          console.log('FINAL total ghost wires:', componentDragState.ghostWires.length);
+          console.log('All ghost wires:', componentDragState.ghostWires);
+          
+          renderDrawing(); // Show ghost wires
+        }
+        
+        return; // Stay in SWP mode - will reconstruct wires on pointerup
+      }
+      
+      // Free drag mode - drag entire wires laterally with component (legacy path for non-SWP components)
+      if (componentDragState && componentDragState.wires.length > 0) {
+        const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
+        const candX = cand.x;
+        const candY = cand.y;
+        
+        const currentY = c.y;
+        console.log(`Lateral drag: mouse at (${p.x}, ${p.y}), dragOff=(${dragOff.x}, ${dragOff.y}), trying to move from Y=${currentY} to Y=${candY}`);
+        
+        // Move component freely
+        c.x = candX;
+        c.y = candY;
+        
+        // Get new pin positions
+        const newPins = Components.compPinPositions(c).map(p => ({ 
+          x: snapToBaseScalar(p.x), 
+          y: snapToBaseScalar(p.y) 
+        }));
+        
+        // Clear ghost wires
+        componentDragState.ghostWires = [];
+        
+        console.log('Processing', componentDragState.wires.length, 'wires');
+        
+        for (const dragWire of componentDragState.wires) {
+          const newPin = newPins[dragWire.pinIndex];
+          const wire = dragWire.wire;
+          const delta = dragWire.axis === 'x' 
+            ? (newPin.y - dragWire.originalPinPosition.y) 
+            : (newPin.x - dragWire.originalPinPosition.x);
+          
+          // Create ghost of the entire moved wire
+          const ghostWirePoints: Point[] = dragWire.originalPoints.map(pt => {
+            if (dragWire.axis === 'x') {
+              return { x: pt.x, y: pt.y + delta };
+            } else {
+              return { x: pt.x + delta, y: pt.y };
+            }
+          });
+          
+          // DON'T modify the original wire during drag - leave it in place
+          // We'll show ghost instead and finalize on pointerup
+          
+          // Add ghost wire (entire wire being moved)
+          componentDragState.ghostWires.push({
+            from: ghostWirePoints[0],
+            to: ghostWirePoints[ghostWirePoints.length - 1]
+          });
+          
+          // Store the perpendicular wire updates but DON'T apply them yet during drag
+          // We'll show them as additional ghost wires
+          for (const perpWire of dragWire.perpendicularWires) {
+            const movedFarEnd = ghostWirePoints[dragWire.isStart ? ghostWirePoints.length - 1 : 0];
+            // Get the FIXED end of the perpendicular wire (opposite of the moving end)
+            // endpointIndex tells us which end is connected to the moving horizontal wire
+            const fixedPerpEnd = perpWire.endpointIndex === 0 
+              ? perpWire.wire.points[perpWire.wire.points.length - 1]
+              : perpWire.wire.points[0];
+            
+            // The perpendicular wire must maintain orthogonality
+            // It was originally perpendicular to the main wire, so draw it with proper axis alignment
+            // If the main wire is horizontal (axis='x'), perpendicular is vertical
+            // If the main wire is vertical (axis='y'), perpendicular is horizontal
+            if (dragWire.axis === 'x') {
+              // Main wire is horizontal, so perpendicular is vertical
+              // Draw vertical line from fixedPerpEnd to the y-coordinate of movedFarEnd, keeping x fixed
+              componentDragState.ghostWires.push({
+                from: fixedPerpEnd,
+                to: { x: fixedPerpEnd.x, y: movedFarEnd.y }
+              });
+            } else {
+              // Main wire is vertical, so perpendicular is horizontal
+              // Draw horizontal line from fixedPerpEnd to the x-coordinate of movedFarEnd, keeping y fixed
+              componentDragState.ghostWires.push({
+                from: fixedPerpEnd,
+                to: { x: movedFarEnd.x, y: fixedPerpEnd.y }
+              });
+            }
           }
         }
-      } else if (slideCtx) {
+        
+        // DON'T call updateComponentDOM or updateWireDOM during drag
+        // Only update coordinates display and render ghost wires
+        updateCoordinateDisplay(c.x, c.y);
+        updateCoordinateInputs(c.x, c.y);
+        
+        // Render ghost wires and component to show preview during drag
+        // Always call renderDrawing() to clear previous ghost wires, even if there are no new ones
+        g.style.opacity = '0.5';
+        updateComponentDOM(c);
+        renderDrawing();
+        
+        return;
+      }
+      
+      // Slide mode or regular free drag
+      if (slideCtx) {
         if (slideCtx.axis === 'x') {
           let nx = snap(p.x + dragOff.x);
           nx = Math.max(Math.min(slideCtx.max, nx), slideCtx.min);
@@ -1546,6 +1764,7 @@ import {
           renderInspector();
         }
       } else {
+        // Regular free drag (no wire stretching)
         const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
         const candX = cand.x;
         const candY = cand.y;
@@ -1571,9 +1790,114 @@ import {
           moveCollapseCtx = null;
           lastMoveCompId = null;
           g.classList.remove('moving');
+          componentDragState = null;
           dragStart = null;
+          draggedComponentId = null;
+          renderDrawing(); // Clear ghost wires
           return;
         }
+        
+        // If we were dragging wires laterally, finalize the movement
+        if (componentDragState && componentDragState.wires.length > 0) {
+          // Restore component opacity
+          g.style.opacity = '1';
+          updateComponentDOM(c);
+          
+          // Get final pin positions
+          const finalPins = Components.compPinPositions(c).map(p => ({ 
+            x: snapToBaseScalar(p.x), 
+            y: snapToBaseScalar(p.y) 
+          }));
+          
+          // Move each wire to final position and restore perpendicular wires
+          for (const dragWire of componentDragState.wires) {
+            const finalPin = finalPins[dragWire.pinIndex];
+            const delta = dragWire.axis === 'x' 
+              ? (finalPin.y - dragWire.originalPinPosition.y) 
+              : (finalPin.x - dragWire.originalPinPosition.x);
+            
+            console.log(`Moving wire ${dragWire.wire.id} by delta ${delta} on axis ${dragWire.axis}`);
+            console.log('Original points:', dragWire.originalPoints);
+            
+            // Move the wire perpendicular to its axis
+            dragWire.wire.points = dragWire.originalPoints.map((pt, idx) => {
+              if (dragWire.axis === 'x') {
+                return { x: pt.x, y: pt.y + delta };
+              } else {
+                return { x: pt.x + delta, y: pt.y };
+              }
+            });
+            
+            console.log('New points:', dragWire.wire.points);
+            
+            // Update the component connection endpoint to match the new pin position
+            const componentEndIndex = dragWire.isStart ? 0 : dragWire.wire.points.length - 1;
+            dragWire.wire.points[componentEndIndex] = { x: finalPin.x, y: finalPin.y };
+            
+            // Now update the perpendicular wires at far end - maintain orthogonality
+            for (const perpWire of dragWire.perpendicularWires) {
+              const movedFarEnd = dragWire.wire.points[dragWire.isStart ? dragWire.wire.points.length - 1 : 0];
+              
+              // Get the perpendicular wire's endpoint that's being moved
+              const perpEndpoint = perpWire.endpointIndex === 0 
+                ? perpWire.wire.points[0]
+                : perpWire.wire.points[perpWire.wire.points.length - 1];
+              
+              // Update ONLY the coordinate that changed, to maintain orthogonality
+              // If the main wire is horizontal (axis='x'), perpendicular wire is vertical - update only Y
+              // If the main wire is vertical (axis='y'), perpendicular wire is horizontal - update only X
+              if (dragWire.axis === 'x') {
+                // Main wire is horizontal, perpendicular is vertical - keep X, update Y
+                const newEndpoint = { x: perpEndpoint.x, y: movedFarEnd.y };
+                if (perpWire.endpointIndex === 0) {
+                  perpWire.wire.points[0] = newEndpoint;
+                } else {
+                  perpWire.wire.points[perpWire.wire.points.length - 1] = newEndpoint;
+                }
+              } else {
+                // Main wire is vertical, perpendicular is horizontal - keep Y, update X
+                const newEndpoint = { x: movedFarEnd.x, y: perpEndpoint.y };
+                if (perpWire.endpointIndex === 0) {
+                  perpWire.wire.points[0] = newEndpoint;
+                } else {
+                  perpWire.wire.points[perpWire.wire.points.length - 1] = newEndpoint;
+                }
+              }
+            }
+          }
+          
+          // Clean up wire geometry (same as wire stretching feature)
+          normalizeAllWires();
+          
+          // Remove very short wires that may have been created
+          wires = wires.filter(w => {
+            if (w.points.length < 2) return false;
+            const p0 = w.points[0];
+            const p1 = w.points[w.points.length - 1];
+            const len = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+            return len >= 5;
+          });
+          
+          // Unify inline wire segments to collapse collinear wires
+          unifyInlineWires();
+          
+          // Re-break all wires at all component pins to fix any wires that now pass through components
+          for (const comp of components) {
+            breakWiresForComponent(comp);
+          }
+          
+          // Rebuild topology and redraw
+          rebuildTopology();
+          redraw();
+          renderDrawing(); // Clear ghost wires from drawing layer
+          
+          componentDragState = null;
+          dragStart = null;
+          draggedComponentId = null;
+          updateEndpointCircles();
+          return;
+        }
+        
         if (overlapsAnyOther(c)) {
           c.x = dragStart.x; c.y = dragStart.y;
           if (slideCtx && dragStart.pins?.length === 2) {
@@ -1583,6 +1907,7 @@ import {
           updateComponentDOM(c);
           if (slideCtx) { updateWireDOM(slideCtx.wA); updateWireDOM(slideCtx.wB); }
         } else {
+          // Component moved successfully
           if (!dragStart.embedded) {
             const didBreak = breakWiresForComponent(c);
             if (didBreak) { deleteBridgeBetweenPins(c); redraw(); }
@@ -1597,6 +1922,7 @@ import {
             }
           }
         }
+        componentDragState = null;
         dragStart = null;
         draggedComponentId = null;
         updateEndpointCircles(); // Restore circles
@@ -1762,7 +2088,30 @@ import {
     for (const c of components) { gComps.appendChild(drawComponent(c)); }
     // wires (with wide, nearly-transparent hit-target + hover cue)
     gWires.replaceChildren();
+    
+    // During SWP drag, hide the collapsed SWP wire and perpendicular wires
+    // Only hide wires when actively dragging (componentDragState exists)
+    let wiresToSkip = new Set<string>();
+    if (moveCollapseCtx && moveCollapseCtx.kind === 'swp' && componentDragState) {
+      // Hide the collapsed SWP wire
+      wiresToSkip.add(moveCollapseCtx.collapsedId);
+      
+      // Hide perpendicular wires at the original SWP endpoints
+      const mc = moveCollapseCtx;
+      const origSwpStart = mc.axis === 'x' ? { x: mc.ends.lo, y: mc.fixed } : { x: mc.fixed, y: mc.ends.lo };
+      const origSwpEnd = mc.axis === 'x' ? { x: mc.ends.hi, y: mc.fixed } : { x: mc.fixed, y: mc.ends.hi };
+      
+      for (const endPt of [origSwpStart, origSwpEnd]) {
+        const connectedWires = wiresEndingAt(endPt).filter(w => w.id !== mc.collapsedId);
+        for (const wire of connectedWires) {
+          wiresToSkip.add(wire.id);
+        }
+      }
+    }
+    
     for (const w of wires) {
+      // Skip wires that are being dragged with SWP
+      if (wiresToSkip.has(w.id)) continue;
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.setAttribute('data-id', w.id);
 
@@ -4227,6 +4576,27 @@ import {
         line.setAttribute('stroke-width', '1');
         line.setAttribute('stroke-linecap', 'round');
         line.setAttribute('pointer-events', 'none');
+        setAttr(line, 'x1', ghost.from.x);
+        setAttr(line, 'y1', ghost.from.y);
+        setAttr(line, 'x2', ghost.to.x);
+        setAttr(line, 'y2', ghost.to.y);
+        gDrawing.appendChild(line);
+      });
+    }
+    
+    // Render ghost connecting wires during lateral component drag (before early return)
+    if (componentDragState && componentDragState.ghostWires.length > 0) {
+      console.log('RENDERINGING GHOST WIRES:', componentDragState.ghostWires.length, 'wires');
+      const wireColor = moveCollapseCtx?.color || defaultWireColor;
+      console.log('Wire color:', wireColor);
+      componentDragState.ghostWires.forEach((ghost, idx) => {
+        console.log(`Rendering ghost wire ${idx}: from (${ghost.from.x}, ${ghost.from.y}) to (${ghost.to.x}, ${ghost.to.y})`);
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('stroke', wireColor);
+        line.setAttribute('stroke-width', '1');
+        line.setAttribute('stroke-linecap', 'round');
+        line.setAttribute('pointer-events', 'none');
+        line.setAttribute('opacity', '0.8');
         setAttr(line, 'x1', ghost.from.x);
         setAttr(line, 'y1', ghost.from.y);
         setAttr(line, 'x2', ghost.to.x);
@@ -7073,12 +7443,29 @@ import {
   function halfPinSpan(c, axis) { return Move.halfPinSpan(createMoveContext(), c, axis); }
   function pinSpanAlongAxis(c, axis) { return Move.pinSpanAlongAxis(createMoveContext(), c, axis); }
   function beginSwpMove(c) { return Move.beginSwpMove(createMoveContext(), c); }
-  function finishSwpMove(c) {
+  function finishSwpMove(c, skipRedraw = false) {
     const ctx = createMoveContext();
-    Move.finishSwpMove(ctx, c);
+    Move.finishSwpMove(ctx, c, true); // Skip redraw in Move function
     // The Move function reassigns ctx.wires, so we need to sync it back
     wires.length = 0;
     wires.push(...ctx.wires);
+    
+    // Re-break all wires at all component pins to fix any wires that now pass through components
+    // This is necessary because perpendicular wires may have been stretched through components
+    // Do this BEFORE normalizing to ensure components split the wires properly
+    for (const comp of components) {
+      breakWiresForComponent(comp);
+    }
+    
+    // Now normalize and clean up after breaking
+    normalizeAllWires();
+    unifyInlineWires();
+    
+    // Now redraw with the synced wires
+    if (!skipRedraw) {
+      rebuildTopology();
+      redraw();
+    }
   }
   function ensureFinishSwpMove() {
     if (!moveCollapseCtx || moveCollapseCtx.kind !== 'swp') return;
