@@ -5527,23 +5527,29 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         if (junctionCustomSizeInput) {
             // Initialize with current value
             updateJunctionSizeUI();
+            let lastValidSizeMils = junctionCustomSize; // Track last valid size for nearest preset calculation
             const handleCustomSizeChange = () => {
-                const parsed = parseDimInput(junctionCustomSizeInput.value || '', globalUnits);
+                const inputValue = junctionCustomSizeInput.value.trim();
+                const parsed = parseDimInput(inputValue, globalUnits);
                 if (parsed && parsed.nm > 0) {
-                    // Convert nm to mils for storage
-                    junctionCustomSize = parsed.nm / (0.0254 * NM_PER_MM);
+                    // Valid size entered - convert nm to mils for storage
+                    const sizeMils = parsed.nm / (0.0254 * NM_PER_MM);
+                    junctionCustomSize = sizeMils;
+                    lastValidSizeMils = sizeMils;
                     localStorage.setItem('junctionDots.customSize', String(junctionCustomSize));
+                    // Update input to show formatted value with units
+                    junctionCustomSizeInput.value = formatDimForDisplay(parsed.nm, globalUnits);
                 }
-                else {
-                    // Clear custom size and auto-select nearest preset
-                    if (junctionCustomSize !== null) {
+                else if (inputValue === '') {
+                    // Input cleared - auto-select nearest preset based on last valid size
+                    if (lastValidSizeMils !== null) {
                         const presetValues = [15, 30, 40, 50, 65];
                         const presetNames = ['smallest', 'small', 'default', 'large', 'largest'];
                         let nearestPreset = presetValues[0];
                         let nearestIndex = 0;
-                        let minDiff = Math.abs(junctionCustomSize - presetValues[0]);
+                        let minDiff = Math.abs(lastValidSizeMils - presetValues[0]);
                         for (let i = 0; i < presetValues.length; i++) {
-                            const diff = Math.abs(junctionCustomSize - presetValues[i]);
+                            const diff = Math.abs(lastValidSizeMils - presetValues[i]);
                             if (diff < minDiff) {
                                 minDiff = diff;
                                 nearestPreset = presetValues[i];
@@ -5552,6 +5558,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         }
                         // Update to nearest preset
                         junctionCustomSize = nearestPreset;
+                        lastValidSizeMils = nearestPreset;
                         junctionDotSize = presetNames[nearestIndex];
                         localStorage.setItem('junctionDots.customSize', String(junctionCustomSize));
                         localStorage.setItem('junctionDots.size', junctionDotSize);
@@ -5562,7 +5569,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         junctionCustomSizeInput.value = formatDimForDisplay(sizeNm, globalUnits);
                     }
                     else {
+                        // No previous value, just clear
                         junctionCustomSize = null;
+                        lastValidSizeMils = null;
                         localStorage.removeItem('junctionDots.customSize');
                         junctionCustomSizeInput.value = '';
                     }
@@ -5571,12 +5580,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 redraw();
             };
             junctionCustomSizeInput.addEventListener('change', handleCustomSizeChange);
-            // Also handle input event for immediate feedback when clearing
+            junctionCustomSizeInput.addEventListener('blur', handleCustomSizeChange);
+            // Handle input event for immediate feedback when clearing
             junctionCustomSizeInput.addEventListener('input', () => {
                 if (junctionCustomSizeInput.value.trim() === '') {
-                    junctionCustomSize = null;
-                    localStorage.removeItem('junctionDots.customSize');
-                    updateCustomJunctionPreview(); // Hide button immediately
+                    updateCustomJunctionPreview(); // Hide button immediately, but don't change junctionCustomSize yet
                 }
             });
         }
