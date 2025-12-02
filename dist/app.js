@@ -3374,7 +3374,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const onJunction = !!(tgt && tgt.hasAttribute && tgt.hasAttribute('data-junction-id'));
             const onEndpoint = !!(tgt && tgt.endpoint); // Check if clicking on an endpoint marker
             // Handle clicking on a free wire endpoint to stretch it along its axis
-            if ((mode === 'move' || mode === 'select') && e.button === 0 && onEndpoint && tgt.wireId) {
+            // Allow this from any mode except wire mode (where endpoints are for connecting)
+            if (mode !== 'wire' && e.button === 0 && onEndpoint && tgt.wireId) {
                 const wireId = tgt.wireId;
                 const endpointIndex = tgt.endpointIndex;
                 const wire = wires.find(w => w.id === wireId);
@@ -3393,7 +3394,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         const isVertical = Math.abs(wire.points[0].x - wire.points[1].x) < 0.1;
                         const isHorizontal = Math.abs(wire.points[0].y - wire.points[1].y) < 0.1;
                         if (isVertical || isHorizontal) {
-                            // Start endpoint stretch
+                            // Start endpoint stretch - automatically switch to move mode
                             pushUndo();
                             endpointStretchState = {
                                 wire,
@@ -3403,8 +3404,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                                 fixedCoord: isVertical ? wire.points[0].x : wire.points[0].y,
                                 dragging: true
                             };
-                            if (mode === 'select')
-                                setMode('move');
+                            setMode('move');
                             selection = { kind: 'wire', id: wireId, segIndex: null };
                             e.stopPropagation();
                             e.preventDefault();

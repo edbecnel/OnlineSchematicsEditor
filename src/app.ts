@@ -3506,7 +3506,8 @@ import {
       const onEndpoint = !!(tgt && (tgt as any).endpoint); // Check if clicking on an endpoint marker
       
       // Handle clicking on a free wire endpoint to stretch it along its axis
-      if ((mode === 'move' || mode === 'select') && e.button === 0 && onEndpoint && (tgt as any).wireId) {
+      // Allow this from any mode except wire mode (where endpoints are for connecting)
+      if (mode !== 'wire' && e.button === 0 && onEndpoint && (tgt as any).wireId) {
         const wireId = (tgt as any).wireId;
         const endpointIndex = (tgt as any).endpointIndex;
         const wire = wires.find(w => w.id === wireId);
@@ -3530,7 +3531,7 @@ import {
             const isHorizontal = Math.abs(wire.points[0].y - wire.points[1].y) < 0.1;
             
             if (isVertical || isHorizontal) {
-              // Start endpoint stretch
+              // Start endpoint stretch - automatically switch to move mode
               pushUndo();
               endpointStretchState = {
                 wire,
@@ -3541,7 +3542,7 @@ import {
                 dragging: true
               };
               
-              if (mode === 'select') setMode('move');
+              setMode('move');
               selection = { kind: 'wire', id: wireId, segIndex: null };
               e.stopPropagation();
               e.preventDefault();
