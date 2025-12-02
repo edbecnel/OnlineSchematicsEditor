@@ -199,6 +199,16 @@ import {
     dragging: boolean;
   } | null = null;
   
+  // Global state for free endpoint stretching along wire axis
+  let endpointStretchState: {
+    wire: Wire;
+    endpointIndex: number; // 0 or 1 (which endpoint being stretched)
+    originalPoints: Point[];
+    axis: 'x' | 'y'; // Direction of wire
+    fixedCoord: number; // The coordinate that doesn't change (x for vertical, y for horizontal)
+    dragging: boolean;
+  } | null = null;
+  
   // Global state for lateral component dragging (breaking free from SWP)
   let componentDragState: {
     component: Component;
@@ -1579,30 +1589,19 @@ import {
           // For horizontal component: draw horizontal lines from intersection points to pins
           // For vertical component: draw vertical lines from intersection points to pins
           
-          console.log('Component axis:', compAxis);
-          console.log('Pins:', pins);
-          console.log('throughLineStart:', throughLineStart);
-          console.log('throughLineEnd:', throughLineEnd);
-          
           // Determine which pin is closer to which endpoint
           const dist0ToStart = Math.hypot(pins[0].x - throughLineStart.x, pins[0].y - throughLineStart.y);
           const dist1ToStart = Math.hypot(pins[1].x - throughLineStart.x, pins[1].y - throughLineStart.y);
           
           if (dist0ToStart < dist1ToStart) {
             // pins[0] is closer to throughLineStart, pins[1] to throughLineEnd
-            console.log('Adding ghost wire from', throughLineStart, 'to', pins[0]);
             componentDragState.ghostWires.push({ from: throughLineStart, to: pins[0] });
-            console.log('Adding ghost wire from', pins[1], 'to', throughLineEnd);
             componentDragState.ghostWires.push({ from: pins[1], to: throughLineEnd });
           } else {
             // pins[1] is closer to throughLineStart, pins[0] to throughLineEnd
-            console.log('Adding ghost wire from', throughLineStart, 'to', pins[1]);
             componentDragState.ghostWires.push({ from: throughLineStart, to: pins[1] });
-            console.log('Adding ghost wire from', pins[0], 'to', throughLineEnd);
             componentDragState.ghostWires.push({ from: pins[0], to: throughLineEnd });
           }
-          
-          console.log('Total ghost wires so far:', componentDragState.ghostWires.length);
           
           // Also draw ghost perpendicular wires connected to the through-line endpoints
           // For multi-segment wires, we need to draw each segment individually to preserve the wire's shape
@@ -1635,9 +1634,6 @@ import {
             }
           }
           
-          console.log('FINAL total ghost wires:', componentDragState.ghostWires.length);
-          console.log('All ghost wires:', componentDragState.ghostWires);
-          
           renderDrawing(); // Show ghost wires
         }
         
@@ -1649,9 +1645,6 @@ import {
         const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
         const candX = cand.x;
         const candY = cand.y;
-        
-        const currentY = c.y;
-        console.log(`Lateral drag: mouse at (${p.x}, ${p.y}), dragOff=(${dragOff.x}, ${dragOff.y}), trying to move from Y=${currentY} to Y=${candY}`);
         
         // Move component freely
         c.x = candX;
@@ -1665,8 +1658,6 @@ import {
         
         // Clear ghost wires
         componentDragState.ghostWires = [];
-        
-        console.log('Processing', componentDragState.wires.length, 'wires');
         
         for (const dragWire of componentDragState.wires) {
           const newPin = newPins[dragWire.pinIndex];
@@ -1816,9 +1807,6 @@ import {
               ? (finalPin.y - dragWire.originalPinPosition.y) 
               : (finalPin.x - dragWire.originalPinPosition.x);
             
-            console.log(`Moving wire ${dragWire.wire.id} by delta ${delta} on axis ${dragWire.axis}`);
-            console.log('Original points:', dragWire.originalPoints);
-            
             // Move the wire perpendicular to its axis
             dragWire.wire.points = dragWire.originalPoints.map((pt, idx) => {
               if (dragWire.axis === 'x') {
@@ -1827,8 +1815,6 @@ import {
                 return { x: pt.x + delta, y: pt.y };
               }
             });
-            
-            console.log('New points:', dragWire.wire.points);
             
             // Update the component connection endpoint to match the new pin position
             const componentEndIndex = dragWire.isStart ? 0 : dragWire.wire.points.length - 1;
@@ -3279,8 +3265,31 @@ import {
     // --- Manual Junction Dot Placement/Deletion and shared pointerdown setup ---
     const p = svgPoint(e);
     const tgt = e.target as Element;
+    
+    // If endpoint stretch is active, any left-click confirms and ends it
+    if (endpointStretchState && endpointStretchState.dragging && e.button === 0) {
+      const w = endpointStretchState.wire;
+      
+      // Check if wire became too short (< 5 pixels) - if so, delete it
+      const len = Math.hypot(w.points[1].x - w.points[0].x, w.points[1].y - w.points[0].y);
+      if (len < 5) {
+        wires = wires.filter(wire => wire.id !== w.id);
+        selection = { kind: null, id: null, segIndex: null };
+      }
+      
+      // Normalize and clean up
+      normalizeAllWires();
+      unifyInlineWires();
+      rebuildTopology();
+      redraw();
+      
+      endpointStretchState = null;
+      e.preventDefault();
+      return;
+    }
+    
     let endpointClicked: Point | null = null;
-    if (tgt && tgt.tagName === 'rect' && (tgt as any).endpoint) {
+    if (tgt && (tgt.tagName === 'rect' || tgt.tagName === 'circle') && (tgt as any).endpoint) {
       endpointClicked = (tgt as any).endpoint as Point;
     }
     const snapCandDown = endpointClicked
@@ -3495,6 +3504,53 @@ import {
       const onWire = !!(tgt && tgt.closest && tgt.closest('#wires g'));
       const onJunction = !!(tgt && tgt.hasAttribute && tgt.hasAttribute('data-junction-id'));
       const onEndpoint = !!(tgt && (tgt as any).endpoint); // Check if clicking on an endpoint marker
+      
+      // Handle clicking on a free wire endpoint to stretch it along its axis
+      if ((mode === 'move' || mode === 'select') && e.button === 0 && onEndpoint && (tgt as any).wireId) {
+        const wireId = (tgt as any).wireId;
+        const endpointIndex = (tgt as any).endpointIndex;
+        const wire = wires.find(w => w.id === wireId);
+        
+        if (wire && wire.points.length === 2) {
+          const endpoint = wire.points[endpointIndex];
+          const otherEnd = wire.points[endpointIndex === 0 ? 1 : 0];
+          
+          // Check if this endpoint is free (not connected to anything)
+          const connectedWires = wiresEndingAt(endpoint).filter(w => w.id !== wireId);
+          const connectedComps = components.filter(c => {
+            const pins = Components.compPinPositions(c);
+            return pins.some(pin => Math.hypot(pin.x - endpoint.x, pin.y - endpoint.y) < 1);
+          });
+          
+          const isFree = connectedWires.length === 0 && connectedComps.length === 0;
+          
+          if (isFree) {
+            // Determine axis (horizontal or vertical)
+            const isVertical = Math.abs(wire.points[0].x - wire.points[1].x) < 0.1;
+            const isHorizontal = Math.abs(wire.points[0].y - wire.points[1].y) < 0.1;
+            
+            if (isVertical || isHorizontal) {
+              // Start endpoint stretch
+              pushUndo();
+              endpointStretchState = {
+                wire,
+                endpointIndex,
+                originalPoints: wire.points.map(pt => ({ x: pt.x, y: pt.y })),
+                axis: isVertical ? 'y' : 'x',
+                fixedCoord: isVertical ? wire.points[0].x : wire.points[0].y,
+                dragging: true
+              };
+              
+              if (mode === 'select') setMode('move');
+              selection = { kind: 'wire', id: wireId, segIndex: null };
+              e.stopPropagation();
+              e.preventDefault();
+              return;
+            }
+          }
+        }
+      }
+      
       if (mode === 'move' && e.button === 0 && !onComp && !onWire && !onJunction && !onEndpoint) {
         selection = { kind: null, id: null, segIndex: null };
         setMode('select');
@@ -3511,6 +3567,18 @@ import {
     // Middle mouse drag pans
     if (e.button === 1) {
       e.preventDefault(); beginPan(e);
+      return;
+    }
+    // Right-click cancels endpoint stretch
+    if (e.button === 2 && endpointStretchState && endpointStretchState.dragging) {
+      e.preventDefault();
+      suppressNextContextMenu = true;
+      // Restore original points
+      const w = endpointStretchState.wire;
+      w.points = endpointStretchState.originalPoints.map(pt => ({ x: pt.x, y: pt.y }));
+      updateWireDOM(w);
+      endpointStretchState = null;
+      redraw();
       return;
     }
     // Right-click ends wire placement (when wiring) or exits junction dot modes
@@ -3644,6 +3712,37 @@ import {
   });
   // Rubber-band wire, placement ghost, crosshair, and hover pan cursor
   svg.addEventListener('pointermove', (e) => {
+    // Free endpoint stretch mode handling
+    if (endpointStretchState && endpointStretchState.dragging) {
+      const p = svgPoint(e);
+      const w = endpointStretchState.wire;
+      const axis = endpointStretchState.axis;
+      const fixedCoord = endpointStretchState.fixedCoord;
+      const endpointIndex = endpointStretchState.endpointIndex;
+      const otherEndIndex = endpointIndex === 0 ? 1 : 0;
+      
+      // Constrain movement along the wire's axis
+      if (axis === 'x') {
+        // Horizontal wire - move endpoint horizontally
+        const newX = snap(p.x);
+        w.points[endpointIndex].x = newX;
+        w.points[endpointIndex].y = fixedCoord;
+        w.points[otherEndIndex].y = fixedCoord; // Ensure other end stays on axis
+      } else {
+        // Vertical wire - move endpoint vertically
+        const newY = snap(p.y);
+        w.points[endpointIndex].x = fixedCoord;
+        w.points[endpointIndex].y = newY;
+        w.points[otherEndIndex].x = fixedCoord; // Ensure other end stays on axis
+      }
+      
+      updateWireDOM(w);
+      updateCoordinateDisplay(w.points[endpointIndex].x, w.points[endpointIndex].y);
+      updateCoordinateInputs(w.points[endpointIndex].x, w.points[endpointIndex].y);
+      showCoordinateInputs();
+      return;
+    }
+    
     // Wire stretch handling
     if (wireStretchState && mode === 'move') {
       const p = svgPoint(e);
@@ -4103,6 +4202,27 @@ import {
   });
 
   svg.addEventListener('pointerup', (e) => {
+    // Finish free endpoint stretch if active
+    if (endpointStretchState && endpointStretchState.dragging) {
+      const w = endpointStretchState.wire;
+      
+      // Check if wire became too short (< 5 pixels) - if so, delete it
+      const len = Math.hypot(w.points[1].x - w.points[0].x, w.points[1].y - w.points[0].y);
+      if (len < 5) {
+        wires = wires.filter(wire => wire.id !== w.id);
+        selection = { kind: null, id: null, segIndex: null };
+      }
+      
+      // Normalize and clean up
+      normalizeAllWires();
+      unifyInlineWires();
+      rebuildTopology();
+      redraw();
+      
+      endpointStretchState = null;
+      return;
+    }
+    
     // Finish wire stretch if active
     if (wireStretchState) {
       if (wireStretchState.dragging) {
@@ -4214,6 +4334,16 @@ import {
       }
     }
     if (e.key === 'Escape') {
+      // If endpoint stretch is active, cancel it
+      if (endpointStretchState && endpointStretchState.dragging) {
+        // Restore original points
+        const w = endpointStretchState.wire;
+        w.points = endpointStretchState.originalPoints.map(pt => ({ x: pt.x, y: pt.y }));
+        updateWireDOM(w);
+        endpointStretchState = null;
+        redraw();
+        return;
+      }
       // If a drawing is in progress, cancel it first
       if (drawing.active) {
         drawing.active = false; drawing.points = []; gDrawing.replaceChildren();
@@ -4586,11 +4716,8 @@ import {
     
     // Render ghost connecting wires during lateral component drag (before early return)
     if (componentDragState && componentDragState.ghostWires.length > 0) {
-      console.log('RENDERINGING GHOST WIRES:', componentDragState.ghostWires.length, 'wires');
       const wireColor = moveCollapseCtx?.color || defaultWireColor;
-      console.log('Wire color:', wireColor);
       componentDragState.ghostWires.forEach((ghost, idx) => {
-        console.log(`Rendering ghost wire ${idx}: from (${ghost.from.x}, ${ghost.from.y}) to (${ghost.to.x}, ${ghost.to.y})`);
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         line.setAttribute('stroke', wireColor);
         line.setAttribute('stroke-width', '1');
