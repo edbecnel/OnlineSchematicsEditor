@@ -749,6 +749,7 @@ export function renderInspector(ctx, inspector, inspectorNone) {
             ctx.pushUndo();
             delete j.size;
             delete j.color;
+            j.manual = false; // Convert manual junction to auto junction, using project settings
             ctx.redrawCanvasOnly();
             ctx.renderInspector();
         };
