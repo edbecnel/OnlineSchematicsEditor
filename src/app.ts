@@ -5546,19 +5546,30 @@ import {
           // Clear custom size and auto-select nearest preset
           if (junctionCustomSize !== null) {
             const presetValues = [15, 30, 40, 50, 65];
+            const presetNames: ('smallest' | 'small' | 'default' | 'large' | 'largest')[] = ['smallest', 'small', 'default', 'large', 'largest'];
             let nearestPreset = presetValues[0];
+            let nearestIndex = 0;
             let minDiff = Math.abs(junctionCustomSize - presetValues[0]);
             
-            for (const preset of presetValues) {
-              const diff = Math.abs(junctionCustomSize - preset);
+            for (let i = 0; i < presetValues.length; i++) {
+              const diff = Math.abs(junctionCustomSize - presetValues[i]);
               if (diff < minDiff) {
                 minDiff = diff;
-                nearestPreset = preset;
+                nearestPreset = presetValues[i];
+                nearestIndex = i;
               }
             }
             
+            // Update to nearest preset
             junctionCustomSize = nearestPreset;
+            junctionDotSize = presetNames[nearestIndex];
             localStorage.setItem('junctionDots.customSize', String(junctionCustomSize));
+            localStorage.setItem('junctionDots.size', junctionDotSize);
+            
+            // Update button selection
+            updateJunctionSizeSelection(junctionDotSize);
+            
+            // Update input with formatted value
             const sizeNm = nearestPreset * 0.0254 * NM_PER_MM;
             junctionCustomSizeInput.value = formatDimForDisplay(sizeNm, globalUnits);
           } else {
