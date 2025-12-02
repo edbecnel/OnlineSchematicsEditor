@@ -147,6 +147,7 @@ export function beginMarqueeAt(ctx: InputContext, p: Point, startedOnEmpty: bool
   if (ctx.marquee.rectEl) ctx.marquee.rectEl.remove();
   ctx.marquee.rectEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
   ctx.marquee.rectEl.setAttribute('class', 'marquee');
+  ctx.marquee.rectEl.setAttribute('vector-effect', 'non-scaling-stroke');
   ctx.gOverlay.appendChild(ctx.marquee.rectEl);
   updateMarqueeTo(ctx, p);
 }
