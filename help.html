@@ -371,6 +371,7 @@
       <li>Hover over a free wire endpoint (not connected to a component or another wire)</li>
       <li>Green endpoint circles indicate stretchable endpoints</li>
       <li>Click on the endpoint circle to begin stretching</li>
+      <li>A white dot with black outline appears at the endpoint being stretched</li>
       <li>Works from any mode except Wire mode</li>
       <li>Automatically switches to Move mode when stretching begins</li>
     </ul>
@@ -379,8 +380,10 @@
     <ul>
       <li>The endpoint moves along the wire's axis (horizontal or vertical)</li>
       <li>Drag to extend or shrink the wire freely in both directions</li>
+      <li>The white dot follows your cursor showing the endpoint position</li>
       <li>The opposite end of the wire segment remains fixed</li>
       <li>Coordinate display shows the current endpoint position</li>
+      <li>Coordinate inputs in the status bar update in real-time</li>
       <li>Standard snapping behavior applies (50 mil grid by default)</li>
     </ul>
     
@@ -390,9 +393,10 @@
       <li><b>Right-click:</b> Cancel and restore original position</li>
       <li><b>Escape key:</b> Cancel and restore original position</li>
       <li><b>Auto-deletion:</b> If the wire becomes shorter than 5 pixels when confirmed, it's automatically deleted</li>
+      <li>The white dot disappears when the stretch operation completes</li>
     </ul>
     
-    <p class="tip"><i>Tip:</i> Endpoint stretching is ideal for adjusting wire lengths without redrawing, especially when fine-tuning schematic layout. You can both extend and shrink wires along their axis.</p>
+    <p class="tip"><i>Tip:</i> Endpoint stretching is ideal for adjusting wire lengths without redrawing, especially when fine-tuning schematic layout. You can both extend and shrink wires along their axis. The white dot provides clear visual feedback of where the endpoint will be placed.</p>
 
     <h2>Status Bar Controls</h2>
     <p>The status bar at the bottom of the canvas provides quick access to drawing aids and status information:</p>

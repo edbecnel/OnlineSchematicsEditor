@@ -2385,12 +2385,19 @@ import {
     updateCounts();
     renderNetList();
 
-    // Endpoint selection circles (overlay). Visible while placing wires or components
-    // Remove any previous endpoint markers in the overlay
+    // Update endpoint circles after all rendering is done
+    updateEndpointCircles();
+  }
+
+  function updateEndpointCircles_OLD_TO_DELETE() {
+    // OLD DUPLICATE CODE - DO NOT USE
+    // Remove existing endpoint circles
     try {
-      $qa('[data-endpoint]', gOverlay).forEach(el => el.remove());
+      const existing = $qa('[data-endpoint]', gOverlay);
+      console.log('Removing existing endpoint circles:', existing.length);
+      existing.forEach(el => el.remove());
     } catch (_) { }
-    // Show endpoint circles while wiring, placing, moving, managing junctions, or when Select is active
+    // Redraw them (respecting draggedComponentId filter)
     if (mode === 'wire' || mode === 'place' || mode === 'move' || mode === 'select' || mode === 'place-junction' || mode === 'delete-junction') {
       const ns = 'http://www.w3.org/2000/svg';
       for (const w of wires) {
@@ -2564,7 +2571,7 @@ import {
         }
       }
     }
-  }
+  } // End of OLD duplicate code - should be deleted
 
   function updateEndpointCircles() {
     // Remove existing endpoint circles
@@ -2599,6 +2606,8 @@ import {
           circle.setAttribute('stroke', 'lime');
           circle.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
           circle.style.cursor = 'pointer';
+          circle.style.pointerEvents = 'all'; // Ensure circle captures pointer events
+          circle.style.zIndex = '9999'; // Force on top
           (circle as any).endpoint = { x: pt.x, y: pt.y };
           (circle as any).wireId = w.id;
           (circle as any).endpointIndex = actualIndex;
@@ -2624,6 +2633,7 @@ import {
           circle.setAttribute('stroke', 'lime');
           circle.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
           circle.style.cursor = 'pointer';
+          circle.style.pointerEvents = 'all'; // Ensure circle captures pointer events
           (circle as any).endpoint = { x: pin.x, y: pin.y };
           (circle as any).componentId = c.id;
           gOverlay.appendChild(circle);
@@ -2636,6 +2646,12 @@ import {
     rebuildTopology();
     redrawCanvasOnly();
     renderInspector();
+    
+    // Ensure gOverlay is the last child so circles are on top of everything
+    // Do this AFTER all other rendering including inspector
+    if (gOverlay && gOverlay.parentNode) {
+      gOverlay.parentNode.appendChild(gOverlay);
+    }
   }
 
   function selecting(kind, id, segIndex = null) {
@@ -3274,6 +3290,10 @@ import {
     if (endpointStretchState && endpointStretchState.dragging && e.button === 0) {
       const w = endpointStretchState.wire;
       
+      // Remove the drag dot
+      const dot = gDrawing.querySelector('[data-endpoint-drag-dot]');
+      if (dot) dot.remove();
+      
       // Check if wire became too short (< 5 pixels) - if so, delete it
       const len = Math.hypot(w.points[1].x - w.points[0].x, w.points[1].y - w.points[0].y);
       if (len < 5) {
@@ -3546,8 +3566,24 @@ import {
                 dragging: true
               };
               
+              // Draw the dot immediately at the endpoint
+              // Remove any existing drag dots first
+              gDrawing.querySelectorAll('[data-endpoint-drag-dot]').forEach(el => el.remove());
+              
+              const ns = 'http://www.w3.org/2000/svg';
+              const dot = document.createElementNS(ns, 'circle');
+              dot.setAttribute('data-endpoint-drag-dot', '1');
+              dot.setAttribute('cx', String(wire.points[endpointIndex].x));
+              dot.setAttribute('cy', String(wire.points[endpointIndex].y));
+              dot.setAttribute('r', '3');
+              dot.setAttribute('fill', '#ffffff');
+              dot.setAttribute('stroke', '#000000');
+              dot.setAttribute('stroke-width', '1');
+              dot.style.pointerEvents = 'none';
+              gDrawing.appendChild(dot);
+              
               setMode('move');
-              selection = { kind: 'wire', id: wireId, segIndex: null };
+              selection = { kind: null, id: null, segIndex: null }; // Don't select the wire so endpoint remains visible
               e.stopPropagation();
               e.preventDefault();
               return;
@@ -3578,6 +3614,9 @@ import {
     if (e.button === 2 && endpointStretchState && endpointStretchState.dragging) {
       e.preventDefault();
       suppressNextContextMenu = true;
+      // Remove the drag dot
+      const dot = gDrawing.querySelector('[data-endpoint-drag-dot]');
+      if (dot) dot.remove();
       // Restore original points
       const w = endpointStretchState.wire;
       w.points = endpointStretchState.originalPoints.map(pt => ({ x: pt.x, y: pt.y }));
@@ -3744,6 +3783,23 @@ import {
       }
       
       updateWireDOM(w);
+      
+      // Draw a visible white dot at the dragging endpoint
+      // Remove ALL existing drag dots first
+      gDrawing.querySelectorAll('[data-endpoint-drag-dot]').forEach(el => el.remove());
+      
+      const ns = 'http://www.w3.org/2000/svg';
+      const dot = document.createElementNS(ns, 'circle');
+      dot.setAttribute('data-endpoint-drag-dot', '1');
+      dot.setAttribute('cx', String(w.points[endpointIndex].x));
+      dot.setAttribute('cy', String(w.points[endpointIndex].y));
+      dot.setAttribute('r', '3');
+      dot.setAttribute('fill', '#ffffff');
+      dot.setAttribute('stroke', '#000000');
+      dot.setAttribute('stroke-width', '1');
+      dot.style.pointerEvents = 'none';
+      gDrawing.appendChild(dot);
+      
       updateCoordinateDisplay(w.points[endpointIndex].x, w.points[endpointIndex].y);
       updateCoordinateInputs(w.points[endpointIndex].x, w.points[endpointIndex].y);
       showCoordinateInputs();
