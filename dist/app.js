@@ -5427,8 +5427,34 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             if (!junctionCustomPreview || !junctionCustomPreviewSvg)
                 return;
             if (junctionCustomSize !== null && junctionCustomSize > 0) {
-                // Show the preview button
+                // Check if custom size matches any preset
+                const presetSizes = { smallest: 15, small: 30, default: 40, large: 50, largest: 65 };
+                let matchedPreset = null;
+                for (const [preset, size] of Object.entries(presetSizes)) {
+                    if (Math.abs(junctionCustomSize - size) < 0.01) { // Allow tiny floating point differences
+                        matchedPreset = preset;
+                        break;
+                    }
+                }
+                if (matchedPreset) {
+                    // Hide custom button and highlight the matching preset
+                    junctionCustomPreview.style.display = 'none';
+                    junctionDotSizeSelect.querySelectorAll('.junction-size-option').forEach(btn => {
+                        const btnSize = btn.getAttribute('data-size');
+                        btn.classList.toggle('selected', btnSize === matchedPreset);
+                    });
+                    return;
+                }
+                // Show the preview button for non-preset custom sizes
                 junctionCustomPreview.style.display = 'flex';
+                // Remove selection from preset buttons
+                junctionDotSizeSelect.querySelectorAll('.junction-size-option').forEach(btn => {
+                    if (btn.getAttribute('data-size') !== 'custom') {
+                        btn.classList.remove('selected');
+                    }
+                });
+                // Select the custom button
+                junctionCustomPreview.classList.add('selected');
                 // Calculate radius in SVG units (approximate scaling to match other buttons)
                 // The preview buttons use a 24x24 viewBox with center at 12,12
                 // Scale: roughly 1 mil ≈ 0.1 SVG units for visual consistency
@@ -5483,6 +5509,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             else {
                 // Hide the preview button if no custom size
                 junctionCustomPreview.style.display = 'none';
+                junctionCustomPreview.classList.remove('selected');
             }
         };
         // Make function available to setGlobalUnits
