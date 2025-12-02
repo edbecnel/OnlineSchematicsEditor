@@ -2453,8 +2453,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     continue;
                 ensureStroke(w);
                 const eff = effectiveStroke(w, Netlist.netClassForWire(w, NET_CLASSES, activeNetClass), THEME);
-                const ends = [w.points[0], w.points[w.points.length - 1]];
-                for (const [ei, pt] of ends.map((p, i) => [i, p])) {
+                // Store actual indices in the points array (0 and length-1)
+                const endpointIndices = [0, w.points.length - 1];
+                const endpointPoints = [w.points[0], w.points[w.points.length - 1]];
+                for (let i = 0; i < 2; i++) {
+                    const actualIndex = endpointIndices[i];
+                    const pt = endpointPoints[i];
                     let desiredScreenPx = 9;
                     if (zoom <= 0.25)
                         desiredScreenPx = 6;
@@ -2473,7 +2477,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     circle.style.cursor = 'pointer';
                     circle.endpoint = { x: pt.x, y: pt.y };
                     circle.wireId = w.id;
-                    circle.endpointIndex = ei;
+                    circle.endpointIndex = actualIndex;
                     gOverlay.appendChild(circle);
                 }
             }
@@ -3584,7 +3588,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const axis = endpointStretchState.axis;
             const fixedCoord = endpointStretchState.fixedCoord;
             const endpointIndex = endpointStretchState.endpointIndex;
-            const otherEndIndex = endpointIndex === 0 ? 1 : 0;
+            const otherEndIndex = endpointIndex === 0 ? (w.points.length - 1) : 0;
             const otherEndpoint = w.points[otherEndIndex];
             // Constrain movement along the wire's axis
             // Allow shrinking but prevent crossing past the other endpoint (minimum length stays at 5px for deletion check)
