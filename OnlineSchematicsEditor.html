@@ -449,6 +449,44 @@
       color: #333333;
     }
 
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+      margin: .25rem 0 .5rem;
+    }
+
+    .section-header h2 {
+      margin: 0;
+      flex: 1;
+    }
+
+    .section-toggle {
+      font-size: 0.75rem;
+      color: var(--muted);
+      transition: transform 0.2s;
+      padding: 0.25rem;
+    }
+
+    .section-toggle.collapsed {
+      transform: rotate(-90deg);
+    }
+
+    .section-content {
+      overflow: hidden;
+      transition: max-height 0.3s ease-out, opacity 0.2s ease-out;
+      max-height: 5000px;
+      opacity: 1;
+    }
+
+    .section-content.collapsed {
+      max-height: 0;
+      opacity: 0;
+      margin: 0;
+    }
+
     .row {
       display: flex;
       gap: .5rem;
@@ -1135,7 +1173,11 @@
           <div class="row"><input id="projTitle" type="text" placeholder="Untitled schematic" /></div>
           <div class="row hint">Saved into JSON</div>
           <hr style="border-color:#22262f; margin:1rem 0" />
-          <h2>Settings</h2>
+          <div class="section-header" data-section="settings">
+            <h2>Settings</h2>
+            <span class="section-toggle">▼</span>
+          </div>
+          <div class="section-content" data-section-content="settings">
           <div class="row"><label>Schematic Standard</label></div>
           <div class="row">
             <select id="defaultResistorStyleSelect">
@@ -1202,10 +1244,16 @@
             </div>
           </div>
           <div class="row hint">Background color for light theme</div>
+          </div>
           <hr style="border-color:#22262f; margin:1rem 0" />
-          <h2>Nets</h2>
+          <div class="section-header" data-section="nets">
+            <h2>Nets</h2>
+            <span class="section-toggle">▼</span>
+          </div>
+          <div class="section-content" data-section-content="nets">
           <div id="netList" class="hint">—</div>
           <button id="addNetBtn" style="margin-top:0.5rem; width:100%">Add Net</button>
+          </div>
           <hr style="border-color:#22262f; margin:1rem 0" />
           <h2>Counts</h2>
           <div class="hint" id="counts">—</div>

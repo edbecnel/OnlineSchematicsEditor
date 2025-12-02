@@ -6577,6 +6577,44 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }, 250);
             });
         });
+        // Section collapse/expand toggle (Settings, Nets, etc.)
+        document.querySelectorAll('.section-header').forEach(header => {
+            header.addEventListener('click', () => {
+                const sectionName = header.getAttribute('data-section');
+                if (!sectionName)
+                    return;
+                const content = document.querySelector(`[data-section-content="${sectionName}"]`);
+                const toggle = header.querySelector('.section-toggle');
+                if (!content || !toggle)
+                    return;
+                const isCollapsed = content.classList.contains('collapsed');
+                if (isCollapsed) {
+                    // Expand
+                    content.classList.remove('collapsed');
+                    toggle.classList.remove('collapsed');
+                    localStorage.setItem(`section-${sectionName}-collapsed`, 'false');
+                }
+                else {
+                    // Collapse
+                    content.classList.add('collapsed');
+                    toggle.classList.add('collapsed');
+                    localStorage.setItem(`section-${sectionName}-collapsed`, 'true');
+                }
+            });
+            // Restore collapsed state from localStorage
+            const sectionName = header.getAttribute('data-section');
+            if (sectionName) {
+                const isCollapsed = localStorage.getItem(`section-${sectionName}-collapsed`) === 'true';
+                if (isCollapsed) {
+                    const content = document.querySelector(`[data-section-content="${sectionName}"]`);
+                    const toggle = header.querySelector('.section-toggle');
+                    if (content && toggle) {
+                        content.classList.add('collapsed');
+                        toggle.classList.add('collapsed');
+                    }
+                }
+            }
+        });
         // Resizer drag functionality
         function initResizer(resizer, panel, isLeft) {
             let startX = 0;
