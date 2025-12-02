@@ -3518,7 +3518,7 @@ import {
         
         if (wire && wire.points.length === 2) {
           const endpoint = wire.points[endpointIndex];
-          const otherEnd = wire.points[endpointIndex === 0 ? 1 : 0];
+          const otherEnd = wire.points[endpointIndex === 0 ? (wire.points.length - 1) : 0];
           
           // Check if this endpoint is free (not connected to anything)
           const connectedWires = wiresEndingAt(endpoint).filter(w => w.id !== wireId);
