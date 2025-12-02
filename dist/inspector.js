@@ -640,10 +640,6 @@ export function renderInspector(ctx, inspector, inspectorNone) {
             }
         };
         customSizeInputRow.appendChild(sizeIn);
-        const hint = document.createElement('div');
-        hint.className = 'hint';
-        hint.textContent = 'Override preset size (diameter)';
-        customSizeInputRow.appendChild(hint);
         wrap.appendChild(customSizeInputRow);
         // Color picker with opacity and swatches
         const colorRow = document.createElement('div');
