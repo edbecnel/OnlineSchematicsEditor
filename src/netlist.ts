@@ -19,11 +19,7 @@ export function netClassForWire(
   if (w.netId) {
     return NET_CLASSES[w.netId] || NET_CLASSES.default;
   }
-  // If wire is using netclass defaults (width=0, type=default) but no netId, use active net class
-  if (w.stroke && w.stroke.width <= 0 && w.stroke.type === 'default') {
-    return NET_CLASSES[activeNetClass] || NET_CLASSES.default;
-  }
-  // Fallback to default
+  // Fallback to default (activeNetClass is only used for UI display, not for determining wire properties)
   return NET_CLASSES.default;
 }
 
@@ -260,8 +256,9 @@ export function showNetPropertiesDialog(options: NetPropertiesDialogOptions): vo
   const overlay = document.createElement('div');
   overlay.style.cssText = `
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background-color: rgba(0,0,0,0.6); z-index: 1000;
+    background-color: rgba(0,0,0,0.6); z-index: 999999;
     display: flex; align-items: center; justify-content: center;
+    pointer-events: auto;
   `;
 
   // Create dialog
@@ -290,6 +287,15 @@ export function showNetPropertiesDialog(options: NetPropertiesDialogOptions): vo
   widthInput.type = 'text';
   const widthNm = Math.round((netClass.wire.width || 0) * NM_PER_MM);
   widthInput.value = formatDimForDisplay(widthNm, globalUnits);
+  
+  // Format width input on blur to show units
+  widthInput.onblur = () => {
+    const parsed = parseDimInput(widthInput.value || '0', globalUnits);
+    if (parsed) {
+      widthInput.value = formatDimForDisplay(parsed.nm, globalUnits);
+    }
+  };
+  
   widthRow.appendChild(widthLabel);
   widthRow.appendChild(widthInput);
   dialog.appendChild(widthRow);
@@ -436,20 +442,41 @@ export function showNetPropertiesDialog(options: NetPropertiesDialogOptions): vo
     }
   };
 
+  // Define cleanup first (needed for button handlers)
+  let cleanupCalled = false;
+  const cleanup = () => {
+    if (cleanupCalled) return;
+    cleanupCalled = true;
+    document.removeEventListener('keydown', escHandler);
+    if (document.body.contains(overlay)) {
+      document.body.removeChild(overlay);
+    }
+  };
+
+  // Close on Escape key
+  const escHandler = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && document.body.contains(overlay)) {
+      cleanup();
+    }
+  };
+
   // Buttons
   const buttonRow = document.createElement('div');
   buttonRow.style.cssText = 'display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;';
 
   const cancelBtn = document.createElement('button');
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.onclick = () => {
-    document.body.removeChild(overlay);
+  cancelBtn.onclick = (e) => {
+    e.stopPropagation();
+    cleanup();
   };
 
   const saveBtn = document.createElement('button');
   saveBtn.textContent = 'Save';
   saveBtn.className = 'ok';
-  saveBtn.onclick = () => {
+  saveBtn.onclick = (e) => {
+    e.stopPropagation();
+    
     // Parse width
     const parsed = parseDimInput(widthInput.value || '0', globalUnits);
     const nm = parsed ? parsed.nm : 0;
@@ -469,7 +496,7 @@ export function showNetPropertiesDialog(options: NetPropertiesDialogOptions): vo
       color: { r: r / 255, g: g / 255, b: b / 255, a }
     });
 
-    document.body.removeChild(overlay);
+    cleanup();
   };
 
   buttonRow.appendChild(cancelBtn);
@@ -479,19 +506,21 @@ export function showNetPropertiesDialog(options: NetPropertiesDialogOptions): vo
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
 
-  // Close on overlay click
-  overlay.onclick = (e) => {
+  // Mark the overlay so we can identify it's intentionally a modal dialog
+  overlay.setAttribute('data-modal-dialog', 'true');
+  
+  // Only block events that hit the overlay itself (the dark background), not the dialog
+  overlay.addEventListener('mousedown', (e) => {
     if (e.target === overlay) {
-      document.body.removeChild(overlay);
+      e.stopPropagation();
     }
-  };
+  }, true);
+  
+  overlay.addEventListener('mouseup', (e) => {
+    if (e.target === overlay) {
+      e.stopPropagation();
+    }
+  }, true);
 
-  // Close on Escape key
-  const escHandler = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && document.body.contains(overlay)) {
-      document.body.removeChild(overlay);
-      document.removeEventListener('keydown', escHandler);
-    }
-  };
   document.addEventListener('keydown', escHandler);
 }
