@@ -331,6 +331,9 @@
       <li>Click and drag a component to reposition it</li>
       <li>Component coordinates display in upper left corner during movement</li>
       <li>Editable X and Y coordinate inputs appear in the status bar</li>
+      <li><b>Ghost Wires:</b> When dragging components along straight wire paths (SWP), connected wires are shown as semi-transparent ghost outlines during the drag operation</li>
+      <li><b>Wire Preservation:</b> Multi-segment perpendicular wires maintain their geometry when components are moved along them</li>
+      <li><b>Automatic Wire Breaking:</b> After moving components, wires automatically break at component pins to maintain proper connectivity</li>
     </ul>
 
     <h3>Keyboard Movement</h3>
@@ -358,6 +361,38 @@
       <li>Uses current display units if no unit is specified</li>
     </ul>
     <p class="tip"><i>Tip:</i> Use arrow keys for incremental adjustments, mouse for free positioning, and coordinate input for exact placement at specific coordinates.</p>
+
+    <h2>Wire Manipulation</h2>
+    <h3>Stretching Wire Endpoints</h3>
+    <p>You can adjust the length of wire segments by dragging their free endpoints:</p>
+    
+    <h4>Initiating Endpoint Stretch</h4>
+    <ul>
+      <li>Hover over a free wire endpoint (not connected to a component or another wire)</li>
+      <li>Green endpoint circles indicate stretchable endpoints</li>
+      <li>Click on the endpoint circle to begin stretching</li>
+      <li>Works from any mode except Wire mode</li>
+      <li>Automatically switches to Move mode when stretching begins</li>
+    </ul>
+    
+    <h4>During Stretch Operation</h4>
+    <ul>
+      <li>The endpoint moves along the wire's axis (horizontal or vertical)</li>
+      <li>Drag to extend or shrink the wire freely in both directions</li>
+      <li>The opposite end of the wire segment remains fixed</li>
+      <li>Coordinate display shows the current endpoint position</li>
+      <li>Standard snapping behavior applies (50 mil grid by default)</li>
+    </ul>
+    
+    <h4>Completing or Canceling</h4>
+    <ul>
+      <li><b>Left-click:</b> Confirm the new endpoint position</li>
+      <li><b>Right-click:</b> Cancel and restore original position</li>
+      <li><b>Escape key:</b> Cancel and restore original position</li>
+      <li><b>Auto-deletion:</b> If the wire becomes shorter than 5 pixels when confirmed, it's automatically deleted</li>
+    </ul>
+    
+    <p class="tip"><i>Tip:</i> Endpoint stretching is ideal for adjusting wire lengths without redrawing, especially when fine-tuning schematic layout. You can both extend and shrink wires along their axis.</p>
 
     <h2>Status Bar Controls</h2>
     <p>The status bar at the bottom of the canvas provides quick access to drawing aids and status information:</p>
@@ -619,11 +654,12 @@
       <li><span class="kbd">T</span> — Toggle connection tracking on/off</li>
       <li><span class="kbd">Ctrl+L</span> — Activate coordinate input (works in Wire, Place, Move, and Junction modes; cycles through X, Y, Length, Angle when wire drawing)</li>
       <li><span class="kbd">Tab</span> — Switch between coordinate input fields (X → Y → Length → Angle)</li>
-      <li><span class="kbd">Esc</span> — Cancel drawing / Deselect / Exit mode / Cancel coordinate input</li>
+      <li><span class="kbd">Esc</span> — Cancel drawing / Deselect / Exit mode / Cancel coordinate input / Cancel endpoint stretch</li>
       <li><span class="kbd">Enter</span> — Finish wire drawing / Exit junction dot mode / Accept coordinate input</li>
       <li><span class="kbd">Delete</span> — Delete selected component or wire</li>
       <li><span class="kbd">Shift</span> — Hold while wiring for temporary orthogonal mode</li>
-      <li><span class="kbd">Right-click</span> — Finish wire drawing / Exit junction dot mode</li>
+      <li><span class="kbd">Right-click</span> — Finish wire drawing / Exit junction dot mode / Cancel endpoint stretch</li>
+      <li><span class="kbd">Left-click</span> — Confirm endpoint stretch position</li>
     </ul>
 
     <h3>Component Movement</h3>
@@ -649,6 +685,8 @@
       <li><b>Use tracking:</b> Enable connection hints to easily align wires with existing endpoints</li>
       <li><b>Snap to wires:</b> Click anywhere along a wire to start a new connection (T-junction)</li>
       <li><b>Connection circles:</b> Click green endpoint markers for precise connections - they show exactly where wires will connect</li>
+      <li><b>Stretch endpoints:</b> Click and drag free wire endpoints to adjust wire lengths without redrawing</li>
+      <li><b>Move with confidence:</b> Ghost wires show where connections will be maintained when dragging components</li>
       <li><b>Capacitor types:</b> Use <span class="kbd">C</span> for standard capacitors and <span class="kbd">Alt+C</span> for polarized capacitors</li>
       <li><b>Polar coordinates:</b> When drawing wires, use Length and Angle inputs for precise diagonal or angular routing</li>
       <li><b>Wire lengths:</b> Check the Inspector panel to see the exact length of selected wire segments</li>
