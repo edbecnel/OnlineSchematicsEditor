@@ -35,36 +35,55 @@ export function breakNearestWireAtPin(pin: Point, wires: Wire[], uid: (prefix: s
     return Math.hypot(p.x - nearest.x, p.y - nearest.y);
   };
   
-  for (const w of [...wires]) {
+  // Break ALL wire segments that should be split at this pin location
+  // Collect segments that need breaking to avoid modifying array during iteration
+  const segmentsToBreak: Array<{ w: Wire, i: number, bp: Point }> = [];
+  
+  for (const w of wires) {
     for (let i = 0; i < w.points.length - 1; i++) {
       const a = w.points[i], b = w.points[i + 1];
       const { proj, t } = projectPointToSegmentWithT(pin, a, b);
       const dist = pointToSegmentDistance(pin, a, b);
       
+      // Check if pin is exactly at an endpoint
+      const EPS = 1e-2;
+      const atStart = Math.hypot(pin.x - a.x, pin.y - a.y) < EPS;
+      const atEnd = Math.hypot(pin.x - b.x, pin.y - b.y) < EPS;
+      
       // axis-aligned fallback for robust vertical/horizontal splitting
       const isVertical = (a.x === b.x);
       const isHorizontal = (a.y === b.y);
-      const withinVert = isVertical && Math.abs(pin.x - a.x) <= GRID / 2 && pin.y >= Math.min(a.y, b.y) && pin.y <= Math.max(a.y, b.y);
-      const withinHorz = isHorizontal && Math.abs(pin.y - a.y) <= GRID / 2 && pin.x >= Math.min(a.x, b.x) && pin.x <= Math.max(a.x, b.x);
+      const withinVert = isVertical && Math.abs(pin.x - a.x) <= GRID / 2 && pin.y > Math.min(a.y, b.y) && pin.y < Math.max(a.y, b.y);
+      const withinHorz = isHorizontal && Math.abs(pin.y - a.y) <= GRID / 2 && pin.x > Math.min(a.x, b.x) && pin.x < Math.max(a.x, b.x);
       const nearInterior = (t > 0.001 && t < 0.999 && dist <= 20);
       
-      if (withinVert || withinHorz || nearInterior) {
-        // For angled (nearInterior), split at the exact projection; else use snapped pin
+      // Only break at true interior points (not at endpoints)
+      if (!atStart && !atEnd && (withinVert || withinHorz || nearInterior)) {
         const bp = nearInterior ? { x: proj.x, y: proj.y } : { x: snapToBaseScalar(pin.x), y: snapToBaseScalar(pin.y) };
-        const left = w.points.slice(0, i + 1).concat([bp]);
-        const right = [bp].concat(w.points.slice(i + 1));
-        
-        // replace original with normalized children (drop degenerate)
-        wires = wires.filter(x => x.id !== w.id);
-        const L = normalizedPolylineOrNull(left);
-        const R = normalizedPolylineOrNull(right);
-        if (L) wires.push({ id: uid('wire'), points: L, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
-        if (R) wires.push({ id: uid('wire'), points: R, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
-        return { wires, broke: true };
+        segmentsToBreak.push({ w, i, bp });
       }
     }
   }
-  return { wires, broke: false };
+  
+  // Now break all collected segments
+  let broke = false;
+  for (const { w, i, bp } of segmentsToBreak) {
+    // Check if this wire still exists (might have been removed by previous break)
+    if (!wires.includes(w)) continue;
+    
+    const left = w.points.slice(0, i + 1).concat([bp]);
+    const right = [bp].concat(w.points.slice(i + 1));
+    
+    // replace original with normalized children (drop degenerate)
+    wires = wires.filter(x => x.id !== w.id);
+    const L = normalizedPolylineOrNull(left);
+    const R = normalizedPolylineOrNull(right);
+    if (L) wires.push({ id: uid('wire'), points: L, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
+    if (R) wires.push({ id: uid('wire'), points: R, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
+    broke = true;
+  }
+  
+  return { wires, broke };
 }
 
 /**

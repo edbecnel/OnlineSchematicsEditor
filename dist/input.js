@@ -284,9 +284,17 @@ export function handlePointerDown(ctx, e) {
     try {
         const onComp = !!(tgt && tgt.closest && tgt.closest('g.comp'));
         const onWire = !!(tgt && tgt.closest && tgt.closest('#wires g'));
-        if (ctx.mode === 'move' && e.button === 0 && !onComp && !onWire) {
+        const onJunction = !!(tgt && tgt.hasAttribute && tgt.hasAttribute('data-junction-id'));
+        if (ctx.mode === 'move' && e.button === 0 && !onComp && !onWire && !onJunction) {
             ctx.selection = { kind: null, id: null, segIndex: null };
             ctx.setMode('select');
+            ctx.renderInspector();
+            ctx.redraw();
+            return;
+        }
+        // If in none mode with something selected, clicking empty space should deselect
+        if (ctx.mode === 'none' && e.button === 0 && !onComp && !onWire && !onJunction && ctx.selection.kind) {
+            ctx.selection = { kind: null, id: null, segIndex: null };
             ctx.renderInspector();
             ctx.redraw();
             return;

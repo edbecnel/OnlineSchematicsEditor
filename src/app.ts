@@ -184,6 +184,20 @@ import {
   let moveCollapseCtx: MoveCollapseCtx | null = null; // set while moving a component within its SWP
   let draggedComponentId: string | null = null; // track component being dragged to hide only its endpoint circles
   let lastMoveCompId: string | null = null;           // component id whose SWP is currently collapsed
+  
+  // ---- Wire stretch/drag state ----
+  let wireStretchState: { 
+    wire: Wire; 
+    startMousePos: Point; 
+    originalPoints: Point[];
+    originalP0: Point;
+    originalP1: Point;
+    connectedWiresStart: Array<{ wire: Wire; isStart: boolean; originalPoint: Point }>;
+    connectedWiresEnd: Array<{ wire: Wire; isStart: boolean; originalPoint: Point }>;
+    componentsOnWire: Array<{ comp: Component; pins: Point[]; axis: 'x' | 'y' }>;
+    ghostConnectingWires: Array<{ from: Point; to: Point }>; // Visual feedback for connecting wires
+    dragging: boolean;
+  } | null = null;
 
   // Suppress the next contextmenu after right-click finishing a wire
   let suppressNextContextMenu = false;
@@ -1411,6 +1425,15 @@ import {
 
     // Components should not block clicks when wiring, placing, or managing junction dots
     g.style.pointerEvents = (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction') ? 'none' : 'auto';
+    
+    // Set cursor style based on mode and selection
+    if (mode === 'move' && selection.kind === 'component' && selection.id === c.id) {
+      g.style.cursor = 'move';
+    } else if (mode === 'select') {
+      g.style.cursor = 'pointer';
+    } else {
+      g.style.cursor = '';
+    }
 
     // ---- Drag + selection (mouse) ----
     let dragging = false, dragOff = { x: 0, y: 0 }, slideCtx = null, dragStart = null;
@@ -1772,6 +1795,15 @@ import {
       const allowHits = (mode !== 'wire' && mode !== 'place' && mode !== 'place-junction' && mode !== 'delete-junction');
       hit.setAttribute('pointer-events', allowHits ? 'stroke' : 'none');
       hit.setAttribute('points', vis.getAttribute('points')); // IMPORTANT: give the hit polyline geometry
+      
+      // Set cursor style based on mode and selection
+      if (mode === 'move' && selection.kind === 'wire' && selection.id === w.id) {
+        hit.style.cursor = 'move';
+      } else if (mode === 'select') {
+        hit.style.cursor = 'pointer';
+      } else {
+        hit.style.cursor = '';
+      }
 
       // interactions
       hit.addEventListener('pointerenter', () => { if (allowHits) vis.classList.add('hover'); });
@@ -1780,9 +1812,145 @@ import {
         if (mode === 'delete') { removeWireAtPoint(w, svgPoint(e)); }
         else {
           if (mode === 'none') { setMode('select'); }
+          
+          // If in Select mode and this wire is already selected, switch to Move mode
+          if (mode === 'select' && selection.kind === 'wire' && selection.id === w.id) {
+            setMode('move');
+          }
+          
           if (mode === 'select' || mode === 'move') {
             // Select by wire (segment) id only; legacy segIndex is no longer required.
             selecting('wire', w.id, null);
+            
+            // If in move mode and selected, initiate wire drag
+            if (mode === 'move' && selection.kind === 'wire' && selection.id === w.id) {
+              const p0 = { x: snapToBaseScalar(w.points[0].x), y: snapToBaseScalar(w.points[0].y) };
+              const p1 = { x: snapToBaseScalar(w.points[w.points.length - 1].x), y: snapToBaseScalar(w.points[w.points.length - 1].y) };
+              
+              // Find wires connected at start point
+              const connectedAtStart = wires.filter(wire => {
+                if (wire.id === w.id) return false;
+                const wireStart = wire.points[0];
+                const wireEnd = wire.points[wire.points.length - 1];
+                return (Math.hypot(wireStart.x - p0.x, wireStart.y - p0.y) < 1) ||
+                       (Math.hypot(wireEnd.x - p0.x, wireEnd.y - p0.y) < 1);
+              }).map(wire => {
+                const isStart = Math.hypot(wire.points[0].x - p0.x, wire.points[0].y - p0.y) < 1;
+                const originalPoint = isStart 
+                  ? { x: wire.points[0].x, y: wire.points[0].y }
+                  : { x: wire.points[wire.points.length - 1].x, y: wire.points[wire.points.length - 1].y };
+                return { wire, isStart, originalPoint };
+              });
+              
+              // Find wires connected at end point
+              const connectedAtEnd = wires.filter(wire => {
+                if (wire.id === w.id) return false;
+                const wireStart = wire.points[0];
+                const wireEnd = wire.points[wire.points.length - 1];
+                return (Math.hypot(wireStart.x - p1.x, wireStart.y - p1.y) < 1) ||
+                       (Math.hypot(wireEnd.x - p1.x, wireEnd.y - p1.y) < 1);
+              }).map(wire => {
+                const isStart = Math.hypot(wire.points[0].x - p1.x, wire.points[0].y - p1.y) < 1;
+                const originalPoint = isStart 
+                  ? { x: wire.points[0].x, y: wire.points[0].y }
+                  : { x: wire.points[wire.points.length - 1].x, y: wire.points[wire.points.length - 1].y };
+                return { wire, isStart, originalPoint };
+              });
+              
+              // Determine wire axis
+              const isHorizontal = Math.abs(p0.y - p1.y) < 1;
+              const isVertical = Math.abs(p0.x - p1.x) < 1;
+              const wireAxis: 'x' | 'y' = isHorizontal ? 'x' : 'y';
+              
+              // Find 2-pin components that have at least one pin at the wire endpoints OR on connected wires OR on the wire itself
+              const componentsOnWire = components.filter(comp => {
+                if (!['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'].includes(comp.type)) {
+                  return false;
+                }
+                const pins = Components.compPinPositions(comp).map(p => ({
+                  x: snapToBaseScalar(p.x),
+                  y: snapToBaseScalar(p.y)
+                }));
+                if (pins.length !== 2) return false;
+                
+                const wireIsHorizontal = Math.abs(p0.y - p1.y) < 1;
+                const wireIsVertical = Math.abs(p0.x - p1.x) < 1;
+                
+                // Check if at least one pin is at either endpoint of the wire being dragged
+                const pin0AtP0 = Math.abs(pins[0].x - p0.x) < 1 && Math.abs(pins[0].y - p0.y) < 1;
+                const pin0AtP1 = Math.abs(pins[0].x - p1.x) < 1 && Math.abs(pins[0].y - p1.y) < 1;
+                const pin1AtP0 = Math.abs(pins[1].x - p0.x) < 1 && Math.abs(pins[1].y - p0.y) < 1;
+                const pin1AtP1 = Math.abs(pins[1].x - p1.x) < 1 && Math.abs(pins[1].y - p1.y) < 1;
+                
+                if (pin0AtP0 || pin0AtP1 || pin1AtP0 || pin1AtP1) {
+                  return true;
+                }
+                
+                // Check if component is ON the wire segment being dragged (not just at endpoints)
+                if (wireIsHorizontal) {
+                  // For horizontal wire, check if any pin is on the wire
+                  for (const pin of pins) {
+                    if (Math.abs(pin.y - p0.y) < 1 && pin.x >= Math.min(p0.x, p1.x) && pin.x <= Math.max(p0.x, p1.x)) {
+                      return true;
+                    }
+                  }
+                } else if (wireIsVertical) {
+                  // For vertical wire, check if any pin is on the wire
+                  for (const pin of pins) {
+                    if (Math.abs(pin.x - p0.x) < 1 && pin.y >= Math.min(p0.y, p1.y) && pin.y <= Math.max(p0.y, p1.y)) {
+                      return true;
+                    }
+                  }
+                }
+                
+                // Also check if component has a pin on any connected wire at the endpoints
+                const allConnectedWires = [...connectedAtStart, ...connectedAtEnd];
+                for (const conn of allConnectedWires) {
+                  const cw = conn.wire;
+                  const cwp0 = cw.points[0];
+                  const cwp1 = cw.points[cw.points.length - 1];
+                  const cwIsHoriz = Math.abs(cwp0.y - cwp1.y) < 1;
+                  
+                  for (const pin of pins) {
+                    if (cwIsHoriz) {
+                      // Check if pin is on horizontal connected wire
+                      if (Math.abs(pin.y - cwp0.y) < 1 && pin.x >= Math.min(cwp0.x, cwp1.x) && pin.x <= Math.max(cwp0.x, cwp1.x)) {
+                        return true;
+                      }
+                    } else {
+                      // Check if pin is on vertical connected wire
+                      if (Math.abs(pin.x - cwp0.x) < 1 && pin.y >= Math.min(cwp0.y, cwp1.y) && pin.y <= Math.max(cwp0.y, cwp1.y)) {
+                        return true;
+                      }
+                    }
+                  }
+                }
+                
+                return false;
+              }).map(comp => {
+                const pins = Components.compPinPositions(comp).map(p => ({
+                  x: snapToBaseScalar(p.x),
+                  y: snapToBaseScalar(p.y)
+                }));
+                // Determine component's axis based on pin positions
+                const compIsHorizontal = Math.abs(pins[0].y - pins[1].y) < 1;
+                const compAxis: 'x' | 'y' = compIsHorizontal ? 'x' : 'y';
+                return { comp, pins, axis: compAxis };
+              });
+              
+              wireStretchState = {
+                wire: w,
+                startMousePos: svgPoint(e),
+                originalPoints: w.points.map(pt => ({ x: pt.x, y: pt.y })),
+                originalP0: p0,
+                originalP1: p1,
+                connectedWiresStart: connectedAtStart,
+                connectedWiresEnd: connectedAtEnd,
+                componentsOnWire,
+                ghostConnectingWires: [],
+                dragging: false
+              };
+            }
           }
         }
         e.stopPropagation();
@@ -2390,42 +2558,93 @@ import {
 
   function breakWiresForComponent(c) {
     // Break wires at EACH connection pin (not at component center)
+    // Special handling: if a wire segment has both its endpoints near component pins,
+    // remove it entirely (it will be replaced by the component)
     let broke = false;
     const pins = Components.compPinPositions(c);
+    const PIN_TOLERANCE = 5; // pixels
+    
+    // Check for wire segments that span between the two pins
+    if (pins.length === 2) {
+      const wiresToRemove = [];
+      for (const w of wires) {
+        // Check if this wire segment has endpoints at/near both pins
+        if (w.points.length === 2) {
+          const p0 = w.points[0], p1 = w.points[1];
+          const p0NearPinA = Math.hypot(p0.x - pins[0].x, p0.y - pins[0].y) < PIN_TOLERANCE;
+          const p0NearPinB = Math.hypot(p0.x - pins[1].x, p0.y - pins[1].y) < PIN_TOLERANCE;
+          const p1NearPinA = Math.hypot(p1.x - pins[0].x, p1.y - pins[0].y) < PIN_TOLERANCE;
+          const p1NearPinB = Math.hypot(p1.x - pins[1].x, p1.y - pins[1].y) < PIN_TOLERANCE;
+          
+          if ((p0NearPinA && p1NearPinB) || (p0NearPinB && p1NearPinA)) {
+            wiresToRemove.push(w);
+          }
+        }
+      }
+      
+      // Remove wires that span the component
+      for (const w of wiresToRemove) {
+        wires = wires.filter(x => x.id !== w.id);
+        broke = true;
+      }
+    }
+    
+    // Now break wires at each pin location
     for (const pin of pins) {
       if (breakNearestWireAtPin(pin)) broke = true;
     }
     return broke;
   }
   function breakNearestWireAtPin(pin) {
-    // search all wires/segments for nearest to this pin; split if close
-    for (const w of [...wires]) {
+    // Break ALL wire segments that should be split at this pin location
+    // Collect segments that need breaking to avoid modifying array during iteration
+    const segmentsToBreak: Array<{ w: Wire, i: number, bp: Point }> = [];
+    
+    for (const w of wires) {
       for (let i = 0; i < w.points.length - 1; i++) {
         const a = w.points[i], b = w.points[i + 1];
         const { proj, t } = Geometry.projectPointToSegmentWithT(pin, a, b);
         const dist = pointToSegmentDistance(pin, a, b);
+        
+        // Check if pin is exactly at an endpoint
+        const EPS = 1e-2;
+        const atStart = Math.hypot(pin.x - a.x, pin.y - a.y) < EPS;
+        const atEnd = Math.hypot(pin.x - b.x, pin.y - b.y) < EPS;
+        
         // axis-aligned fallback for robust vertical/horizontal splitting
         const isVertical = (a.x === b.x);
         const isHorizontal = (a.y === b.y);
-        const withinVert = isVertical && Math.abs(pin.x - a.x) <= GRID / 2 && pin.y >= Math.min(a.y, b.y) && pin.y <= Math.max(a.y, b.y);
-        const withinHorz = isHorizontal && Math.abs(pin.y - a.y) <= GRID / 2 && pin.x >= Math.min(a.x, b.x) && pin.x <= Math.max(a.x, b.x);
+        const withinVert = isVertical && Math.abs(pin.x - a.x) <= GRID / 2 && pin.y > Math.min(a.y, b.y) && pin.y < Math.max(a.y, b.y);
+        const withinHorz = isHorizontal && Math.abs(pin.y - a.y) <= GRID / 2 && pin.x > Math.min(a.x, b.x) && pin.x < Math.max(a.x, b.x);
         const nearInterior = (t > 0.001 && t < 0.999 && dist <= 20);
-        if (withinVert || withinHorz || nearInterior) {
-          // For angled (nearInterior), split at the exact projection; else use snapped pin
+        
+        // Only break at true interior points (not at endpoints)
+        if (!atStart && !atEnd && (withinVert || withinHorz || nearInterior)) {
           const bp = nearInterior ? { x: proj.x, y: proj.y } : { x: snapToBaseScalar(pin.x), y: snapToBaseScalar(pin.y) };
-          const left = w.points.slice(0, i + 1).concat([bp]);
-          const right = [bp].concat(w.points.slice(i + 1));
-          // replace original with normalized children (drop degenerate)
-          wires = wires.filter(x => x.id !== w.id);
-          const L = Geometry.normalizedPolylineOrNull(left);
-          const R = Geometry.normalizedPolylineOrNull(right);
-          if (L) wires.push({ id: State.uid('wire'), points: L, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
-          if (R) wires.push({ id: State.uid('wire'), points: R, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
-          return true;
+          segmentsToBreak.push({ w, i, bp });
         }
       }
     }
-    return false;
+    
+    // Now break all collected segments
+    let broke = false;
+    for (const { w, i, bp } of segmentsToBreak) {
+      // Check if this wire still exists (might have been removed by previous break)
+      if (!wires.includes(w)) continue;
+      
+      const left = w.points.slice(0, i + 1).concat([bp]);
+      const right = [bp].concat(w.points.slice(i + 1));
+      
+      // replace original with normalized children (drop degenerate)
+      wires = wires.filter(x => x.id !== w.id);
+      const L = Geometry.normalizedPolylineOrNull(left);
+      const R = Geometry.normalizedPolylineOrNull(right);
+      if (L) wires.push({ id: State.uid('wire'), points: L, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
+      if (R) wires.push({ id: State.uid('wire'), points: R, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
+      broke = true;
+    }
+    
+    return broke;
   }
   // Remove the small bridge wire between the two pins of a 2-pin part
   function deleteBridgeBetweenPins(c) {
@@ -2921,9 +3140,16 @@ import {
     try {
       const onComp = !!(tgt && tgt.closest && tgt.closest('g.comp'));
       const onWire = !!(tgt && tgt.closest && tgt.closest('#wires g'));
-      if (mode === 'move' && e.button === 0 && !onComp && !onWire) {
+      const onJunction = !!(tgt && tgt.hasAttribute && tgt.hasAttribute('data-junction-id'));
+      if (mode === 'move' && e.button === 0 && !onComp && !onWire && !onJunction) {
         selection = { kind: null, id: null, segIndex: null };
         setMode('select');
+        renderInspector(); redraw();
+        return;
+      }
+      // If in none mode with something selected, clicking empty space should deselect
+      if (mode === 'none' && e.button === 0 && !onComp && !onWire && !onJunction && selection.kind) {
+        selection = { kind: null, id: null, segIndex: null };
         renderInspector(); redraw();
         return;
       }
@@ -3060,6 +3286,158 @@ import {
   });
   // Rubber-band wire, placement ghost, crosshair, and hover pan cursor
   svg.addEventListener('pointermove', (e) => {
+    // Wire stretch handling
+    if (wireStretchState && mode === 'move') {
+      const p = svgPoint(e);
+      let justStartedDragging = false;
+      if (!wireStretchState.dragging) {
+        // Check if mouse moved enough to start dragging
+        const dist = Math.hypot(p.x - wireStretchState.startMousePos.x, p.y - wireStretchState.startMousePos.y);
+        if (dist > 10) {
+          wireStretchState.dragging = true;
+          justStartedDragging = true;
+          pushUndo();
+        }
+      }
+      
+      if (wireStretchState.dragging) {
+        const w = wireStretchState.wire;
+        const p0 = wireStretchState.originalP0;
+        const p1 = wireStretchState.originalP1;
+        const isHorizontal = Math.abs(p0.y - p1.y) < 1;
+        const isVertical = Math.abs(p0.x - p1.x) < 1;
+        
+        if (isHorizontal) {
+          // Horizontal wire - move vertically
+          const delta = p.y - wireStretchState.startMousePos.y;
+          const newY = snap(p0.y + delta);
+          
+          // Update main wire position
+          w.points[0].x = p0.x;
+          w.points[0].y = newY;
+          w.points[1].x = p1.x;
+          w.points[1].y = newY;
+          
+          // Update ghost connecting wires for visual feedback
+          wireStretchState.ghostConnectingWires = [];
+          wireStretchState.componentsOnWire.forEach(compInfo => {
+            compInfo.pins.forEach(pin => {
+              // For horizontal wire moving vertically, create vertical connecting wires
+              // Only create if pin is at one of the wire endpoints (not just anywhere on the horizontal plane)
+              const pinAtStartY = Math.abs(pin.y - wireStretchState.originalP0.y) < 1;
+              const pinAtStartX = Math.abs(pin.x - wireStretchState.originalP0.x) < 1;
+              const pinAtEndY = Math.abs(pin.y - wireStretchState.originalP1.y) < 1;
+              const pinAtEndX = Math.abs(pin.x - wireStretchState.originalP1.x) < 1;
+              
+              // Pin must be at the wire's Y level AND at one of the endpoints' X position
+              if (pinAtStartY && (pinAtStartX || pinAtEndX)) {
+                wireStretchState.ghostConnectingWires.push({
+                  from: { x: pin.x, y: pin.y },
+                  to: { x: pin.x, y: newY }
+                });
+              }
+            });
+          });
+          
+          // Stretch connected wires at start point
+          wireStretchState.connectedWiresStart.forEach(conn => {
+            const origPt = conn.originalPoint;
+            if (conn.isStart) {
+              conn.wire.points[0].x = origPt.x;
+              conn.wire.points[0].y = newY;
+            } else {
+              const lastIdx = conn.wire.points.length - 1;
+              conn.wire.points[lastIdx].x = origPt.x;
+              conn.wire.points[lastIdx].y = newY;
+            }
+            updateWireDOM(conn.wire);
+          });
+          
+          // Stretch connected wires at end point
+          wireStretchState.connectedWiresEnd.forEach(conn => {
+            const origPt = conn.originalPoint;
+            if (conn.isStart) {
+              conn.wire.points[0].x = origPt.x;
+              conn.wire.points[0].y = newY;
+            } else {
+              const lastIdx = conn.wire.points.length - 1;
+              conn.wire.points[lastIdx].x = origPt.x;
+              conn.wire.points[lastIdx].y = newY;
+            }
+            updateWireDOM(conn.wire);
+          });
+          
+        } else if (isVertical) {
+          // Vertical wire - move horizontally
+          const delta = p.x - wireStretchState.startMousePos.x;
+          const newX = snap(p0.x + delta);
+          
+          // Update main wire position
+          w.points[0].x = newX;
+          w.points[0].y = p0.y;
+          w.points[1].x = newX;
+          w.points[1].y = p1.y;
+          
+          // Update ghost connecting wires for visual feedback
+          wireStretchState.ghostConnectingWires = [];
+          wireStretchState.componentsOnWire.forEach(compInfo => {
+            compInfo.pins.forEach(pin => {
+              // For vertical wire moving horizontally, create horizontal connecting wires
+              // Only create if pin is at one of the wire endpoints (not just anywhere on the vertical plane)
+              const pinAtStartX = Math.abs(pin.x - wireStretchState.originalP0.x) < 1;
+              const pinAtStartY = Math.abs(pin.y - wireStretchState.originalP0.y) < 1;
+              const pinAtEndX = Math.abs(pin.x - wireStretchState.originalP1.x) < 1;
+              const pinAtEndY = Math.abs(pin.y - wireStretchState.originalP1.y) < 1;
+              
+              // Pin must be at the wire's X level AND at one of the endpoints' Y position
+              if (pinAtStartX && (pinAtStartY || pinAtEndY)) {
+                wireStretchState.ghostConnectingWires.push({
+                  from: { x: pin.x, y: pin.y },
+                  to: { x: newX, y: pin.y }
+                });
+              }
+            });
+          });
+          
+          // Stretch connected wires at start point
+          wireStretchState.connectedWiresStart.forEach(conn => {
+            const origPt = conn.originalPoint;
+            if (conn.isStart) {
+              conn.wire.points[0].x = newX;
+              conn.wire.points[0].y = origPt.y;
+            } else {
+              const lastIdx = conn.wire.points.length - 1;
+              conn.wire.points[lastIdx].x = newX;
+              conn.wire.points[lastIdx].y = origPt.y;
+            }
+            updateWireDOM(conn.wire);
+          });
+          
+          // Stretch connected wires at end point
+          wireStretchState.connectedWiresEnd.forEach(conn => {
+            const origPt = conn.originalPoint;
+            if (conn.isStart) {
+              conn.wire.points[0].x = newX;
+              conn.wire.points[0].y = origPt.y;
+            } else {
+              const lastIdx = conn.wire.points.length - 1;
+              conn.wire.points[lastIdx].x = newX;
+              conn.wire.points[lastIdx].y = origPt.y;
+            }
+            updateWireDOM(conn.wire);
+          });
+        }
+        
+        updateWireDOM(w);
+        
+        // Render ghost connecting wires (force render on first drag to show initial state)
+        if (justStartedDragging || wireStretchState.ghostConnectingWires.length > 0) {
+          renderDrawing();
+        }
+      }
+      return;
+    }
+    
     // Early exit for panning - skip expensive snap calculations
     if (isPanning) { doPan(e); return; }
 
@@ -3361,6 +3739,40 @@ import {
   });
 
   svg.addEventListener('pointerup', (e) => {
+    // Finish wire stretch if active
+    if (wireStretchState) {
+      if (wireStretchState.dragging) {
+        // Create real connecting wires from ghost wires
+        wireStretchState.ghostConnectingWires.forEach(ghost => {
+          // Only create if the wire has meaningful length (> 5 pixels to avoid tiny stubs)
+          const dist = Math.hypot(ghost.to.x - ghost.from.x, ghost.to.y - ghost.from.y);
+          if (dist > 5) {
+            const newWire: Wire = {
+              id: State.uid('wire'),
+              points: [
+                { x: ghost.from.x, y: ghost.from.y },
+                { x: ghost.to.x, y: ghost.to.y }
+              ],
+              color: wireStretchState.wire.color || defaultWireColor,
+              netId: wireStretchState.wire.netId // Inherit netId from the wire being stretched
+            };
+            wires.push(newWire);
+          }
+        });
+        
+        // Normalize and clean up wire geometry
+        normalizeAllWires();
+        // Note: Not calling unifyInlineWires() here to preserve wire segment boundaries
+        // for subsequent drag operations. User can manually trigger unification if needed.
+        // Rebuild topology and redraw
+        rebuildTopology();
+        redraw();
+        renderDrawing(); // Clear ghost wires from drawing layer
+      }
+      wireStretchState = null;
+      return;
+    }
+    
     // Finish marquee selection if active; otherwise just end any pan
     if (marquee.active) { finishMarquee(); }
     endPan();
@@ -3774,6 +4186,24 @@ import {
 
   function renderDrawing() {
     gDrawing.replaceChildren();
+    
+    // Render ghost connecting wires during wire stretch operation (before early return)
+    if (wireStretchState && wireStretchState.dragging && wireStretchState.ghostConnectingWires.length > 0) {
+      const wireColor = wireStretchState.wire.color || defaultWireColor;
+      wireStretchState.ghostConnectingWires.forEach(ghost => {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('stroke', wireColor);
+        line.setAttribute('stroke-width', '1');
+        line.setAttribute('stroke-linecap', 'round');
+        line.setAttribute('pointer-events', 'none');
+        setAttr(line, 'x1', ghost.from.x);
+        setAttr(line, 'y1', ghost.from.y);
+        setAttr(line, 'x2', ghost.to.x);
+        setAttr(line, 'y2', ghost.to.y);
+        gDrawing.appendChild(line);
+      });
+    }
+    
     if (!drawing.active) return;
     let pts = drawing.cursor ? [...drawing.points, drawing.cursor] : drawing.points;
 
@@ -6184,7 +6614,10 @@ import {
       keyPt: (p: { x: number; y: number }) => Geometry.keyPt(p),
       selection,
       drawing,
-      gDrawing
+      gDrawing,
+      compPinPositions: Components.compPinPositions,
+      breakWiresForComponent,
+      deleteBridgeBetweenPins
     }, text);
   }
 
@@ -6367,9 +6800,9 @@ import {
       }
     }
 
-    // --- NEW: Add synthetic "component bridge" edges so SWPs span through embedded 2-pin components ---
-    // This lets a straight wire path continue across the part, enabling collapse at move-start and
-    // proper re-segmentation at move-end.
+    // --- Component bridge edges for embedded components ---
+    // Add synthetic edges ONLY for components that are truly embedded in a single continuous wire path
+    // This allows SWP-based movement while preventing incorrect grouping of unrelated components
     const twoPinForBridge = ['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'];
     for (const c of components) {
       if (!twoPinForBridge.includes(c.type)) continue;
@@ -6379,10 +6812,30 @@ import {
       if (pins[0].y === pins[1].y) axis = 'x';
       else if (pins[0].x === pins[1].x) axis = 'y';
       if (!axis) continue; // only bridge axis-aligned 2-pin parts
-      // Only bridge when the component is actually embedded: both pins touch wire endpoints.
+      
+      // Find wires touching each pin
       const hitA = findWireEndpointNear(pins[0], 0.9);
       const hitB = findWireEndpointNear(pins[1], 0.9);
       if (!(hitA && hitB)) continue;
+      
+      // CRITICAL: Only create bridge if the component connects exactly TWO wires (one on each side)
+      // Count how many DIFFERENT wires touch the component's pins
+      const wiresAtA = [];
+      const wiresAtB = [];
+      for (const w of wires) {
+        const atA = w.points.some(p => Math.abs(p.x - pins[0].x) < 0.5 && Math.abs(p.y - pins[0].y) < 0.5);
+        const atB = w.points.some(p => Math.abs(p.x - pins[1].x) < 0.5 && Math.abs(p.y - pins[1].y) < 0.5);
+        if (atA) wiresAtA.push(w);
+        if (atB) wiresAtB.push(w);
+      }
+      
+      // Only create bridge if each pin touches exactly ONE wire (simple embedded case)
+      // If multiple wires touch either pin, component is at a junction - no bridge
+      if (wiresAtA.length !== 1 || wiresAtB.length !== 1) continue;
+      
+      // Also ensure they're different wires
+      if (wiresAtA[0].id === wiresAtB[0].id) continue;
+      
       const akey = addNode(pins[0]), bkey = addNode(pins[1]);
       const id = `comp:${c.id}`;
       edges.push({ id, wireId: null, i: -1, a: pins[0], b: pins[1], axis, akey, bkey });

@@ -31,6 +31,9 @@ export interface FileIOContext {
   renderNetList: () => void;
   redraw: () => void;
   keyPt: (p: { x: number; y: number }) => string;
+  compPinPositions?: (c: Component) => Array<{ x: number; y: number; [key: string]: any }>;
+  breakWiresForComponent?: (c: Component) => boolean;
+  deleteBridgeBetweenPins?: (c: Component) => void;
 
   // Selection
   selection: { kind: string | null; id: string | number | null; segIndex: number | null };
@@ -192,6 +195,66 @@ export function loadFromJSON(ctx: FileIOContext, text: string): void {
     ctx.junctions.push(...data.junctions);
   }
 
+  ctx.normalizeAllWires();
+
+  // REPAIR STEP: Validate and fix wire topology for all placed components
+  // This handles cases where saved files have broken wire topology (e.g., from bugs or manual edits)
+  // Check each component and ensure wires are properly broken at their pins
+  for (const c of ctx.components) {
+    const twoPin = ['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'];
+    if (!twoPin.includes(c.type)) continue;
+    
+    // For each pin, check if there's a wire segment that should be broken but isn't
+    const pins = ctx.compPinPositions?.(c);
+    if (!pins || pins.length < 2) continue;
+    
+    // Check if wires need to be broken at component pins
+    let needsRepair = false;
+    for (const pin of pins) {
+      // Check if there's a wire segment passing through this pin (should be broken)
+      for (const w of ctx.wires) {
+        if (w.points.length < 2) continue;
+        
+        for (let i = 0; i < w.points.length - 1; i++) {
+          const a = w.points[i];
+          const b = w.points[i + 1];
+          
+          // Check if pin is on this segment (but not at endpoints)
+          const pinX = (pin as any).x;
+          const pinY = (pin as any).y;
+          const isVertical = Math.abs(a.x - b.x) < 0.1;
+          const isHorizontal = Math.abs(a.y - b.y) < 0.1;
+          
+          if (isVertical && Math.abs(pinX - a.x) < 1) {
+            const minY = Math.min(a.y, b.y);
+            const maxY = Math.max(a.y, b.y);
+            if (pinY > minY + 1 && pinY < maxY - 1) {
+              needsRepair = true;
+              break;
+            }
+          } else if (isHorizontal && Math.abs(pinY - a.y) < 1) {
+            const minX = Math.min(a.x, b.x);
+            const maxX = Math.max(a.x, b.x);
+            if (pinX > minX + 1 && pinX < maxX - 1) {
+              needsRepair = true;
+              break;
+            }
+          }
+        }
+        if (needsRepair) break;
+      }
+      if (needsRepair) break;
+    }
+    
+    // If repair is needed, call the break wires function if available
+    if (needsRepair && ctx.breakWiresForComponent) {
+      ctx.breakWiresForComponent(c);
+      if (ctx.deleteBridgeBetweenPins) {
+        ctx.deleteBridgeBetweenPins(c);
+      }
+    }
+  }
+  
   ctx.normalizeAllWires();
 
   // re-seed counters so new IDs continue incrementing nicely

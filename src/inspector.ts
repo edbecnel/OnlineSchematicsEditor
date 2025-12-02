@@ -1316,6 +1316,9 @@ function buildColorEditor(
   const cIn = document.createElement('input');
   cIn.type = 'color';
   cIn.title = 'Pick color';
+  cIn.style.minWidth = '32px';
+  cIn.style.height = '32px';
+  cIn.style.cursor = 'pointer';
 
   // Set initial value
   ctx.ensureStroke(w);
@@ -1329,8 +1332,9 @@ function buildColorEditor(
   aIn.min = '0';
   aIn.max = '1';
   aIn.step = '0.05';
-  aIn.style.flex = '0 0 120px';
-  aIn.style.maxWidth = '140px';
+  aIn.style.flex = '1';
+  aIn.style.minWidth = '60px';
+  aIn.style.maxWidth = '100px';
   aIn.value = String(Math.max(0, Math.min(1, initialColor.a)));
 
   const syncColor = () => {
