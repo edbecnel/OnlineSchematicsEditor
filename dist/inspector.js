@@ -466,14 +466,17 @@ export function renderInspector(ctx, inspector, inspectorNone) {
             precision = 4;
         wrap.appendChild(rowPair(`X (${ctx.globalUnits})`, text(xDisplay.toFixed(precision), true)));
         wrap.appendChild(rowPair(`Y (${ctx.globalUnits})`, text(yDisplay.toFixed(precision), true)));
-        // Size (diameter in current units)
-        const sizeRow = document.createElement('div');
-        sizeRow.className = 'row';
+        // Size - Visual button selector
+        const sizeLabelRow = document.createElement('div');
+        sizeLabelRow.className = 'row';
         const sizeLbl = document.createElement('label');
-        sizeLbl.textContent = `Size (${ctx.globalUnits})`;
-        sizeLbl.style.width = '90px';
-        const sizeIn = document.createElement('input');
-        sizeIn.type = 'text';
+        sizeLbl.textContent = 'Junction Dot Size';
+        sizeLabelRow.appendChild(sizeLbl);
+        wrap.appendChild(sizeLabelRow);
+        const sizeButtonRow = document.createElement('div');
+        sizeButtonRow.className = 'row';
+        sizeButtonRow.style.display = 'flex';
+        sizeButtonRow.style.gap = '.25rem';
         // Get current size (from junction override, custom size, or preset)
         const currentSizeMils = j.size !== undefined ? j.size :
             ctx.junctionCustomSize !== null ? ctx.junctionCustomSize :
@@ -481,27 +484,154 @@ export function renderInspector(ctx, inspector, inspectorNone) {
                     ctx.junctionDotSize === 'small' ? 30 :
                         ctx.junctionDotSize === 'default' ? 40 :
                             ctx.junctionDotSize === 'large' ? 50 : 65);
-        // Convert mils to nm: 1 mil = 0.0254 mm, so mils * 0.0254 * NM_PER_MM
-        const currentSizeNm = currentSizeMils * 0.0254 * ctx.NM_PER_MM;
-        sizeIn.value = ctx.formatDimForDisplay(currentSizeNm, ctx.globalUnits);
-        sizeIn.onchange = () => {
-            ctx.pushUndo();
-            const parsed = ctx.parseDimInput(sizeIn.value || '0');
-            if (parsed) {
-                // Convert nm to mils: nm / (0.0254 * NM_PER_MM)
-                const sizeMils = parsed.nm / (0.0254 * ctx.NM_PER_MM);
-                j.size = sizeMils;
+        const presetSizes = [
+            { name: 'smallest', mils: 15, radius: 1.5, title: 'Smallest (15 mils / 0.381mm)' },
+            { name: 'small', mils: 30, radius: 3.0, title: 'Small (30 mils / 0.762mm)' },
+            { name: 'default', mils: 40, radius: 4.0, title: 'Default (40 mils / 1.016mm)' },
+            { name: 'large', mils: 50, radius: 5.0, title: 'Large (50 mils / 1.27mm)' },
+            { name: 'largest', mils: 65, radius: 6.5, title: 'Largest (65 mils / 1.651mm)' }
+        ];
+        presetSizes.forEach(preset => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'junction-size-option';
+            btn.title = preset.title;
+            btn.style.flex = '1';
+            btn.style.display = 'flex';
+            btn.style.alignItems = 'center';
+            btn.style.justifyContent = 'center';
+            btn.style.padding = '.3rem';
+            btn.style.minWidth = '0';
+            // Check if this preset is selected
+            if (Math.abs(currentSizeMils - preset.mils) < 0.01) {
+                btn.classList.add('selected');
+            }
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('width', '24');
+            svg.setAttribute('height', '24');
+            svg.setAttribute('viewBox', '0 0 24 24');
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', '12');
+            circle.setAttribute('cy', '12');
+            circle.setAttribute('r', String(preset.radius));
+            circle.setAttribute('fill', 'currentColor');
+            circle.setAttribute('stroke', 'var(--bg)');
+            circle.setAttribute('stroke-width', '1');
+            svg.appendChild(circle);
+            btn.appendChild(svg);
+            btn.onclick = () => {
+                ctx.pushUndo();
+                j.size = preset.mils;
                 // Mark as manual so custom properties persist through topology rebuilds
                 if (!j.manual) {
                     j.manual = true;
                 }
                 ctx.redrawCanvasOnly();
                 ctx.renderInspector();
+            };
+            sizeButtonRow.appendChild(btn);
+        });
+        // Add custom preview button if size doesn't match presets
+        const isPreset = presetSizes.some(p => Math.abs(currentSizeMils - p.mils) < 0.01);
+        if (!isPreset) {
+            const customBtn = document.createElement('button');
+            customBtn.type = 'button';
+            customBtn.className = 'junction-size-option selected';
+            customBtn.style.flex = '1';
+            customBtn.style.display = 'flex';
+            customBtn.style.alignItems = 'center';
+            customBtn.style.justifyContent = 'center';
+            customBtn.style.padding = '.3rem';
+            customBtn.style.minWidth = '0';
+            const currentSizeNm = currentSizeMils * 0.0254 * ctx.NM_PER_MM;
+            const displayValue = ctx.formatDimForDisplay(currentSizeNm, ctx.globalUnits);
+            customBtn.title = `Custom (${displayValue})`;
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('width', '24');
+            svg.setAttribute('height', '24');
+            svg.setAttribute('viewBox', '0 0 24 24');
+            const radiusSvg = currentSizeMils * 0.1;
+            const maxRadius = 10;
+            if (radiusSvg <= maxRadius) {
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('cx', '12');
+                circle.setAttribute('cy', '12');
+                circle.setAttribute('r', String(radiusSvg));
+                circle.setAttribute('fill', 'currentColor');
+                circle.setAttribute('stroke', 'var(--bg)');
+                circle.setAttribute('stroke-width', '1');
+                svg.appendChild(circle);
+            }
+            else {
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('cx', '12');
+                circle.setAttribute('cy', '12');
+                circle.setAttribute('r', '9');
+                circle.setAttribute('fill', 'none');
+                circle.setAttribute('stroke', 'currentColor');
+                circle.setAttribute('stroke-width', '1.5');
+                svg.appendChild(circle);
+                const plusV = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                plusV.setAttribute('x1', '12');
+                plusV.setAttribute('y1', '8');
+                plusV.setAttribute('x2', '12');
+                plusV.setAttribute('y2', '16');
+                plusV.setAttribute('stroke', 'currentColor');
+                plusV.setAttribute('stroke-width', '1.5');
+                svg.appendChild(plusV);
+                const plusH = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                plusH.setAttribute('x1', '8');
+                plusH.setAttribute('y1', '12');
+                plusH.setAttribute('x2', '16');
+                plusH.setAttribute('y2', '12');
+                plusH.setAttribute('stroke', 'currentColor');
+                plusH.setAttribute('stroke-width', '1.5');
+                svg.appendChild(plusH);
+            }
+            customBtn.appendChild(svg);
+            sizeButtonRow.appendChild(customBtn);
+        }
+        wrap.appendChild(sizeButtonRow);
+        // Custom size input
+        const customSizeRow = document.createElement('div');
+        customSizeRow.className = 'row';
+        const customSizeLbl = document.createElement('label');
+        customSizeLbl.textContent = `Custom Junction Size (${ctx.globalUnits})`;
+        customSizeRow.appendChild(customSizeLbl);
+        wrap.appendChild(customSizeRow);
+        const customSizeInputRow = document.createElement('div');
+        customSizeInputRow.className = 'row';
+        const sizeIn = document.createElement('input');
+        sizeIn.type = 'text';
+        sizeIn.style.width = '12ch';
+        sizeIn.placeholder = 'Optional';
+        const currentSizeNm = currentSizeMils * 0.0254 * ctx.NM_PER_MM;
+        sizeIn.value = ctx.formatDimForDisplay(currentSizeNm, ctx.globalUnits);
+        sizeIn.onchange = () => {
+            ctx.pushUndo();
+            const parsed = ctx.parseDimInput(sizeIn.value || '');
+            if (parsed && parsed.nm > 0) {
+                const sizeMils = parsed.nm / (0.0254 * ctx.NM_PER_MM);
+                j.size = sizeMils;
+                if (!j.manual) {
+                    j.manual = true;
+                }
+                ctx.redrawCanvasOnly();
+                ctx.renderInspector();
+            }
+            else if (!sizeIn.value.trim()) {
+                // Clear custom size
+                delete j.size;
+                ctx.redrawCanvasOnly();
+                ctx.renderInspector();
             }
         };
-        sizeRow.appendChild(sizeLbl);
-        sizeRow.appendChild(sizeIn);
-        wrap.appendChild(sizeRow);
+        customSizeInputRow.appendChild(sizeIn);
+        const hint = document.createElement('div');
+        hint.className = 'hint';
+        hint.textContent = 'Override preset size (diameter)';
+        customSizeInputRow.appendChild(hint);
+        wrap.appendChild(customSizeInputRow);
         // Color picker with opacity and swatches
         const colorRow = document.createElement('div');
         colorRow.className = 'row hstack';
@@ -573,10 +703,10 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         wrap.appendChild(colorRow);
         // Color swatches (reuse wire inspector pattern)
         const swatchRow = document.createElement('div');
-        swatchRow.className = 'row hstack';
-        swatchRow.style.marginLeft = '90px';
+        swatchRow.className = 'row';
         swatchRow.style.gap = '4px';
         swatchRow.style.flexWrap = 'wrap';
+        swatchRow.style.marginTop = '0.5rem';
         const swatches = [
             '#000000', '#ff0000', '#00ff00', '#0000ff',
             '#ffff00', '#ff00ff', '#00ffff', '#ffffff',
