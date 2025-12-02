@@ -149,6 +149,8 @@ export interface InspectorContext {
   globalUnits: 'mm' | 'in' | 'mils';
   defaultResistorStyle: ResistorStyle;
   junctionDotSize: 'smallest' | 'small' | 'default' | 'large' | 'largest';
+  junctionCustomSize: number | null;
+  junctionDefaultColor: string | null;
   NET_CLASSES: Record<string, NetClass>;
   THEME: Theme;
   NM_PER_MM: number;
@@ -581,11 +583,13 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     const sizeIn = document.createElement('input');
     sizeIn.type = 'text';
     
-    // Get current size (from junction override or global default)
-    const currentSizeMils = j.size || (ctx.junctionDotSize === 'smallest' ? 15 : 
-                                       ctx.junctionDotSize === 'small' ? 30 : 
-                                       ctx.junctionDotSize === 'default' ? 40 : 
-                                       ctx.junctionDotSize === 'large' ? 50 : 65);
+    // Get current size (from junction override, custom size, or preset)
+    const currentSizeMils = j.size !== undefined ? j.size :
+                           ctx.junctionCustomSize !== null ? ctx.junctionCustomSize :
+                           (ctx.junctionDotSize === 'smallest' ? 15 : 
+                            ctx.junctionDotSize === 'small' ? 30 : 
+                            ctx.junctionDotSize === 'default' ? 40 : 
+                            ctx.junctionDotSize === 'large' ? 50 : 65);
     // Convert mils to nm: 1 mil = 0.0254 mm, so mils * 0.0254 * NM_PER_MM
     const currentSizeNm = currentSizeMils * 0.0254 * ctx.NM_PER_MM;
     sizeIn.value = ctx.formatDimForDisplay(currentSizeNm, ctx.globalUnits);
@@ -621,8 +625,9 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     colorIn.type = 'color';
     colorIn.title = 'Pick color';
     
-    // Get current color (from junction override, netclass, or default)
-    let currentColor = j.color || 'var(--wire)';
+    // Get current color (from junction override, default color, or netclass)
+    const nc = ctx.NET_CLASSES[j.netId || 'default'] || ctx.NET_CLASSES.default;
+    let currentColor = j.color || ctx.junctionDefaultColor || ctx.rgba01ToCss(nc.junction.color);
     if (currentColor.startsWith('var(')) {
       // Use default black for var() colors in the picker
       currentColor = '#000000';

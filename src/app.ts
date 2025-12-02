@@ -116,6 +116,10 @@ import {
   let showJunctionDots = (localStorage.getItem('junctionDots.visible') !== 'false');
   // Junction dot size setting (persisted): 'small' | 'medium' | 'large'
   let junctionDotSize: 'smallest' | 'small' | 'default' | 'large' | 'largest' = (localStorage.getItem('junctionDots.size') as any) || 'default';
+  // Custom junction size (optional, in mils) - overrides preset if set
+  let junctionCustomSize: number | null = localStorage.getItem('junctionDots.customSize') ? parseFloat(localStorage.getItem('junctionDots.customSize')!) : null;
+  // Default junction color (optional) - uses net class color if not set
+  let junctionDefaultColor: string | null = localStorage.getItem('junctionDots.defaultColor') || null;
 
   // Tracking mode: when true, connection hints are enabled (persisted)
   let trackingMode = (localStorage.getItem('tracking.mode') !== 'false');
@@ -1811,16 +1815,17 @@ import {
         if (j.suppressed) continue;
 
         const nc = NET_CLASSES[j.netId || 'default'] || NET_CLASSES.default;
-        // Use per-instance size if set, otherwise use global default
+        // Use per-instance size if set, otherwise use custom size, otherwise use preset size
         // Custom sizes for better visibility: Smallest=15mils, Small=30mils, Default=40mils, Large=50mils, Largest=65mils (diameter)
-        const sizeMils = j.size !== undefined ? j.size : 
+        const sizeMils = j.size !== undefined ? j.size :
+                        junctionCustomSize !== null ? junctionCustomSize :
                         (junctionDotSize === 'smallest' ? 15 : junctionDotSize === 'small' ? 30 : junctionDotSize === 'default' ? 40 : junctionDotSize === 'large' ? 50 : 65);
         const diameterMm = sizeMils * 0.0254; // Convert mils to mm
         const radiusMm = diameterMm / 2;
         // Use fractional pixels for better differentiation (SVG supports sub-pixel rendering)
         const radiusPx = Math.max(1, radiusMm * (100 / 25.4));
-        // Use per-instance color if set, otherwise use netclass color
-        let color = j.color ? j.color : rgba01ToCss(nc.junction.color);
+        // Use per-instance color if set, otherwise use default color, otherwise use netclass color
+        let color = j.color ? j.color : junctionDefaultColor ? junctionDefaultColor : rgba01ToCss(nc.junction.color);
         
         // Theme-aware black/white handling: if junction color is white or black,
         // render as black in light mode and white in dark mode
@@ -3826,7 +3831,8 @@ import {
             }
 
             if (intersection) {
-              const sizeMils = junctionDotSize === 'smallest' ? 15 : junctionDotSize === 'small' ? 30 : junctionDotSize === 'default' ? 40 : junctionDotSize === 'large' ? 50 : 65;
+              const sizeMils = junctionCustomSize !== null ? junctionCustomSize :
+                              (junctionDotSize === 'smallest' ? 15 : junctionDotSize === 'small' ? 30 : junctionDotSize === 'default' ? 40 : junctionDotSize === 'large' ? 50 : 65);
               const diameterMm = sizeMils * 0.0254;
               const radiusMm = diameterMm / 2;
               const radiusPx = Math.max(1, radiusMm * (100 / 25.4));
@@ -5385,6 +5391,64 @@ import {
         redraw(); // Redraw to apply new junction dot size immediately
       }
     });
+
+    // Custom junction size input
+    const junctionCustomSizeInput = $q<HTMLInputElement>('#junctionCustomSizeInput');
+    if (junctionCustomSizeInput) {
+      // Initialize with current value
+      if (junctionCustomSize !== null) {
+        // Convert mils to current units for display
+        const sizeNm = junctionCustomSize * 0.0254 * NM_PER_MM;
+        junctionCustomSizeInput.value = formatDimForDisplay(sizeNm, globalUnits);
+      }
+      junctionCustomSizeInput.addEventListener('change', () => {
+        const parsed = parseDimInput(junctionCustomSizeInput.value || '', globalUnits);
+        if (parsed && parsed.nm > 0) {
+          // Convert nm to mils for storage
+          junctionCustomSize = parsed.nm / (0.0254 * NM_PER_MM);
+          localStorage.setItem('junctionDots.customSize', String(junctionCustomSize));
+        } else {
+          // Clear custom size if empty
+          junctionCustomSize = null;
+          localStorage.removeItem('junctionDots.customSize');
+          junctionCustomSizeInput.value = '';
+        }
+        redraw();
+      });
+    }
+
+    // Default junction color picker
+    const junctionDefaultColorPicker = $q<HTMLInputElement>('#junctionDefaultColorPicker');
+    const junctionDefaultOpacity = $q<HTMLInputElement>('#junctionDefaultOpacity');
+    if (junctionDefaultColorPicker && junctionDefaultOpacity) {
+      // Initialize with current value
+      if (junctionDefaultColor) {
+        const hex = colorToHex(junctionDefaultColor);
+        junctionDefaultColorPicker.value = hex;
+        // Extract opacity if it's rgba
+        if (junctionDefaultColor.includes('rgba')) {
+          const match = junctionDefaultColor.match(/rgba?\(.*?,\s*(\d*\.?\d+)\s*\)/);
+          if (match) junctionDefaultOpacity.value = match[1];
+        }
+      } else {
+        junctionDefaultColorPicker.value = '#000000';
+        junctionDefaultOpacity.value = '1';
+      }
+
+      const applyColor = () => {
+        const hex = junctionDefaultColorPicker.value;
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        const a = parseFloat(junctionDefaultOpacity.value);
+        junctionDefaultColor = `rgba(${r},${g},${b},${a})`;
+        localStorage.setItem('junctionDots.defaultColor', junctionDefaultColor);
+        redraw();
+      };
+
+      junctionDefaultColorPicker.addEventListener('input', applyColor);
+      junctionDefaultOpacity.addEventListener('input', applyColor);
+    }
   })();
 
   // Wrapper for Inspector.renderInspector that provides context
@@ -5399,6 +5463,8 @@ import {
       globalUnits,
       defaultResistorStyle,
       junctionDotSize,
+      junctionCustomSize,
+      junctionDefaultColor,
       NET_CLASSES,
       THEME,
       NM_PER_MM,
