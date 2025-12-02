@@ -5500,7 +5500,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         if (junctionCustomSizeInput) {
             // Initialize with current value
             updateJunctionSizeUI();
-            junctionCustomSizeInput.addEventListener('change', () => {
+            const handleCustomSizeChange = () => {
                 const parsed = parseDimInput(junctionCustomSizeInput.value || '', globalUnits);
                 if (parsed && parsed.nm > 0) {
                     // Convert nm to mils for storage
@@ -5515,6 +5515,15 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }
                 updateCustomJunctionPreview();
                 redraw();
+            };
+            junctionCustomSizeInput.addEventListener('change', handleCustomSizeChange);
+            // Also handle input event for immediate feedback when clearing
+            junctionCustomSizeInput.addEventListener('input', () => {
+                if (junctionCustomSizeInput.value.trim() === '') {
+                    junctionCustomSize = null;
+                    localStorage.removeItem('junctionDots.customSize');
+                    updateCustomJunctionPreview(); // Hide button immediately
+                }
             });
         }
         // Default junction color picker
