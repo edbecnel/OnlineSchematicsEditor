@@ -5535,10 +5535,28 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     localStorage.setItem('junctionDots.customSize', String(junctionCustomSize));
                 }
                 else {
-                    // Clear custom size if empty
-                    junctionCustomSize = null;
-                    localStorage.removeItem('junctionDots.customSize');
-                    junctionCustomSizeInput.value = '';
+                    // Clear custom size and auto-select nearest preset
+                    if (junctionCustomSize !== null) {
+                        const presetValues = [15, 30, 40, 50, 65];
+                        let nearestPreset = presetValues[0];
+                        let minDiff = Math.abs(junctionCustomSize - presetValues[0]);
+                        for (const preset of presetValues) {
+                            const diff = Math.abs(junctionCustomSize - preset);
+                            if (diff < minDiff) {
+                                minDiff = diff;
+                                nearestPreset = preset;
+                            }
+                        }
+                        junctionCustomSize = nearestPreset;
+                        localStorage.setItem('junctionDots.customSize', String(junctionCustomSize));
+                        const sizeNm = nearestPreset * 0.0254 * NM_PER_MM;
+                        junctionCustomSizeInput.value = formatDimForDisplay(sizeNm, globalUnits);
+                    }
+                    else {
+                        junctionCustomSize = null;
+                        localStorage.removeItem('junctionDots.customSize');
+                        junctionCustomSizeInput.value = '';
+                    }
                 }
                 updateCustomJunctionPreview();
                 redraw();

@@ -620,8 +620,21 @@ export function renderInspector(ctx, inspector, inspectorNone) {
                 ctx.renderInspector();
             }
             else if (!sizeIn.value.trim()) {
-                // Clear custom size
-                delete j.size;
+                // Clear custom size and auto-select nearest preset
+                const presetValues = [15, 30, 40, 50, 65];
+                let nearestPreset = presetValues[0];
+                let minDiff = Math.abs(currentSizeMils - presetValues[0]);
+                for (const preset of presetValues) {
+                    const diff = Math.abs(currentSizeMils - preset);
+                    if (diff < minDiff) {
+                        minDiff = diff;
+                        nearestPreset = preset;
+                    }
+                }
+                j.size = nearestPreset;
+                if (!j.manual) {
+                    j.manual = true;
+                }
                 ctx.redrawCanvasOnly();
                 ctx.renderInspector();
             }
@@ -634,13 +647,16 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         wrap.appendChild(customSizeInputRow);
         // Color picker with opacity and swatches
         const colorRow = document.createElement('div');
-        colorRow.className = 'row hstack';
+        colorRow.className = 'row';
         const colorLbl = document.createElement('label');
         colorLbl.textContent = 'Color';
-        colorLbl.style.width = '90px';
+        colorLbl.style.minWidth = 'auto';
+        colorLbl.style.marginRight = '0.5rem';
         const colorIn = document.createElement('input');
         colorIn.type = 'color';
         colorIn.title = 'Pick color';
+        colorIn.style.width = 'auto';
+        colorIn.style.flex = '0 0 auto';
         // Get current color (from junction override, default color, or netclass)
         const nc = ctx.NET_CLASSES[j.netId || 'default'] || ctx.NET_CLASSES.default;
         let currentColor = j.color || ctx.junctionDefaultColor || ctx.rgba01ToCss(nc.junction.color);
@@ -656,8 +672,9 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         opacityIn.min = '0';
         opacityIn.max = '1';
         opacityIn.step = '0.05';
-        opacityIn.style.flex = '0 0 120px';
-        opacityIn.style.maxWidth = '140px';
+        opacityIn.style.width = '120px';
+        opacityIn.style.flex = '0 0 auto';
+        opacityIn.style.marginLeft = '0.5rem';
         // Extract current opacity from color
         let currentOpacity = 1;
         if (j.color && j.color.includes('rgba')) {
