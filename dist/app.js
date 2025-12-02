@@ -5619,6 +5619,29 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             };
             junctionDefaultColorPicker.addEventListener('input', applyColor);
             junctionDefaultOpacity.addEventListener('input', applyColor);
+            // Add color swatches
+            const junctionColorSwatches = $q('#junctionColorSwatches');
+            if (junctionColorSwatches) {
+                const swatches = [
+                    '#000000', '#ff0000', '#00ff00', '#0000ff',
+                    '#ffff00', '#ff00ff', '#00ffff', '#ffffff',
+                    '#808080', '#800000', '#008000', '#000080'
+                ];
+                swatches.forEach(color => {
+                    const swatch = document.createElement('div');
+                    swatch.style.width = '20px';
+                    swatch.style.height = '20px';
+                    swatch.style.backgroundColor = color;
+                    swatch.style.border = '1px solid var(--border)';
+                    swatch.style.cursor = 'pointer';
+                    swatch.title = color;
+                    swatch.onclick = () => {
+                        junctionDefaultColorPicker.value = color;
+                        applyColor();
+                    };
+                    junctionColorSwatches.appendChild(swatch);
+                });
+            }
         }
     })();
     // Wrapper for Inspector.renderInspector that provides context
