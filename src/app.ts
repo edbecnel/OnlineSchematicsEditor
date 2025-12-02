@@ -5323,9 +5323,14 @@ import {
     return inp;
   }
 
+  // Forward declaration for junction size UI update
+  let updateJunctionSizeUI: (() => void) | null = null;
+
   // Update UI after unit changes
   function setGlobalUnits(u: 'mm' | 'in' | 'mils') {
     globalUnits = u; saveGlobalUnits();
+    // Update junction size label and input
+    if (updateJunctionSizeUI) updateJunctionSizeUI();
     // Refresh inspector UI and any open popovers
     renderInspector(); // safe to call repeatedly
   }
@@ -5394,13 +5399,24 @@ import {
 
     // Custom junction size input
     const junctionCustomSizeInput = $q<HTMLInputElement>('#junctionCustomSizeInput');
-    if (junctionCustomSizeInput) {
-      // Initialize with current value
-      if (junctionCustomSize !== null) {
+    const junctionCustomSizeLabel = $q<HTMLElement>('#junctionCustomSizeLabel');
+    
+    // Make function available to setGlobalUnits
+    updateJunctionSizeUI = () => {
+      if (junctionCustomSizeLabel) {
+        junctionCustomSizeLabel.textContent = `Custom Junction Size (${globalUnits})`;
+      }
+      if (junctionCustomSizeInput && junctionCustomSize !== null) {
         // Convert mils to current units for display
         const sizeNm = junctionCustomSize * 0.0254 * NM_PER_MM;
         junctionCustomSizeInput.value = formatDimForDisplay(sizeNm, globalUnits);
       }
+    };
+    
+    if (junctionCustomSizeInput) {
+      // Initialize with current value
+      updateJunctionSizeUI();
+      
       junctionCustomSizeInput.addEventListener('change', () => {
         const parsed = parseDimInput(junctionCustomSizeInput.value || '', globalUnits);
         if (parsed && parsed.nm > 0) {
