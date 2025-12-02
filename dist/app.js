@@ -3585,16 +3585,18 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const fixedCoord = endpointStretchState.fixedCoord;
             const endpointIndex = endpointStretchState.endpointIndex;
             const otherEndIndex = endpointIndex === 0 ? 1 : 0;
+            const otherEndpoint = w.points[otherEndIndex];
             // Constrain movement along the wire's axis
+            // Allow shrinking but prevent crossing past the other endpoint (minimum length stays at 5px for deletion check)
             if (axis === 'x') {
-                // Horizontal wire - move endpoint horizontally
+                // Horizontal wire - move endpoint horizontally (allow full range, will be deleted if too short)
                 const newX = snap(p.x);
                 w.points[endpointIndex].x = newX;
                 w.points[endpointIndex].y = fixedCoord;
                 w.points[otherEndIndex].y = fixedCoord; // Ensure other end stays on axis
             }
             else {
-                // Vertical wire - move endpoint vertically
+                // Vertical wire - move endpoint vertically (allow full range, will be deleted if too short)
                 const newY = snap(p.y);
                 w.points[endpointIndex].x = fixedCoord;
                 w.points[endpointIndex].y = newY;
