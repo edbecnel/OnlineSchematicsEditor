@@ -1412,8 +1412,8 @@ import {
 
     // big invisible hit for easy click/drag
     const hit = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    setAttr(hit, 'x', c.x - 60); setAttr(hit, 'y', c.y - 60);
-    setAttr(hit, 'width', 120); setAttr(hit, 'height', 120);
+    setAttr(hit, 'x', c.x - 40); setAttr(hit, 'y', c.y - 40);
+    setAttr(hit, 'width', 80); setAttr(hit, 'height', 80);
     hit.setAttribute('fill', 'transparent');
     g.appendChild(hit);
 
@@ -1809,7 +1809,9 @@ import {
       hit.addEventListener('pointerenter', () => { if (allowHits) vis.classList.add('hover'); });
       hit.addEventListener('pointerleave', () => { if (allowHits) vis.classList.remove('hover'); });
       hit.addEventListener('pointerdown', (e) => {
-        if (mode === 'delete') { removeWireAtPoint(w, svgPoint(e)); }
+        if (mode === 'delete') { 
+          removeWireAtPoint(w, svgPoint(e));
+        }
         else {
           if (mode === 'none') { setMode('select'); }
           
@@ -1937,6 +1939,8 @@ import {
                 const compAxis: 'x' | 'y' = compIsHorizontal ? 'x' : 'y';
                 return { comp, pins, axis: compAxis };
               });
+              
+
               
               wireStretchState = {
                 wire: w,
@@ -3141,14 +3145,15 @@ import {
       const onComp = !!(tgt && tgt.closest && tgt.closest('g.comp'));
       const onWire = !!(tgt && tgt.closest && tgt.closest('#wires g'));
       const onJunction = !!(tgt && tgt.hasAttribute && tgt.hasAttribute('data-junction-id'));
-      if (mode === 'move' && e.button === 0 && !onComp && !onWire && !onJunction) {
+      const onEndpoint = !!(tgt && (tgt as any).endpoint); // Check if clicking on an endpoint marker
+      if (mode === 'move' && e.button === 0 && !onComp && !onWire && !onJunction && !onEndpoint) {
         selection = { kind: null, id: null, segIndex: null };
         setMode('select');
         renderInspector(); redraw();
         return;
       }
       // If in none mode with something selected, clicking empty space should deselect
-      if (mode === 'none' && e.button === 0 && !onComp && !onWire && !onJunction && selection.kind) {
+      if (mode === 'none' && e.button === 0 && !onComp && !onWire && !onJunction && !onEndpoint && selection.kind) {
         selection = { kind: null, id: null, segIndex: null };
         renderInspector(); redraw();
         return;
@@ -3179,7 +3184,11 @@ import {
       let at = { x, y }, rot = 0;
       if (isTwoPinType(placeType)) {
         const hit = nearestSegmentAtPoint(p, 18);
-        if (hit) { at = hit.q; rot = normDeg(hit.angle); }
+        if (hit) { 
+          // Snap the projection point to the grid to ensure component pins align with wire endpoints
+          at = { x: snap(hit.q.x), y: snap(hit.q.y) }; 
+          rot = normDeg(hit.angle); 
+        }
       }
       const comp: Component = {
         id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType] - 1}`, value: '',
@@ -3331,9 +3340,12 @@ import {
               
               // Pin must be at the wire's Y level AND at one of the endpoints' X position
               if (pinAtStartY && (pinAtStartX || pinAtEndX)) {
+                // Use the wire endpoint's X position, not the pin's X position
+                // This ensures the connecting wire aligns with the grid-snapped wire endpoint
+                const wireEndpointX = pinAtStartX ? wireStretchState.originalP0.x : wireStretchState.originalP1.x;
                 wireStretchState.ghostConnectingWires.push({
-                  from: { x: pin.x, y: pin.y },
-                  to: { x: pin.x, y: newY }
+                  from: { x: wireEndpointX, y: pin.y },
+                  to: { x: wireEndpointX, y: newY }
                 });
               }
             });
@@ -3391,9 +3403,12 @@ import {
               
               // Pin must be at the wire's X level AND at one of the endpoints' Y position
               if (pinAtStartX && (pinAtStartY || pinAtEndY)) {
+                // Use the wire endpoint's Y position, not the pin's Y position
+                // This ensures the connecting wire aligns with the grid-snapped wire endpoint
+                const wireEndpointY = pinAtStartY ? wireStretchState.originalP0.y : wireStretchState.originalP1.y;
                 wireStretchState.ghostConnectingWires.push({
-                  from: { x: pin.x, y: pin.y },
-                  to: { x: newX, y: pin.y }
+                  from: { x: wireStretchState.originalP0.x, y: wireEndpointY },
+                  to: { x: newX, y: wireEndpointY }
                 });
               }
             });
@@ -3743,6 +3758,7 @@ import {
     if (wireStretchState) {
       if (wireStretchState.dragging) {
         // Create real connecting wires from ghost wires
+        const newWireIds: string[] = [];
         wireStretchState.ghostConnectingWires.forEach(ghost => {
           // Only create if the wire has meaningful length (> 5 pixels to avoid tiny stubs)
           const dist = Math.hypot(ghost.to.x - ghost.from.x, ghost.to.y - ghost.from.y);
@@ -3757,13 +3773,28 @@ import {
               netId: wireStretchState.wire.netId // Inherit netId from the wire being stretched
             };
             wires.push(newWire);
+            newWireIds.push(newWire.id);
           }
         });
+
         
         // Normalize and clean up wire geometry
         normalizeAllWires();
-        // Note: Not calling unifyInlineWires() here to preserve wire segment boundaries
-        // for subsequent drag operations. User can manually trigger unification if needed.
+        
+        // Remove very short wires (< 5 pixels) that may have been created or shrunk during stretch
+        const wiresBefore = wires.length;
+        wires = wires.filter(w => {
+          if (w.points.length < 2) return false;
+          const p0 = w.points[0];
+          const p1 = w.points[w.points.length - 1];
+          const len = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+          return len >= 5;
+        });
+        
+        // Unify inline wire segments to collapse collinear wires
+        // This will merge the connecting wires back into the main wire if they're aligned
+        unifyInlineWires();
+        
         // Rebuild topology and redraw
         rebuildTopology();
         redraw();
