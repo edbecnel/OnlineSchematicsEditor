@@ -655,7 +655,8 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         const colorIn = document.createElement('input');
         colorIn.type = 'color';
         colorIn.title = 'Pick color';
-        colorIn.style.width = 'auto';
+        colorIn.style.minWidth = '32px';
+        colorIn.style.height = '32px';
         colorIn.style.flex = '0 0 auto';
         // Get current color (from junction override, default color, or netclass)
         const nc = ctx.NET_CLASSES[j.netId || 'default'] || ctx.NET_CLASSES.default;
