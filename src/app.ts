@@ -4323,9 +4323,13 @@ import {
       hidePolarInputs();
     }
 
-    // crosshair overlay while in wire mode (even if not actively drawing)
+    // crosshair overlay while in wire mode, place mode, select mode, delete mode, or junction modes
     // Use raw mouse position (p) for crosshair, not snapped position (x, y)
-    if (mode === 'wire') { renderCrosshair(p.x, p.y); } else { clearCrosshair(); }
+    if (mode === 'wire' || mode === 'place' || mode === 'select' || mode === 'delete' || mode === 'place-junction' || mode === 'delete-junction') { 
+      renderCrosshair(p.x, p.y); 
+    } else { 
+      clearCrosshair(); 
+    }
   });
 
   svg.addEventListener('pointerup', (e) => {
