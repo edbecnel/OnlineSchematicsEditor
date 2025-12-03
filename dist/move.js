@@ -360,6 +360,201 @@ export function beginSwpMove(ctx, c) {
     ctx.lastMoveCompId = c.id;
     return moveCtx;
 }
+// Handle perpendicular movement off the SWP line with T-junction splitting
+function handlePerpendicularSwpMove(ctx, mc, c, pins, axis, lo, hi, skipRedraw) {
+    // Find junctions on the original SWP line
+    const tolerance = 1.0;
+    const junctionsOnSwp = ctx.junctions.filter(j => {
+        if (j.suppressed)
+            return false;
+        if (axis === 'x') {
+            return Math.abs(j.at.y - mc.fixed) < tolerance && j.at.x >= lo - tolerance && j.at.x <= hi + tolerance;
+        }
+        else {
+            return Math.abs(j.at.x - mc.fixed) < tolerance && j.at.y >= lo - tolerance && j.at.y <= hi + tolerance;
+        }
+    });
+    if (junctionsOnSwp.length === 0) {
+        // No junction found - just do simple perpendicular movement
+        // Clean up and exit
+        ctx.wires = ctx.wires.filter(w => w.id !== mc.collapsedId);
+        ctx.moveCollapseCtx = null;
+        ctx.lastMoveCompId = null;
+        ctx.rebuildTopology();
+        if (!skipRedraw)
+            ctx.redraw();
+        return;
+    }
+    // Use the leftmost (or topmost) junction as the split point
+    junctionsOnSwp.sort((a, b) => {
+        if (axis === 'x')
+            return a.at.x - b.at.x;
+        return a.at.y - b.at.y;
+    });
+    const splitJunction = junctionsOnSwp[0];
+    const splitJunctionPos = axis === 'x' ? splitJunction.at.x : splitJunction.at.y;
+    // Get original wire segments from the snapshot
+    const origWireSnapshot = mc.origWireSnapshot || [];
+    // Determine component span along the SWP axis
+    const leftPin = pins[0];
+    const rightPin = pins[1];
+    const compLo = axis === 'x' ? Math.min(leftPin.x, rightPin.x) : Math.min(leftPin.y, rightPin.y);
+    const compHi = axis === 'x' ? Math.max(leftPin.x, rightPin.x) : Math.max(leftPin.y, rightPin.y);
+    // New wires to add
+    const newWires = [];
+    const chosenStroke = origWireSnapshot[0]?.stroke;
+    // Process each original wire segment
+    for (const origWire of origWireSnapshot) {
+        const points = origWire.points;
+        for (let i = 0; i < points.length - 1; i++) {
+            const p0 = points[i];
+            const p1 = points[i + 1];
+            // Get segment bounds along the SWP axis
+            const segLo = axis === 'x' ? Math.min(p0.x, p1.x) : Math.min(p0.y, p1.y);
+            const segHi = axis === 'x' ? Math.max(p0.x, p1.x) : Math.max(p0.y, p1.y);
+            // Classify segment relative to junction
+            if (segHi <= splitJunctionPos) {
+                // Segment is completely before junction - keep on original line
+                newWires.push({
+                    id: ctx.uid('wire'),
+                    points: [{ x: p0.x, y: p0.y }, { x: p1.x, y: p1.y }],
+                    color: origWire.color,
+                    stroke: origWire.stroke
+                });
+            }
+            else if (segLo >= splitJunctionPos) {
+                // Segment starts at or after junction
+                // Check if it overlaps with component span
+                const overlapsComponent = !(segHi < compLo - 0.1 || segLo > compHi + 0.1);
+                if (!overlapsComponent) {
+                    // Segment is outside component span - move entire segment to new position
+                    if (axis === 'x') {
+                        const newY = leftPin.y;
+                        newWires.push({
+                            id: ctx.uid('wire'),
+                            points: [
+                                { x: p0.x, y: newY },
+                                { x: p1.x, y: newY }
+                            ],
+                            color: origWire.color,
+                            stroke: origWire.stroke
+                        });
+                    }
+                    else {
+                        const newX = leftPin.x;
+                        newWires.push({
+                            id: ctx.uid('wire'),
+                            points: [
+                                { x: newX, y: p0.y },
+                                { x: newX, y: p1.y }
+                            ],
+                            color: origWire.color,
+                            stroke: origWire.stroke
+                        });
+                    }
+                }
+                else {
+                    // Segment overlaps component - split into before-component and after-component parts
+                    // Before-component part: from segment start to left component pin
+                    if (segLo < compLo - 0.1) {
+                        if (axis === 'x') {
+                            newWires.push({
+                                id: ctx.uid('wire'),
+                                points: [
+                                    { x: segLo, y: leftPin.y },
+                                    { x: leftPin.x, y: leftPin.y }
+                                ],
+                                color: origWire.color,
+                                stroke: origWire.stroke
+                            });
+                        }
+                        else {
+                            newWires.push({
+                                id: ctx.uid('wire'),
+                                points: [
+                                    { x: leftPin.x, y: segLo },
+                                    { x: leftPin.x, y: leftPin.y }
+                                ],
+                                color: origWire.color,
+                                stroke: origWire.stroke
+                            });
+                        }
+                    }
+                    // After-component part: from right component pin to segment end
+                    if (segHi > compHi + 0.1) {
+                        if (axis === 'x') {
+                            newWires.push({
+                                id: ctx.uid('wire'),
+                                points: [
+                                    { x: rightPin.x, y: rightPin.y },
+                                    { x: segHi, y: rightPin.y }
+                                ],
+                                color: origWire.color,
+                                stroke: origWire.stroke
+                            });
+                        }
+                        else {
+                            newWires.push({
+                                id: ctx.uid('wire'),
+                                points: [
+                                    { x: rightPin.x, y: rightPin.y },
+                                    { x: rightPin.x, y: segHi }
+                                ],
+                                color: origWire.color,
+                                stroke: origWire.stroke
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Add perpendicular connecting wire from junction to the moved line
+    if (axis === 'x') {
+        newWires.push({
+            id: ctx.uid('wire'),
+            points: [
+                { x: splitJunction.at.x, y: mc.fixed },
+                { x: splitJunction.at.x, y: leftPin.y }
+            ],
+            color: mc.color,
+            stroke: chosenStroke
+        });
+    }
+    else {
+        newWires.push({
+            id: ctx.uid('wire'),
+            points: [
+                { x: mc.fixed, y: splitJunction.at.y },
+                { x: leftPin.x, y: splitJunction.at.y }
+            ],
+            color: mc.color,
+            stroke: chosenStroke
+        });
+    }
+    // Remove the collapsed wire AND all wires on the old SWP line
+    const wiresOnOldLine = ctx.wires.filter(w => {
+        if (w.points.length < 2)
+            return false;
+        const p0 = w.points[0];
+        const p1 = w.points[w.points.length - 1];
+        if (axis === 'x') {
+            return Math.abs(p0.y - mc.fixed) < 0.1 && Math.abs(p1.y - mc.fixed) < 0.1;
+        }
+        else {
+            return Math.abs(p0.x - mc.fixed) < 0.1 && Math.abs(p1.x - mc.fixed) < 0.1;
+        }
+    });
+    const wireIdsToRemove = new Set([mc.collapsedId, ...wiresOnOldLine.map(w => w.id)]);
+    ctx.wires = ctx.wires.filter(w => !wireIdsToRemove.has(w.id)).concat(newWires);
+    // Clean up context
+    ctx.moveCollapseCtx = null;
+    ctx.lastMoveCompId = null;
+    ctx.rebuildTopology();
+    if (!skipRedraw) {
+        ctx.redraw();
+    }
+}
 // Finish SWP-based move: rebuild wire segments with proper stroke assignment
 export function finishSwpMove(ctx, c, skipRedraw = false) {
     if (!ctx.moveCollapseCtx || ctx.moveCollapseCtx.kind !== 'swp')
@@ -373,6 +568,15 @@ export function finishSwpMove(ctx, c, skipRedraw = false) {
         (ctx.eqN(pins[0].x, mc.fixed) && ctx.eqN(pins[1].x, mc.fixed));
     const lo = mc.ends.lo, hi = mc.ends.hi;
     const EPS = 0.5;
+    // Check if component moved perpendicular to SWP
+    const movedPerpendicular = axis === 'x'
+        ? Math.abs(pins[0].y - mc.fixed) > 0.1
+        : Math.abs(pins[0].x - mc.fixed) > 0.1;
+    if (movedPerpendicular) {
+        // Handle perpendicular movement with T-junction splitting
+        handlePerpendicularSwpMove(ctx, mc, c, pins, axis, lo, hi, skipRedraw);
+        return;
+    }
     // Calculate the component's through-line axis
     const compAxis = Math.abs(pins[1].x - pins[0].x) > Math.abs(pins[1].y - pins[0].y) ? 'x' : 'y';
     // Original SWP endpoints (where perpendicular wires are connected)
