@@ -59,7 +59,8 @@ export function rebuildTopology(
   findWireEndpointNear: (pt: Point, wires: Wire[], tol?: number) => { w: Wire, endIndex: number } | null,
   defaultWireColor: string,
   NET_CLASSES: any,
-  rgba01ToCss: (c: { r: number, g: number, b: number, a: number }) => string
+  rgba01ToCss: (c: { r: number, g: number, b: number, a: number }) => string,
+  uidGenerator: (prefix: string) => string
 ): { topology: Topology; wires: Wire[]; junctions: Junction[] } {
   const nodes = new Map<string, TopologyNode>();
   const edges: TopologyEdge[] = [];
@@ -290,7 +291,8 @@ export function rebuildTopology(
     compPinPositions, 
     junctions,
     NET_CLASSES,
-    rgba01ToCss
+    rgba01ToCss,
+    uidGenerator
   );
 
   const topology: Topology = {
@@ -494,7 +496,8 @@ function detectJunctions(
   compPinPositions: (c: Component) => Point[],
   existingJunctions: Junction[],
   NET_CLASSES: any,
-  rgba01ToCss: (c: { r: number, g: number, b: number, a: number }) => string
+  rgba01ToCss: (c: { r: number, g: number, b: number, a: number }) => string,
+  uidGenerator: (prefix: string) => string
 ): Junction[] {
   // Preserve manually placed junctions, clear auto-generated ones
   const manualJunctions = existingJunctions.filter(j => j.manual);
@@ -554,59 +557,21 @@ function detectJunctions(
           }
         }
         
-        // Determine the color from the actual wire
-        // Priority: wire passing through (mid-segment) > wire ending at junction
-        let junctionColor: string | undefined = undefined;
+        // Check if an automatic junction already exists at this location (preserve ID and per-instance overrides)
+        const existingAuto = existingJunctions.find(j => 
+          !j.manual && !j.suppressed && 
+          Math.abs(j.at.x - node.x) < 1e-3 && 
+          Math.abs(j.at.y - node.y) < 1e-3
+        );
         
-        // First pass: prioritize wires passing through (T-junction bar)
-        for (const wid of wireIds) {
-          const w = wires.find(w => w.id === wid);
-          if (w) {
-            // Check if this wire passes through the junction (not at endpoint)
-            const isStart = (Math.round(w.points[0].x) === node.x && 
-                            Math.round(w.points[0].y) === node.y);
-            const isEnd = (Math.round(w.points[w.points.length - 1].x) === node.x && 
-                          Math.round(w.points[w.points.length - 1].y) === node.y);
-            const passingThrough = !isStart && !isEnd;
-            
-            if (passingThrough) {
-              const nc = NET_CLASSES[netId] || NET_CLASSES.default;
-              if (w.stroke) {
-                junctionColor = rgba01ToCss(w.stroke.color);
-              } else if (w.color) {
-                junctionColor = w.color;
-              } else {
-                junctionColor = rgba01ToCss(nc.wire.color);
-              }
-              break; // Use first passing-through wire
-            }
-          }
-        }
-        
-        // Second pass: if no passing-through wire, use any wire at this junction
-        if (!junctionColor) {
-          for (const wid of wireIds) {
-            const w = wires.find(w => w.id === wid);
-            if (w) {
-              const nc = NET_CLASSES[netId] || NET_CLASSES.default;
-              if (w.stroke) {
-                junctionColor = rgba01ToCss(w.stroke.color);
-              } else if (w.color) {
-                junctionColor = w.color;
-              } else {
-                junctionColor = rgba01ToCss(nc.wire.color);
-              }
-              break;
-            }
-          }
-        }
-        
-        const nc = NET_CLASSES[netId] || NET_CLASSES.default;
+        // Only set size/color if they were explicitly overridden in the existing junction
+        // Otherwise leave undefined so the rendering code uses: per-instance > global default > netclass
         newJunctions.push({
+          id: existingAuto ? existingAuto.id : uidGenerator('junction'),
           at: { x: node.x, y: node.y },
           netId,
-          size: nc.junction.size,
-          color: junctionColor
+          size: existingAuto?.size,   // preserve per-instance override if it existed, else undefined
+          color: existingAuto?.color  // preserve per-instance override if it existed, else undefined
         } as Junction);
       }
     }

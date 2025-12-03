@@ -2,7 +2,7 @@
 // Handles SWP-based component movement, slide contexts, and collision detection
 
 import type {
-  Component, Wire, Point, Axis, Selection, MoveCollapseCtx, Stroke
+  Component, Wire, Junction, Point, Axis, Selection, MoveCollapseCtx, Stroke
 } from './types.js';
 import type { SWP, Topology } from './topology.js';
 
@@ -11,6 +11,7 @@ export interface MoveContext {
   // State
   components: Component[];
   wires: Wire[];
+  junctions: Junction[];
   selection: Selection;
   moveCollapseCtx: MoveCollapseCtx | null;
   lastMoveCompId: string | null;
@@ -481,6 +482,36 @@ export function finishSwpMove(ctx: MoveContext, c: Component, skipRedraw = false
       
       // Update this endpoint to the new through-line endpoint
       wire.points[endpointIndex] = { x: mapping.new.x, y: mapping.new.y };
+    }
+  }
+  
+  // Update any junction dots that were on the moved SWP line
+  // Calculate the delta for the SWP movement perpendicular to its axis
+  const delta = axis === 'x' 
+    ? (newSwpStart.y - oldSwpStart.y)  // Horizontal SWP moved vertically
+    : (newSwpStart.x - oldSwpStart.x); // Vertical SWP moved horizontally
+  
+  if (Math.abs(delta) > 0.1) {
+    const tolerance = 1.0;
+    for (const junction of ctx.junctions) {
+      // Skip suppressed junctions
+      if (junction.suppressed) continue;
+      
+      // Check if this junction was on the original SWP line
+      const onOriginalSwpLine = axis === 'x'
+        ? (Math.abs(junction.at.y - mc.fixed) < tolerance && 
+           junction.at.x >= lo - tolerance && junction.at.x <= hi + tolerance)
+        : (Math.abs(junction.at.x - mc.fixed) < tolerance && 
+           junction.at.y >= lo - tolerance && junction.at.y <= hi + tolerance);
+      
+      if (onOriginalSwpLine) {
+        // Move the junction perpendicular to the SWP axis
+        if (axis === 'x') {
+          junction.at.y += delta;
+        } else {
+          junction.at.x += delta;
+        }
+      }
     }
   }
   

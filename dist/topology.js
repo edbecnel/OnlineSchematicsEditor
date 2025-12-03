@@ -8,7 +8,7 @@ import { keyPt, eqN } from './geometry.js';
  * Rebuild the complete topology: nodes, edges, SWPs, component mappings, and junctions.
  * This is the main entry point for topology analysis.
  */
-export function rebuildTopology(wires, components, junctions, compPinPositions, findWireEndpointNear, defaultWireColor, NET_CLASSES, rgba01ToCss) {
+export function rebuildTopology(wires, components, junctions, compPinPositions, findWireEndpointNear, defaultWireColor, NET_CLASSES, rgba01ToCss, uidGenerator) {
     const nodes = new Map();
     const edges = [];
     const axisOf = (a, b) => (a.y === b.y) ? 'x' : (a.x === b.x) ? 'y' : null;
@@ -209,7 +209,7 @@ export function rebuildTopology(wires, components, junctions, compPinPositions, 
     // Step 8: Map components to SWPs
     const compToSwp = mapComponentsToSWPs(components, compPinPositions, swps);
     // Step 9: Detect and create junctions
-    const updatedJunctions = detectJunctions(nodes, edges, wires, components, compPinPositions, junctions, NET_CLASSES, rgba01ToCss);
+    const updatedJunctions = detectJunctions(nodes, edges, wires, components, compPinPositions, junctions, NET_CLASSES, rgba01ToCss, uidGenerator);
     const topology = {
         nodes: [...nodes.values()],
         edges,
@@ -377,7 +377,7 @@ function mapComponentsToSWPs(components, compPinPositions, swps) {
  * Detect and create junction dots at wire-to-wire T-junctions and component pins.
  * Preserves manually placed junctions, clears auto-generated ones.
  */
-function detectJunctions(nodes, edges, wires, components, compPinPositions, existingJunctions, NET_CLASSES, rgba01ToCss) {
+function detectJunctions(nodes, edges, wires, components, compPinPositions, existingJunctions, NET_CLASSES, rgba01ToCss, uidGenerator) {
     // Preserve manually placed junctions, clear auto-generated ones
     const manualJunctions = existingJunctions.filter(j => j.manual);
     const newJunctions = [...manualJunctions];
@@ -428,59 +428,18 @@ function detectJunctions(nodes, edges, wires, components, compPinPositions, exis
                         break;
                     }
                 }
-                // Determine the color from the actual wire
-                // Priority: wire passing through (mid-segment) > wire ending at junction
-                let junctionColor = undefined;
-                // First pass: prioritize wires passing through (T-junction bar)
-                for (const wid of wireIds) {
-                    const w = wires.find(w => w.id === wid);
-                    if (w) {
-                        // Check if this wire passes through the junction (not at endpoint)
-                        const isStart = (Math.round(w.points[0].x) === node.x &&
-                            Math.round(w.points[0].y) === node.y);
-                        const isEnd = (Math.round(w.points[w.points.length - 1].x) === node.x &&
-                            Math.round(w.points[w.points.length - 1].y) === node.y);
-                        const passingThrough = !isStart && !isEnd;
-                        if (passingThrough) {
-                            const nc = NET_CLASSES[netId] || NET_CLASSES.default;
-                            if (w.stroke) {
-                                junctionColor = rgba01ToCss(w.stroke.color);
-                            }
-                            else if (w.color) {
-                                junctionColor = w.color;
-                            }
-                            else {
-                                junctionColor = rgba01ToCss(nc.wire.color);
-                            }
-                            break; // Use first passing-through wire
-                        }
-                    }
-                }
-                // Second pass: if no passing-through wire, use any wire at this junction
-                if (!junctionColor) {
-                    for (const wid of wireIds) {
-                        const w = wires.find(w => w.id === wid);
-                        if (w) {
-                            const nc = NET_CLASSES[netId] || NET_CLASSES.default;
-                            if (w.stroke) {
-                                junctionColor = rgba01ToCss(w.stroke.color);
-                            }
-                            else if (w.color) {
-                                junctionColor = w.color;
-                            }
-                            else {
-                                junctionColor = rgba01ToCss(nc.wire.color);
-                            }
-                            break;
-                        }
-                    }
-                }
-                const nc = NET_CLASSES[netId] || NET_CLASSES.default;
+                // Check if an automatic junction already exists at this location (preserve ID and per-instance overrides)
+                const existingAuto = existingJunctions.find(j => !j.manual && !j.suppressed &&
+                    Math.abs(j.at.x - node.x) < 1e-3 &&
+                    Math.abs(j.at.y - node.y) < 1e-3);
+                // Only set size/color if they were explicitly overridden in the existing junction
+                // Otherwise leave undefined so the rendering code uses: per-instance > global default > netclass
                 newJunctions.push({
+                    id: existingAuto ? existingAuto.id : uidGenerator('junction'),
                     at: { x: node.x, y: node.y },
                     netId,
-                    size: nc.junction.size,
-                    color: junctionColor
+                    size: existingAuto?.size, // preserve per-instance override if it existed, else undefined
+                    color: existingAuto?.color // preserve per-instance override if it existed, else undefined
                 });
             }
         }

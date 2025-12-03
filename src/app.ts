@@ -1823,6 +1823,27 @@ import {
             const componentEndIndex = dragWire.isStart ? 0 : dragWire.wire.points.length - 1;
             dragWire.wire.points[componentEndIndex] = { x: finalPin.x, y: finalPin.y };
             
+            // Move any junction dots that were on this wire segment
+            const tolerance = 1.0; // tolerance for detecting if junction is on the original wire
+            for (const junction of junctions) {
+              // Skip suppressed junctions
+              if (junction.suppressed) continue;
+              
+              // Check if this junction was on any point of the original wire
+              for (const origPt of dragWire.originalPoints) {
+                const dist = Math.hypot(junction.at.x - origPt.x, junction.at.y - origPt.y);
+                if (dist < tolerance) {
+                  // Move the junction the same delta as the wire
+                  if (dragWire.axis === 'x') {
+                    junction.at.y += delta;
+                  } else {
+                    junction.at.x += delta;
+                  }
+                  break; // Only move each junction once
+                }
+              }
+            }
+            
             // Now update the perpendicular wires at far end - maintain orthogonality
             for (const perpWire of dragWire.perpendicularWires) {
               const movedFarEnd = dragWire.wire.points[dragWire.isStart ? dragWire.wire.points.length - 1 : 0];
@@ -3298,7 +3319,7 @@ import {
   // Helper to create Move context
   function createMoveContext() {
     return {
-      components, wires, selection, moveCollapseCtx, lastMoveCompId, topology,
+      components, wires, junctions, selection, moveCollapseCtx, lastMoveCompId, topology,
       snap, snapToBaseScalar, eqPt, eqPtEps: Geometry.eqPtEps, eqN: Geometry.eqN, keyPt: Geometry.keyPt,
       compPinPositions: Components.compPinPositions, wiresEndingAt, adjacentOther,
       pushUndo, redraw, redrawCanvasOnly, uid: State.uid,
@@ -3936,57 +3957,56 @@ import {
           // Update ghost connecting wires for visual feedback
           wireStretchState.ghostConnectingWires = [];
           
-          // Handle junctions at endpoints
-          if (wireStretchState.junctionAtStart) {
+          // Handle connected wires at start endpoint
+          const startPos = wireStretchState.originalP0;
+          // Filter for perpendicular wires only (vertical wires for horizontal wire movement)
+          const perpConnectedWiresStart = wireStretchState.connectedWiresStart.filter(conn => {
+            const cw = conn.wire;
+            const cwStart = cw.points[0];
+            const cwEnd = cw.points[cw.points.length - 1];
+            const isVertical = Math.abs(cwStart.x - cwEnd.x) < 1;
+            return isVertical; // For horizontal wire, only stretch vertical connecting wires
+          });
+          
+          if (perpConnectedWiresStart.length === 0 && wireStretchState.junctionAtStart) {
+            // No existing perpendicular connecting wire but there's a junction - create ghost for visual feedback
             const junctionPos = wireStretchState.junctionAtStart.at;
-            // Filter for perpendicular wires only (vertical wires for horizontal wire movement)
-            const perpConnectedWires = wireStretchState.connectedWiresStart.filter(conn => {
-              const cw = conn.wire;
-              const cwStart = cw.points[0];
-              const cwEnd = cw.points[cw.points.length - 1];
-              const isVertical = Math.abs(cwStart.x - cwEnd.x) < 1;
-              return isVertical; // For horizontal wire, only stretch vertical connecting wires
+            wireStretchState.ghostConnectingWires.push({
+              from: { x: junctionPos.x, y: junctionPos.y },
+              to: { x: junctionPos.x, y: newY }
             });
-            
-            if (perpConnectedWires.length === 0) {
-              // No existing perpendicular connecting wire - create ghost for visual feedback
-              wireStretchState.ghostConnectingWires.push({
-                from: { x: junctionPos.x, y: junctionPos.y },
-                to: { x: junctionPos.x, y: newY }
-              });
-            } else {
-              // Existing perpendicular connecting wire - stretch it in real-time
-              perpConnectedWires.forEach(conn => {
-                const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
-                conn.wire.points[endToUpdate].y = newY;
-              });
-            }
+          } else {
+            // Existing perpendicular connecting wire(s) - stretch them in real-time
+            perpConnectedWiresStart.forEach(conn => {
+              const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
+              conn.wire.points[endToUpdate].y = newY;
+            });
           }
           
-          if (wireStretchState.junctionAtEnd) {
+          // Handle connected wires at end endpoint
+          const endPos = wireStretchState.originalP1;
+          // Filter for perpendicular wires only (vertical wires for horizontal wire movement)
+          const perpConnectedWiresEnd = wireStretchState.connectedWiresEnd.filter(conn => {
+            const cw = conn.wire;
+            const cwStart = cw.points[0];
+            const cwEnd = cw.points[cw.points.length - 1];
+            const isVertical = Math.abs(cwStart.x - cwEnd.x) < 1;
+            return isVertical; // For horizontal wire, only stretch vertical connecting wires
+          });
+          
+          if (perpConnectedWiresEnd.length === 0 && wireStretchState.junctionAtEnd) {
+            // No existing perpendicular connecting wire but there's a junction - create ghost for visual feedback
             const junctionPos = wireStretchState.junctionAtEnd.at;
-            // Filter for perpendicular wires only (vertical wires for horizontal wire movement)
-            const perpConnectedWires = wireStretchState.connectedWiresEnd.filter(conn => {
-              const cw = conn.wire;
-              const cwStart = cw.points[0];
-              const cwEnd = cw.points[cw.points.length - 1];
-              const isVertical = Math.abs(cwStart.x - cwEnd.x) < 1;
-              return isVertical; // For horizontal wire, only stretch vertical connecting wires
+            wireStretchState.ghostConnectingWires.push({
+              from: { x: junctionPos.x, y: junctionPos.y },
+              to: { x: junctionPos.x, y: newY }
             });
-            
-            if (perpConnectedWires.length === 0) {
-              // No existing perpendicular connecting wire - create ghost for visual feedback
-              wireStretchState.ghostConnectingWires.push({
-                from: { x: junctionPos.x, y: junctionPos.y },
-                to: { x: junctionPos.x, y: newY }
-              });
-            } else {
-              // Existing perpendicular connecting wire - stretch it in real-time
-              perpConnectedWires.forEach(conn => {
-                const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
-                conn.wire.points[endToUpdate].y = newY;
-              });
-            }
+          } else {
+            // Existing perpendicular connecting wire(s) - stretch them in real-time
+            perpConnectedWiresEnd.forEach(conn => {
+              const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
+              conn.wire.points[endToUpdate].y = newY;
+            });
           }
           
           wireStretchState.componentsOnWire.forEach(compInfo => {
@@ -4025,57 +4045,56 @@ import {
           // Update ghost connecting wires for visual feedback
           wireStretchState.ghostConnectingWires = [];
           
-          // Handle junctions at endpoints
-          if (wireStretchState.junctionAtStart) {
+          // Handle connected wires at start endpoint
+          const startPos = wireStretchState.originalP0;
+          // Filter for perpendicular wires only (horizontal wires for vertical wire movement)
+          const perpConnectedWiresStart = wireStretchState.connectedWiresStart.filter(conn => {
+            const cw = conn.wire;
+            const cwStart = cw.points[0];
+            const cwEnd = cw.points[cw.points.length - 1];
+            const isHorizontal = Math.abs(cwStart.y - cwEnd.y) < 1;
+            return isHorizontal; // For vertical wire, only stretch horizontal connecting wires
+          });
+          
+          if (perpConnectedWiresStart.length === 0 && wireStretchState.junctionAtStart) {
+            // No existing perpendicular connecting wire but there's a junction - create ghost for visual feedback
             const junctionPos = wireStretchState.junctionAtStart.at;
-            // Filter for perpendicular wires only (horizontal wires for vertical wire movement)
-            const perpConnectedWires = wireStretchState.connectedWiresStart.filter(conn => {
-              const cw = conn.wire;
-              const cwStart = cw.points[0];
-              const cwEnd = cw.points[cw.points.length - 1];
-              const isHorizontal = Math.abs(cwStart.y - cwEnd.y) < 1;
-              return isHorizontal; // For vertical wire, only stretch horizontal connecting wires
+            wireStretchState.ghostConnectingWires.push({
+              from: { x: junctionPos.x, y: junctionPos.y },
+              to: { x: newX, y: junctionPos.y }
             });
-            
-            if (perpConnectedWires.length === 0) {
-              // No existing perpendicular connecting wire - create ghost for visual feedback
-              wireStretchState.ghostConnectingWires.push({
-                from: { x: junctionPos.x, y: junctionPos.y },
-                to: { x: newX, y: junctionPos.y }
-              });
-            } else {
-              // Existing perpendicular connecting wire - stretch it in real-time
-              perpConnectedWires.forEach(conn => {
-                const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
-                conn.wire.points[endToUpdate].x = newX;
-              });
-            }
+          } else {
+            // Existing perpendicular connecting wire(s) - stretch them in real-time
+            perpConnectedWiresStart.forEach(conn => {
+              const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
+              conn.wire.points[endToUpdate].x = newX;
+            });
           }
           
-          if (wireStretchState.junctionAtEnd) {
+          // Handle connected wires at end endpoint
+          const endPos = wireStretchState.originalP1;
+          // Filter for perpendicular wires only (horizontal wires for vertical wire movement)
+          const perpConnectedWiresEnd = wireStretchState.connectedWiresEnd.filter(conn => {
+            const cw = conn.wire;
+            const cwStart = cw.points[0];
+            const cwEnd = cw.points[cw.points.length - 1];
+            const isHorizontal = Math.abs(cwStart.y - cwEnd.y) < 1;
+            return isHorizontal; // For vertical wire, only stretch horizontal connecting wires
+          });
+          
+          if (perpConnectedWiresEnd.length === 0 && wireStretchState.junctionAtEnd) {
+            // No existing perpendicular connecting wire but there's a junction - create ghost for visual feedback
             const junctionPos = wireStretchState.junctionAtEnd.at;
-            // Filter for perpendicular wires only (horizontal wires for vertical wire movement)
-            const perpConnectedWires = wireStretchState.connectedWiresEnd.filter(conn => {
-              const cw = conn.wire;
-              const cwStart = cw.points[0];
-              const cwEnd = cw.points[cw.points.length - 1];
-              const isHorizontal = Math.abs(cwStart.y - cwEnd.y) < 1;
-              return isHorizontal; // For vertical wire, only stretch horizontal connecting wires
+            wireStretchState.ghostConnectingWires.push({
+              from: { x: junctionPos.x, y: junctionPos.y },
+              to: { x: newX, y: junctionPos.y }
             });
-            
-            if (perpConnectedWires.length === 0) {
-              // No existing perpendicular connecting wire - create ghost for visual feedback
-              wireStretchState.ghostConnectingWires.push({
-                from: { x: junctionPos.x, y: junctionPos.y },
-                to: { x: newX, y: junctionPos.y }
-              });
-            } else {
-              // Existing perpendicular connecting wire - stretch it in real-time
-              perpConnectedWires.forEach(conn => {
-                const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
-                conn.wire.points[endToUpdate].x = newX;
-              });
-            }
+          } else {
+            // Existing perpendicular connecting wire(s) - stretch them in real-time
+            perpConnectedWiresEnd.forEach(conn => {
+              const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
+              conn.wire.points[endToUpdate].x = newX;
+            });
           }
           
           wireStretchState.componentsOnWire.forEach(compInfo => {
@@ -4417,6 +4436,9 @@ import {
     // Finish free endpoint stretch if active
     if (endpointStretchState && endpointStretchState.dragging) {
       const w = endpointStretchState.wire;
+      
+      // Remove the temporary drag dot
+      gDrawing.querySelectorAll('[data-endpoint-drag-dot]').forEach(el => el.remove());
       
       // Check if wire became too short (< 5 pixels) - if so, delete it
       const len = Math.hypot(w.points[1].x - w.points[0].x, w.points[1].y - w.points[0].y);
@@ -7857,9 +7879,11 @@ import {
           }
         }
       }
-      // Add a junction if two or more wires meet at this point
-      // This includes: T-junctions, component pins, and wire endpoints after splitting
-      const shouldCreateJunction = wireIds.size >= 2;
+      // Add a junction ONLY for T-junctions:
+      // - At least 2 wires meet, AND
+      // - At least one wire passes through (not an endpoint), OR it's a component pin
+      const isComponentPin = pinKeys.has(k);
+      const shouldCreateJunction = wireIds.size >= 2 && (hasMidSegment || isComponentPin);
       
       if (shouldCreateJunction) {
         // Check if this location already has a manual junction (including suppressed ones)
