@@ -2008,7 +2008,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             const p0 = { x: snapToBaseScalar(w.points[0].x), y: snapToBaseScalar(w.points[0].y) };
                             const p1 = { x: snapToBaseScalar(w.points[w.points.length - 1].x), y: snapToBaseScalar(w.points[w.points.length - 1].y) };
                             // Find wires connected at start point
-                            const connectedAtStart = wires.filter(wire => {
+                            // If a junction (manual or automatic) exists at p0, do not treat wires as connected for stretching
+                            const hasJunctionAtStart = junctions.some(j => Math.abs(j.at.x - p0.x) < 1 && Math.abs(j.at.y - p0.y) < 1);
+                            const connectedAtStart = hasJunctionAtStart ? [] : wires.filter(wire => {
                                 if (wire.id === w.id)
                                     return false;
                                 const wireStart = wire.points[0];
@@ -2023,7 +2025,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                                 return { wire, isStart, originalPoint };
                             });
                             // Find wires connected at end point
-                            const connectedAtEnd = wires.filter(wire => {
+                            // If a junction (manual or automatic) exists at p1, do not treat wires as connected for stretching
+                            const hasJunctionAtEnd = junctions.some(j => Math.abs(j.at.x - p1.x) < 1 && Math.abs(j.at.y - p1.y) < 1);
+                            const connectedAtEnd = hasJunctionAtEnd ? [] : wires.filter(wire => {
                                 if (wire.id === w.id)
                                     return false;
                                 const wireStart = wire.points[0];
@@ -3057,17 +3061,14 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // Debug helper: dump anchors, overlay rects, and wire endpoints to console
     function debugDumpAnchors() {
         try {
-            console.groupCollapsed('DEBUG Anchors Dump');
+            // (console logging removed)
             const rects = $qa('[data-endpoint]', gOverlay).map(r => ({
                 endpoint: r.endpoint || null,
                 wireId: r.wireId || null,
                 bbox: r.getBBox()
             }));
-            console.groupEnd();
         }
-        catch (err) {
-            console.warn('debugDumpAnchors failed', err);
-        }
+        catch (err) { }
     }
     // Snap a user-space point to nearest anchor or wire segment if within threshold, else to grid via snap().
     function snapPointPreferAnchor(p, thresholdPx = 10) {
@@ -7641,11 +7642,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     }
                 }
             }
-            // Add a junction if:
-            // 1. Two or more wires meet and at least one passes through (T-junction), OR
-            // 2. Two or more wires meet at a component pin (even if all are endpoints)
-            const isComponentPin = pinKeys.has(k);
-            const shouldCreateJunction = wireIds.size >= 2 && (hasMidSegment || isComponentPin);
+            // Add a junction if two or more wires meet at this point
+            // This includes: T-junctions, component pins, and wire endpoints after splitting
+            const shouldCreateJunction = wireIds.size >= 2;
             if (shouldCreateJunction) {
                 // Check if this location already has a manual junction (including suppressed ones)
                 const hasManualJunction = manualJunctions.some(j => Math.abs(j.at.x - node.x) < 1e-3 && Math.abs(j.at.y - node.y) < 1e-3);
@@ -7670,6 +7669,55 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     });
                 }
             }
+        }
+        // Split wires at junction points (both manual and automatic)
+        // This ensures that wires are separated into distinct segments at junctions
+        const wiresToSplit = [];
+        for (const junction of junctions) {
+            const jx = Math.round(junction.at.x);
+            const jy = Math.round(junction.at.y);
+            // Find wires that have this junction point in their polyline (not at endpoints)
+            for (const w of wires) {
+                if (w.points.length < 2)
+                    continue;
+                // Check if junction point exists in the polyline
+                let junctionIndex = -1;
+                for (let i = 0; i < w.points.length; i++) {
+                    const pt = w.points[i];
+                    const px = Math.round(pt.x), py = Math.round(pt.y);
+                    if (px === jx && py === jy) {
+                        junctionIndex = i;
+                        break;
+                    }
+                }
+                // Only split if junction is in the middle (not at endpoints)
+                if (junctionIndex > 0 && junctionIndex < w.points.length - 1) {
+                    wiresToSplit.push({ wire: w, junctionIndex });
+                }
+            }
+        }
+        // Actually split the wires
+        let didSplitWires = false;
+        for (const { wire, junctionIndex } of wiresToSplit) {
+            // Split the wire at this index
+            const firstHalf = wire.points.slice(0, junctionIndex + 1);
+            const secondHalf = wire.points.slice(junctionIndex);
+            // Update original wire with first half
+            wire.points = firstHalf;
+            // Create new wire with second half
+            const newWire = {
+                id: State.uid('wire'),
+                points: secondHalf,
+                color: wire.color,
+                stroke: wire.stroke ? { ...wire.stroke } : undefined,
+                netId: wire.netId
+            };
+            wires.push(newWire);
+            didSplitWires = true;
+        }
+        // If we split wires, rebuild topology to detect junctions at the new wire endpoints
+        if (didSplitWires) {
+            rebuildTopology();
         }
     }
     // ---- SWP Move: collapse current SWP to a single straight wire, constrain move, rebuild on finish ----
