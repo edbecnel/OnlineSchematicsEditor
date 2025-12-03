@@ -7588,6 +7588,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }
             }
         }
+        // After detecting T-junctions and modifying wire.points arrays, normalize to create separate Wire objects
+        // This ensures that wires split at T-junctions become independent 2-point wire segments
+        normalizeAllWires();
     }
     // ---- SWP Move: collapse current SWP to a single straight wire, constrain move, rebuild on finish ----
     function findSwpById(id) { return topology.swps.find(s => s.id === id); }
