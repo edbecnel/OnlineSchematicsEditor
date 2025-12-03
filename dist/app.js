@@ -1660,11 +1660,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         // Update the component connection endpoint to match the new pin position
                         const componentEndIndex = dragWire.isStart ? 0 : dragWire.wire.points.length - 1;
                         dragWire.wire.points[componentEndIndex] = { x: finalPin.x, y: finalPin.y };
-                        // Move any junction dots that were on this wire segment
+                        // Move any MANUAL junction dots that were on this wire segment
+                        // Automatic junctions are connection points and should stay fixed
                         const tolerance = 1.0; // tolerance for detecting if junction is on the original wire
                         for (const junction of junctions) {
-                            // Skip suppressed junctions
-                            if (junction.suppressed)
+                            // Skip suppressed junctions and automatic junctions
+                            if (junction.suppressed || !junction.manual)
                                 continue;
                             // Check if this junction was on any point of the original wire
                             for (const origPt of dragWire.originalPoints) {
@@ -2045,6 +2046,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                                     : { x: wire.points[wire.points.length - 1].x, y: wire.points[wire.points.length - 1].y };
                                 return { wire, isStart, originalPoint };
                             });
+                            console.log(`connectedAtStart: ${connectedAtStart.length} wires:`, connectedAtStart.map(c => `${c.wire.id}`));
                             // Find wires connected at end point
                             // If a junction (manual or automatic) exists at p1, do not treat wires as connected for stretching
                             const hasJunctionAtEnd = junctions.some(j => Math.abs(j.at.x - p1.x) < 1 && Math.abs(j.at.y - p1.y) < 1);
@@ -3773,10 +3775,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     const delta = p.y - wireStretchState.startMousePos.y;
                     const newY = snap(p0.y + delta);
                     // Update main wire position
-                    w.points[0].x = p0.x;
-                    w.points[0].y = newY;
-                    w.points[1].x = p1.x;
-                    w.points[1].y = newY;
+                    // Create NEW point objects to avoid modifying shared points from wire splitting
+                    w.points[0] = { x: p0.x, y: newY };
+                    w.points[1] = { x: p1.x, y: newY };
                     // Update ghost connecting wires for visual feedback
                     wireStretchState.ghostConnectingWires = [];
                     // Handle connected wires at start endpoint
@@ -3855,10 +3856,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     const delta = p.x - wireStretchState.startMousePos.x;
                     const newX = snap(p0.x + delta);
                     // Update main wire position
-                    w.points[0].x = newX;
-                    w.points[0].y = p0.y;
-                    w.points[1].x = newX;
-                    w.points[1].y = p1.y;
+                    // Create NEW point objects to avoid modifying shared points from wire splitting
+                    w.points[0] = { x: newX, y: p0.y };
+                    w.points[1] = { x: newX, y: p1.y };
                     // Update ghost connecting wires for visual feedback
                     wireStretchState.ghostConnectingWires = [];
                     // Handle connected wires at start endpoint
@@ -7274,6 +7274,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // ====== Topology: nodes, edges, SWPs ======
     function rebuildTopology() {
         var _a;
+        // Skip automatic junction detection and wire splitting during wire stretch
+        // This prevents junctions from appearing to move as wires are dragged
+        const skipAutoJunctionLogic = wireStretchState !== null;
         const nodes = new Map(); // key -> {x,y,edges:Set<edgeId>, axDeg:{x:number,y:number}}
         const edges = []; // {id, wireId, i, a:{x,y}, b:{x,y}, axis:'x'|'y'|null, akey, bkey}
         const axisOf = (a, b) => (a.y === b.y) ? 'x' : (a.x === b.x) ? 'y' : null;
@@ -7632,67 +7635,78 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         }
         topology = { nodes: [...nodes.values()], edges, swps, compToSwp };
         // --- JUNCTION LOGIC: Add junctions for wire-to-wire T-junctions (including at component pins) ---
-        // Preserve manually placed junctions, keep automatic junctions for ID reuse
-        const manualJunctions = junctions.filter(j => j.manual);
-        const oldAutomaticJunctions = junctions.filter(j => !j.manual);
-        junctions = [...manualJunctions];
-        // Build a set of all component pin positions (rounded)
-        const pinKeys = new Set();
-        for (const c of components) {
-            const pins = Components.compPinPositions(c).map(p => `${Math.round(p.x)},${Math.round(p.y)}`);
-            for (const k of pins)
-                pinKeys.add(k);
-        }
-        // For each node in the topology, check if it is a valid wire-to-wire intersection
-        for (const node of nodes.values()) {
-            const k = `${node.x},${node.y}`;
-            // Gather all wires touching this node
-            const wireIds = new Set();
-            let hasMidSegment = false;
-            for (const eid of node.edges) {
-                const edge = edges.find(e => e.id === eid);
-                if (edge && edge.wireId) {
-                    wireIds.add(edge.wireId);
-                    const w = wires.find(w => w.id === edge.wireId);
-                    if (w) {
-                        // Check if node is NOT an endpoint for this wire
-                        const isStart = (Math.round(w.points[0].x) === node.x && Math.round(w.points[0].y) === node.y);
-                        const isEnd = (Math.round(w.points[w.points.length - 1].x) === node.x && Math.round(w.points[w.points.length - 1].y) === node.y);
-                        if (!isStart && !isEnd)
-                            hasMidSegment = true;
-                    }
-                }
+        // Skip automatic junction detection during wire stretch to prevent junctions from moving
+        if (!skipAutoJunctionLogic) {
+            // Preserve manually placed junctions, reuse automatic junction IDs
+            const manualJunctions = junctions.filter(j => j.manual);
+            const oldAutomaticJunctions = junctions.filter(j => !j.manual && !j.suppressed);
+            junctions = [...manualJunctions];
+            // Build a set of all component pin positions (rounded)
+            const pinKeys = new Set();
+            for (const c of components) {
+                const pins = Components.compPinPositions(c).map(p => `${Math.round(p.x)},${Math.round(p.y)}`);
+                for (const k of pins)
+                    pinKeys.add(k);
             }
-            // Add a junction ONLY for T-junctions:
-            // - At least 2 wires meet, AND
-            // - At least one wire passes through (not an endpoint), OR it's a component pin
-            const isComponentPin = pinKeys.has(k);
-            const shouldCreateJunction = wireIds.size >= 2 && (hasMidSegment || isComponentPin);
-            if (shouldCreateJunction) {
-                // Check if this location already has a manual junction (including suppressed ones)
-                const hasManualJunction = manualJunctions.some(j => Math.abs(j.at.x - node.x) < 1e-3 && Math.abs(j.at.y - node.y) < 1e-3);
-                // Only create automatic junction if no manual junction exists at this location
-                if (!hasManualJunction) {
-                    // Use the netId of the first wire found, or 'default'
-                    let netId = 'default';
-                    for (const wid of wireIds) {
-                        const w = wires.find(w => w.id === wid);
-                        if (w && w.netId) {
-                            netId = w.netId;
-                            break;
+            // For each node in the topology, check if it is a valid wire-to-wire intersection
+            for (const node of nodes.values()) {
+                const k = `${node.x},${node.y}`;
+                // Gather all wires touching this node
+                const wireIds = new Set();
+                let hasMidSegment = false;
+                for (const eid of node.edges) {
+                    const edge = edges.find(e => e.id === eid);
+                    if (edge && edge.wireId) {
+                        wireIds.add(edge.wireId);
+                        const w = wires.find(w => w.id === edge.wireId);
+                        if (w) {
+                            // Check if node is NOT an endpoint for this wire
+                            const isStart = (Math.round(w.points[0].x) === node.x && Math.round(w.points[0].y) === node.y);
+                            const isEnd = (Math.round(w.points[w.points.length - 1].x) === node.x && Math.round(w.points[w.points.length - 1].y) === node.y);
+                            if (!isStart && !isEnd)
+                                hasMidSegment = true;
                         }
                     }
-                    // Check if an automatic junction already exists at this location (preserve its ID)
-                    const existingAuto = oldAutomaticJunctions.find(j => Math.abs(j.at.x - node.x) < 1e-3 && Math.abs(j.at.y - node.y) < 1e-3);
-                    // Add automatic junction, reusing ID if one existed before
-                    junctions.push({
-                        id: existingAuto ? existingAuto.id : State.uid('junction'),
-                        at: { x: node.x, y: node.y },
-                        netId
-                    });
+                }
+                // Add a junction for wire-to-wire connections:
+                // - At least 3 wires meet (multiple endpoints at same point), OR
+                // - At least 2 wires meet AND at least one wire passes through (T-junction), OR
+                // - At least 2 wires meet at a component pin
+                const isComponentPin = pinKeys.has(k);
+                const shouldCreateJunction = (wireIds.size >= 3) || (wireIds.size >= 2 && (hasMidSegment || isComponentPin));
+                if (shouldCreateJunction) {
+                    // Check if this location already has a manual junction (including suppressed ones)
+                    const hasManualJunction = manualJunctions.some(j => Math.abs(j.at.x - node.x) < 1e-3 && Math.abs(j.at.y - node.y) < 1e-3);
+                    // Only create automatic junction if no manual junction exists at this location
+                    if (!hasManualJunction) {
+                        // Use the netId of the first wire found, or 'default'
+                        let netId = 'default';
+                        for (const wid of wireIds) {
+                            const w = wires.find(w => w.id === wid);
+                            if (w && w.netId) {
+                                netId = w.netId;
+                                break;
+                            }
+                        }
+                        // Check if an automatic junction already exists at this location (preserve ID and per-instance overrides)
+                        const existingAuto = oldAutomaticJunctions.find(j => Math.abs(j.at.x - node.x) < 1e-3 && Math.abs(j.at.y - node.y) < 1e-3);
+                        // Add junction as MANUAL so it behaves identically to user-placed junctions
+                        // This ensures automatic junctions act as fixed connection points
+                        junctions.push({
+                            id: existingAuto ? existingAuto.id : State.uid('junction'),
+                            at: { x: node.x, y: node.y },
+                            netId,
+                            manual: true, // Mark as manual so it behaves like a user-placed junction
+                            size: existingAuto?.size, // preserve per-instance override if it existed, else undefined
+                            color: existingAuto?.color // preserve per-instance override if it existed, else undefined
+                        });
+                    }
                 }
             }
-        }
+            // After detecting automatic junctions, split wires at T-junctions
+            // This inserts junction points into wire polylines so they can be properly split
+            splitWiresAtTJunctions();
+        } // End if (!skipAutoJunctionLogic)
         // Split wires at junction points (both manual and automatic)
         // This ensures that wires are separated into distinct segments at junctions
         const wiresToSplit = [];
