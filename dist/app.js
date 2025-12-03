@@ -7197,6 +7197,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             // Remove duplicates
             w.points = newPts.filter((pt, idx, arr) => idx === 0 || pt.x !== arr[idx - 1].x || pt.y !== arr[idx - 1].y);
         }
+        // Split wires with multiple points into separate 2-point wire objects
+        // This ensures each wire segment is independent for proper manipulation
+        normalizeAllWires();
         // Now, rebuild segmentPoints from all wires (now split at intersections)
         segmentPoints = [];
         for (const w of wires) {
