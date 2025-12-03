@@ -4145,9 +4145,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             hideCoordinateInputs();
             hidePolarInputs();
         }
-        // crosshair overlay while in wire mode, place mode, select mode, delete mode, or junction modes
+        // crosshair overlay while in wire mode, place mode, select mode, move mode, delete mode, or junction modes
         // Use raw mouse position (p) for crosshair, not snapped position (x, y)
-        if (mode === 'wire' || mode === 'place' || mode === 'select' || mode === 'delete' || mode === 'place-junction' || mode === 'delete-junction') {
+        if (mode === 'wire' || mode === 'place' || mode === 'select' || mode === 'move' || mode === 'delete' || mode === 'place-junction' || mode === 'delete-junction') {
             renderCrosshair(p.x, p.y);
         }
         else {
