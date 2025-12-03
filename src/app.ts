@@ -3489,6 +3489,59 @@ import {
           }
         }
         
+        // Check if we're placing junction on a wire segment (not at endpoint)
+        // If so, split that wire into two segments at the junction point
+        const TOL_SPLIT = 1e-3; // Tight tolerance for endpoint matching
+        for (const w of wires) {
+          // Check if junction is on a segment (not at an endpoint)
+          for (let i = 0; i < w.points.length - 1; i++) {
+            const a = w.points[i];
+            const b = w.points[i + 1];
+            
+            // Skip if junction is at an endpoint
+            const isAtEndpointA = Math.hypot(bestPt.x - a.x, bestPt.y - a.y) < TOL_SPLIT;
+            const isAtEndpointB = Math.hypot(bestPt.x - b.x, bestPt.y - b.y) < TOL_SPLIT;
+            if (isAtEndpointA || isAtEndpointB) continue;
+            
+            // Check if point lies on this segment
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const len = Math.hypot(dx, dy);
+            if (len < 1e-6) continue;
+            
+            const t = ((bestPt.x - a.x) * dx + (bestPt.y - a.y) * dy) / (len * len);
+            if (t > 0 && t < 1) { // Strictly between endpoints
+              const closestX = a.x + t * dx;
+              const closestY = a.y + t * dy;
+              if (Math.hypot(closestX - bestPt.x, closestY - bestPt.y) < TOL_SPLIT) {
+                // Junction is on this segment - split the wire
+                // Create first segment: from a to junction point
+                const wire1: Wire = {
+                  id: State.uid('wire'),
+                  points: [{ x: a.x, y: a.y }, { x: bestPt.x, y: bestPt.y }],
+                  color: w.color,
+                  stroke: w.stroke ? { ...w.stroke } : undefined,
+                  netId: w.netId
+                };
+                
+                // Create second segment: from junction point to b
+                const wire2: Wire = {
+                  id: State.uid('wire'),
+                  points: [{ x: bestPt.x, y: bestPt.y }, { x: b.x, y: b.y }],
+                  color: w.color,
+                  stroke: w.stroke ? { ...w.stroke } : undefined,
+                  netId: w.netId
+                };
+                
+                // Remove the original wire and add the two new segments
+                wires = wires.filter(wire => wire.id !== w.id);
+                wires.push(wire1, wire2);
+                break; // Only split one wire per junction placement
+              }
+            }
+          }
+        }
+        
         junctions.push({ id: State.uid('junction'), at: { x: bestPt.x, y: bestPt.y }, manual: true, color: junctionColor });
         redraw();
       }
