@@ -3184,6 +3184,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             // Normalize and clean up
             normalizeAllWires();
             unifyInlineWires();
+            splitWiresAtTJunctions();
+            normalizeAllWires();
             rebuildTopology();
             redraw();
             endpointStretchState = null;
@@ -3406,6 +3408,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     }
                 }
                 junctions.push({ id: State.uid('junction'), at: { x: bestPt.x, y: bestPt.y }, manual: true, color: junctionColor });
+                // After splitting wires, normalize them into separate 2-point wire objects
+                normalizeAllWires();
+                splitWiresAtTJunctions();
+                normalizeAllWires();
                 redraw();
             }
             // Stay in place-junction mode to allow placing multiple dots
@@ -3533,6 +3539,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             w.points = endpointStretchState.originalPoints.map(pt => ({ x: pt.x, y: pt.y }));
             updateWireDOM(w);
             endpointStretchState = null;
+            normalizeAllWires();
+            splitWiresAtTJunctions();
+            normalizeAllWires();
             redraw();
             return;
         }
@@ -6636,6 +6645,87 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         }
         return null;
     }
+    // Split wires at T-junction points (where one wire's endpoint touches another's segment)
+    // This must be called BEFORE rebuildTopology() to ensure proper wire segmentation
+    function splitWiresAtTJunctions() {
+        let segments = [];
+        for (const w of wires) {
+            const pts = w.points || [];
+            for (let i = 0; i < pts.length - 1; i++) {
+                const a = { x: Math.round(pts[i].x), y: Math.round(pts[i].y) };
+                const b = { x: Math.round(pts[i + 1].x), y: Math.round(pts[i + 1].y) };
+                segments.push({ w, i, a, b });
+            }
+        }
+        function isEndpoint(pt, seg) {
+            return (pt.x === seg.a.x && pt.y === seg.a.y) || (pt.x === seg.b.x && pt.y === seg.b.y);
+        }
+        let intersectionPoints = [];
+        // Find T-junctions: endpoint of one wire lands on interior of another wire's segment
+        for (let i = 0; i < segments.length; i++) {
+            const s1 = segments[i];
+            for (let j = 0; j < segments.length; j++) {
+                if (i === j)
+                    continue;
+                const s2 = segments[j];
+                if (s1.w.id === s2.w.id)
+                    continue;
+                // Check s1.a (start point)
+                if (!isEndpoint(s1.a, s2)) {
+                    if ((s2.a.x === s2.b.x && s1.a.x === s2.a.x && Math.min(s2.a.y, s2.b.y) < s1.a.y && s1.a.y < Math.max(s2.a.y, s2.b.y)) ||
+                        (s2.a.y === s2.b.y && s1.a.y === s2.a.y && Math.min(s2.a.x, s2.b.x) < s1.a.x && s1.a.x < Math.max(s2.a.x, s2.b.x))) {
+                        intersectionPoints.push(Geometry.keyPt(s1.a));
+                    }
+                }
+                // Check s1.b (end point)
+                if (!isEndpoint(s1.b, s2)) {
+                    if ((s2.a.x === s2.b.x && s1.b.x === s2.a.x && Math.min(s2.a.y, s2.b.y) < s1.b.y && s1.b.y < Math.max(s2.a.y, s2.b.y)) ||
+                        (s2.a.y === s2.b.y && s1.b.y === s2.a.y && Math.min(s2.a.x, s2.b.x) < s1.b.x && s1.b.x < Math.max(s2.a.x, s2.b.x))) {
+                        intersectionPoints.push(Geometry.keyPt(s1.b));
+                    }
+                }
+            }
+        }
+        intersectionPoints = Array.from(new Set(intersectionPoints));
+        if (intersectionPoints.length === 0)
+            return; // No T-junctions to split
+        // Build map of wires that need splitting
+        const insertMap = new Map();
+        for (let i = 0; i < segments.length; i++) {
+            const s = segments[i];
+            for (const k of intersectionPoints) {
+                const [ix, iy] = k.split(',').map(Number);
+                if (((s.a.x === s.b.x && s.a.x === ix && Math.min(s.a.y, s.b.y) < iy && iy < Math.max(s.a.y, s.b.y)) ||
+                    (s.a.y === s.b.y && s.a.y === iy && Math.min(s.a.x, s.b.x) < ix && ix < Math.max(s.a.x, s.b.x)))) {
+                    if (!insertMap.has(s.w.id))
+                        insertMap.set(s.w.id, []);
+                    insertMap.get(s.w.id).push({ x: ix, y: iy });
+                }
+            }
+        }
+        // Split wires that have T-junction points on them
+        for (const [wid, ptsToInsert] of insertMap.entries()) {
+            const w = wires.find(wire => wire.id === wid);
+            if (!w || !ptsToInsert.length)
+                continue;
+            let newPts = [w.points[0]];
+            for (let i = 1; i < w.points.length; i++) {
+                const a = w.points[i - 1], b = w.points[i];
+                let segPts = ptsToInsert.filter(pt => {
+                    if (a.x === b.x && pt.x === a.x && Math.min(a.y, b.y) < pt.y && pt.y < Math.max(a.y, b.y))
+                        return true;
+                    if (a.y === b.y && pt.y === a.y && Math.min(a.x, b.x) < pt.x && pt.x < Math.max(a.x, b.x))
+                        return true;
+                    return false;
+                });
+                segPts.sort((p1, p2) => (a.x === b.x) ? (p1.y - p2.y) : (p1.x - p2.x));
+                for (const p of segPts)
+                    newPts.push(p);
+                newPts.push(b);
+            }
+            w.points = newPts.filter((pt, idx, arr) => idx === 0 || pt.x !== arr[idx - 1].x || pt.y !== arr[idx - 1].y);
+        }
+    }
     function normalizeAllWires() {
         // Convert each wire polyline into one or more 2-point segment wires.
         // This gives each straight segment its own persistent `id` and stroke.
@@ -7197,9 +7287,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             // Remove duplicates
             w.points = newPts.filter((pt, idx, arr) => idx === 0 || pt.x !== arr[idx - 1].x || pt.y !== arr[idx - 1].y);
         }
-        // Split wires with multiple points into separate 2-point wire objects
-        // This ensures each wire segment is independent for proper manipulation
-        normalizeAllWires();
         // Now, rebuild segmentPoints from all wires (now split at intersections)
         segmentPoints = [];
         for (const w of wires) {
