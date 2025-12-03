@@ -2112,6 +2112,53 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                                 const compAxis = compIsHorizontal ? 'x' : 'y';
                                 return { comp, pins, axis: compAxis };
                             });
+                            // Check for junctions at wire endpoints OR at the far end of perpendicular connecting wires
+                            let junctionAtStart = junctions.find(j => Math.abs(j.at.x - p0.x) < 1.0 && Math.abs(j.at.y - p0.y) < 1.0);
+                            let junctionAtEnd = junctions.find(j => Math.abs(j.at.x - p1.x) < 1.0 && Math.abs(j.at.y - p1.y) < 1.0);
+                            // If no junction at endpoint, check if there's a perpendicular connecting wire
+                            // whose far end has a junction (this handles wires already moved from junction)
+                            if (!junctionAtStart) {
+                                const isHoriz = Math.abs(p0.y - p1.y) < 1;
+                                const isVert = Math.abs(p0.x - p1.x) < 1;
+                                // Find perpendicular wire at p0
+                                const perpWire = connectedAtStart.find(conn => {
+                                    const cw = conn.wire;
+                                    const cwStart = cw.points[0];
+                                    const cwEnd = cw.points[cw.points.length - 1];
+                                    const cwIsHoriz = Math.abs(cwStart.y - cwEnd.y) < 1;
+                                    const cwIsVert = Math.abs(cwStart.x - cwEnd.x) < 1;
+                                    return (isHoriz && cwIsVert) || (isVert && cwIsHoriz);
+                                });
+                                if (perpWire) {
+                                    // Find the far end of the perpendicular wire
+                                    const farEnd = perpWire.isStart
+                                        ? perpWire.wire.points[perpWire.wire.points.length - 1]
+                                        : perpWire.wire.points[0];
+                                    // Check if there's a junction at the far end
+                                    junctionAtStart = junctions.find(j => Math.abs(j.at.x - farEnd.x) < 1e-3 && Math.abs(j.at.y - farEnd.y) < 1e-3);
+                                }
+                            }
+                            if (!junctionAtEnd) {
+                                const isHoriz = Math.abs(p0.y - p1.y) < 1;
+                                const isVert = Math.abs(p0.x - p1.x) < 1;
+                                // Find perpendicular wire at p1
+                                const perpWire = connectedAtEnd.find(conn => {
+                                    const cw = conn.wire;
+                                    const cwStart = cw.points[0];
+                                    const cwEnd = cw.points[cw.points.length - 1];
+                                    const cwIsHoriz = Math.abs(cwStart.y - cwEnd.y) < 1;
+                                    const cwIsVert = Math.abs(cwStart.x - cwEnd.x) < 1;
+                                    return (isHoriz && cwIsVert) || (isVert && cwIsHoriz);
+                                });
+                                if (perpWire) {
+                                    // Find the far end of the perpendicular wire
+                                    const farEnd = perpWire.isStart
+                                        ? perpWire.wire.points[perpWire.wire.points.length - 1]
+                                        : perpWire.wire.points[0];
+                                    // Check if there's a junction at the far end
+                                    junctionAtEnd = junctions.find(j => Math.abs(j.at.x - farEnd.x) < 1e-3 && Math.abs(j.at.y - farEnd.y) < 1e-3);
+                                }
+                            }
                             wireStretchState = {
                                 wire: w,
                                 startMousePos: svgPoint(e),
@@ -2121,7 +2168,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                                 connectedWiresStart: connectedAtStart,
                                 connectedWiresEnd: connectedAtEnd,
                                 componentsOnWire,
+                                junctionAtStart,
+                                junctionAtEnd,
                                 ghostConnectingWires: [],
+                                createdConnectingWireIds: [],
                                 dragging: false
                             };
                         }
@@ -2605,6 +2655,13 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             pushUndo();
             wires = wires.filter(x => x.id !== w.id);
             selection = { kind: null, id: null, segIndex: null };
+            // Clear wireStretchState if the deleted wire was being tracked (or was created by stretching)
+            if (wireStretchState) {
+                // Check if deleted wire is the one being stretched or is a created connecting wire
+                if (wireStretchState.wire.id === w.id || wireStretchState.createdConnectingWireIds.includes(w.id)) {
+                    wireStretchState = null;
+                }
+            }
             normalizeAllWires();
             unifyInlineWires();
             redraw();
@@ -3287,10 +3344,13 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     bestPt = closestOnWire;
                 }
                 else {
-                    // Not near anything, use snapped click point
-                    bestPt = { x, y };
+                    // Not near anything - don't place junction in open space
+                    return;
                 }
             }
+            // Snap bestPt to base grid to match wire endpoint snapping
+            // This ensures junction position matches wire endpoints after normalization
+            bestPt = { x: snapToBaseScalar(bestPt.x), y: snapToBaseScalar(bestPt.y) };
             // Remove any existing junction at this location (suppressed or automatic)
             // When user manually places a junction, it should replace any automatic one
             const existingJunction = junctions.find(j => Math.abs(j.at.x - bestPt.x) < 1e-3 && Math.abs(j.at.y - bestPt.y) < 1e-3);
@@ -3300,63 +3360,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 // Remove existing automatic or suppressed junction
                 if (existingJunction) {
                     junctions = junctions.filter(j => j.id !== existingJunction.id);
-                }
-                // Determine the color for the junction dot
-                let junctionColor = undefined;
-                // Check if we're on a wire endpoint or segment
-                const TOL_COLOR = 1; // Very tight tolerance for exact position match
-                for (const w of wires) {
-                    // Check endpoints
-                    for (const pt of w.points) {
-                        if (Math.hypot(pt.x - bestPt.x, pt.y - bestPt.y) < TOL_COLOR) {
-                            ensureStroke(w);
-                            const eff = effectiveStroke(w, Netlist.netClassForWire(w, NET_CLASSES, activeNetClass), THEME);
-                            junctionColor = rgba01ToCss(eff.color);
-                            break;
-                        }
-                    }
-                    if (junctionColor)
-                        break;
-                    // Check if on a wire segment
-                    for (let i = 0; i < w.points.length - 1; i++) {
-                        const a = w.points[i];
-                        const b = w.points[i + 1];
-                        // Check if point lies on this segment
-                        const dx = b.x - a.x;
-                        const dy = b.y - a.y;
-                        const len = Math.hypot(dx, dy);
-                        if (len < 1e-6)
-                            continue;
-                        // Check if bestPt is on the line segment
-                        const t = ((bestPt.x - a.x) * dx + (bestPt.y - a.y) * dy) / (len * len);
-                        if (t >= 0 && t <= 1) {
-                            const closestX = a.x + t * dx;
-                            const closestY = a.y + t * dy;
-                            if (Math.hypot(closestX - bestPt.x, closestY - bestPt.y) < TOL_COLOR) {
-                                ensureStroke(w);
-                                const eff = effectiveStroke(w, Netlist.netClassForWire(w, NET_CLASSES, activeNetClass), THEME);
-                                junctionColor = rgba01ToCss(eff.color);
-                                break;
-                            }
-                        }
-                    }
-                    if (junctionColor)
-                        break;
-                }
-                // If not on a wire, check if on a component pin
-                if (!junctionColor) {
-                    for (const c of components) {
-                        const pins = Components.compPinPositions(c);
-                        for (const pin of pins) {
-                            if (Math.hypot(pin.x - bestPt.x, pin.y - bestPt.y) < TOL_COLOR) {
-                                // Use component color (stroke color from its symbol)
-                                junctionColor = 'var(--component)';
-                                break;
-                            }
-                        }
-                        if (junctionColor)
-                            break;
-                    }
                 }
                 // Check if we're placing junction on a wire segment (not at endpoint)
                 // If so, split that wire into two segments at the junction point
@@ -3407,7 +3410,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         }
                     }
                 }
-                junctions.push({ id: State.uid('junction'), at: { x: bestPt.x, y: bestPt.y }, manual: true, color: junctionColor });
+                // Always use the default junction color from settings
+                junctions.push({ id: State.uid('junction'), at: { x: bestPt.x, y: bestPt.y }, manual: true, color: junctionDefaultColor || undefined });
                 // After splitting wires, normalize them into separate 2-point wire objects
                 normalizeAllWires();
                 splitWiresAtTJunctions();
@@ -3437,6 +3441,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 // Always add suppressed marker to prevent automatic junction from being recreated
                 junctions.splice(idx, 1);
                 junctions.push({ id: State.uid('junction'), at: junction.at, manual: true, suppressed: true });
+                // Merge any collinear wires that were separated by this junction
+                normalizeAllWires();
+                unifyInlineWires();
                 redraw();
             }
             // Stay in delete-junction mode to allow deleting multiple dots
@@ -3750,6 +3757,57 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     w.points[1].y = newY;
                     // Update ghost connecting wires for visual feedback
                     wireStretchState.ghostConnectingWires = [];
+                    // Handle junctions at endpoints
+                    if (wireStretchState.junctionAtStart) {
+                        const junctionPos = wireStretchState.junctionAtStart.at;
+                        // Filter for perpendicular wires only (vertical wires for horizontal wire movement)
+                        const perpConnectedWires = wireStretchState.connectedWiresStart.filter(conn => {
+                            const cw = conn.wire;
+                            const cwStart = cw.points[0];
+                            const cwEnd = cw.points[cw.points.length - 1];
+                            const isVertical = Math.abs(cwStart.x - cwEnd.x) < 1;
+                            return isVertical; // For horizontal wire, only stretch vertical connecting wires
+                        });
+                        if (perpConnectedWires.length === 0) {
+                            // No existing perpendicular connecting wire - create ghost for visual feedback
+                            wireStretchState.ghostConnectingWires.push({
+                                from: { x: junctionPos.x, y: junctionPos.y },
+                                to: { x: junctionPos.x, y: newY }
+                            });
+                        }
+                        else {
+                            // Existing perpendicular connecting wire - stretch it in real-time
+                            perpConnectedWires.forEach(conn => {
+                                const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
+                                conn.wire.points[endToUpdate].y = newY;
+                            });
+                        }
+                    }
+                    if (wireStretchState.junctionAtEnd) {
+                        const junctionPos = wireStretchState.junctionAtEnd.at;
+                        // Filter for perpendicular wires only (vertical wires for horizontal wire movement)
+                        const perpConnectedWires = wireStretchState.connectedWiresEnd.filter(conn => {
+                            const cw = conn.wire;
+                            const cwStart = cw.points[0];
+                            const cwEnd = cw.points[cw.points.length - 1];
+                            const isVertical = Math.abs(cwStart.x - cwEnd.x) < 1;
+                            return isVertical; // For horizontal wire, only stretch vertical connecting wires
+                        });
+                        if (perpConnectedWires.length === 0) {
+                            // No existing perpendicular connecting wire - create ghost for visual feedback
+                            wireStretchState.ghostConnectingWires.push({
+                                from: { x: junctionPos.x, y: junctionPos.y },
+                                to: { x: junctionPos.x, y: newY }
+                            });
+                        }
+                        else {
+                            // Existing perpendicular connecting wire - stretch it in real-time
+                            perpConnectedWires.forEach(conn => {
+                                const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
+                                conn.wire.points[endToUpdate].y = newY;
+                            });
+                        }
+                    }
                     wireStretchState.componentsOnWire.forEach(compInfo => {
                         compInfo.pins.forEach(pin => {
                             // For horizontal wire moving vertically, create vertical connecting wires
@@ -3770,34 +3828,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             }
                         });
                     });
-                    // Stretch connected wires at start point
-                    wireStretchState.connectedWiresStart.forEach(conn => {
-                        const origPt = conn.originalPoint;
-                        if (conn.isStart) {
-                            conn.wire.points[0].x = origPt.x;
-                            conn.wire.points[0].y = newY;
-                        }
-                        else {
-                            const lastIdx = conn.wire.points.length - 1;
-                            conn.wire.points[lastIdx].x = origPt.x;
-                            conn.wire.points[lastIdx].y = newY;
-                        }
-                        updateWireDOM(conn.wire);
-                    });
-                    // Stretch connected wires at end point
-                    wireStretchState.connectedWiresEnd.forEach(conn => {
-                        const origPt = conn.originalPoint;
-                        if (conn.isStart) {
-                            conn.wire.points[0].x = origPt.x;
-                            conn.wire.points[0].y = newY;
-                        }
-                        else {
-                            const lastIdx = conn.wire.points.length - 1;
-                            conn.wire.points[lastIdx].x = origPt.x;
-                            conn.wire.points[lastIdx].y = newY;
-                        }
-                        updateWireDOM(conn.wire);
-                    });
                 }
                 else if (isVertical) {
                     // Vertical wire - move horizontally
@@ -3810,6 +3840,57 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     w.points[1].y = p1.y;
                     // Update ghost connecting wires for visual feedback
                     wireStretchState.ghostConnectingWires = [];
+                    // Handle junctions at endpoints
+                    if (wireStretchState.junctionAtStart) {
+                        const junctionPos = wireStretchState.junctionAtStart.at;
+                        // Filter for perpendicular wires only (horizontal wires for vertical wire movement)
+                        const perpConnectedWires = wireStretchState.connectedWiresStart.filter(conn => {
+                            const cw = conn.wire;
+                            const cwStart = cw.points[0];
+                            const cwEnd = cw.points[cw.points.length - 1];
+                            const isHorizontal = Math.abs(cwStart.y - cwEnd.y) < 1;
+                            return isHorizontal; // For vertical wire, only stretch horizontal connecting wires
+                        });
+                        if (perpConnectedWires.length === 0) {
+                            // No existing perpendicular connecting wire - create ghost for visual feedback
+                            wireStretchState.ghostConnectingWires.push({
+                                from: { x: junctionPos.x, y: junctionPos.y },
+                                to: { x: newX, y: junctionPos.y }
+                            });
+                        }
+                        else {
+                            // Existing perpendicular connecting wire - stretch it in real-time
+                            perpConnectedWires.forEach(conn => {
+                                const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
+                                conn.wire.points[endToUpdate].x = newX;
+                            });
+                        }
+                    }
+                    if (wireStretchState.junctionAtEnd) {
+                        const junctionPos = wireStretchState.junctionAtEnd.at;
+                        // Filter for perpendicular wires only (horizontal wires for vertical wire movement)
+                        const perpConnectedWires = wireStretchState.connectedWiresEnd.filter(conn => {
+                            const cw = conn.wire;
+                            const cwStart = cw.points[0];
+                            const cwEnd = cw.points[cw.points.length - 1];
+                            const isHorizontal = Math.abs(cwStart.y - cwEnd.y) < 1;
+                            return isHorizontal; // For vertical wire, only stretch horizontal connecting wires
+                        });
+                        if (perpConnectedWires.length === 0) {
+                            // No existing perpendicular connecting wire - create ghost for visual feedback
+                            wireStretchState.ghostConnectingWires.push({
+                                from: { x: junctionPos.x, y: junctionPos.y },
+                                to: { x: newX, y: junctionPos.y }
+                            });
+                        }
+                        else {
+                            // Existing perpendicular connecting wire - stretch it in real-time
+                            perpConnectedWires.forEach(conn => {
+                                const endToUpdate = conn.isStart ? 0 : conn.wire.points.length - 1;
+                                conn.wire.points[endToUpdate].x = newX;
+                            });
+                        }
+                    }
                     wireStretchState.componentsOnWire.forEach(compInfo => {
                         compInfo.pins.forEach(pin => {
                             // For vertical wire moving horizontally, create horizontal connecting wires
@@ -3830,40 +3911,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             }
                         });
                     });
-                    // Stretch connected wires at start point
-                    wireStretchState.connectedWiresStart.forEach(conn => {
-                        const origPt = conn.originalPoint;
-                        if (conn.isStart) {
-                            conn.wire.points[0].x = newX;
-                            conn.wire.points[0].y = origPt.y;
-                        }
-                        else {
-                            const lastIdx = conn.wire.points.length - 1;
-                            conn.wire.points[lastIdx].x = newX;
-                            conn.wire.points[lastIdx].y = origPt.y;
-                        }
-                        updateWireDOM(conn.wire);
-                    });
-                    // Stretch connected wires at end point
-                    wireStretchState.connectedWiresEnd.forEach(conn => {
-                        const origPt = conn.originalPoint;
-                        if (conn.isStart) {
-                            conn.wire.points[0].x = newX;
-                            conn.wire.points[0].y = origPt.y;
-                        }
-                        else {
-                            const lastIdx = conn.wire.points.length - 1;
-                            conn.wire.points[lastIdx].x = newX;
-                            conn.wire.points[lastIdx].y = origPt.y;
-                        }
-                        updateWireDOM(conn.wire);
-                    });
                 }
                 updateWireDOM(w);
-                // Render ghost connecting wires (force render on first drag to show initial state)
-                if (justStartedDragging || wireStretchState.ghostConnectingWires.length > 0) {
-                    renderDrawing();
-                }
+                // Always render during wire stretch to show ghost connecting wires
+                renderDrawing();
             }
             return;
         }
@@ -4175,8 +4226,27 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // Finish wire stretch if active
         if (wireStretchState) {
             if (wireStretchState.dragging) {
-                // Create real connecting wires from ghost wires
+                // Don't remove any existing wires - let unifyInlineWires handle merging
+                const w = wireStretchState.wire;
+                const newP0 = w.points[0];
+                const newP1 = w.points[w.points.length - 1];
+                const isHoriz = Math.abs(newP0.y - newP1.y) < 1;
+                const isVert = Math.abs(newP0.x - newP1.x) < 1;
+                // Update or create connecting wires from ghost wires
                 const newWireIds = [];
+                // First, update any connecting wires we created on a previous drag
+                wireStretchState.createdConnectingWireIds.forEach(wireId => {
+                    const existingWire = wires.find(w => w.id === wireId);
+                    if (existingWire && wireStretchState.ghostConnectingWires.length > 0) {
+                        // Update the existing connecting wire with new coordinates
+                        const ghost = wireStretchState.ghostConnectingWires[0]; // Use first ghost
+                        existingWire.points[0] = { x: ghost.from.x, y: ghost.from.y };
+                        existingWire.points[1] = { x: ghost.to.x, y: ghost.to.y };
+                        newWireIds.push(wireId);
+                        wireStretchState.ghostConnectingWires.shift(); // Remove this ghost, we handled it
+                    }
+                });
+                // Create new wires for any remaining ghosts
                 wireStretchState.ghostConnectingWires.forEach(ghost => {
                     // Only create if the wire has meaningful length (> 5 pixels to avoid tiny stubs)
                     const dist = Math.hypot(ghost.to.x - ghost.from.x, ghost.to.y - ghost.from.y);
@@ -4194,6 +4264,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         newWireIds.push(newWire.id);
                     }
                 });
+                // Remember which wires we created/updated for next time
+                wireStretchState.createdConnectingWireIds = newWireIds;
                 // Normalize and clean up wire geometry
                 normalizeAllWires();
                 // Remove very short wires (< 5 pixels) that may have been created or shrunk during stretch
@@ -4212,9 +4284,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 // Rebuild topology and redraw
                 rebuildTopology();
                 redraw();
-                renderDrawing(); // Clear ghost wires from drawing layer
             }
-            wireStretchState = null;
+            wireStretchState = null; // Clear state before renderDrawing so ghosts don't re-render
+            renderDrawing(); // Clear ghost wires from drawing layer
             return;
         }
         // Finish marquee selection if active; otherwise just end any pan
@@ -6846,10 +6918,22 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
             seen.add(sig);
             const pairs = endpointPairsByKey();
-            // Try to merge exactly-two-endpoint nodes that are collinear and not at a component pin.
+            // Try to merge exactly-two-endpoint nodes that are collinear and not at a component pin or junction.
             for (const [key, list] of pairs) {
                 if (pinKeys.has(key))
                     continue; // never merge across component pins
+                // Check if there's a junction at this location - never merge across junctions
+                // But ignore suppressed junctions (invisible markers for deleted junctions)
+                const [kx, ky] = key.split(',').map(n => parseInt(n, 10));
+                const hasJunction = junctions.some(j => {
+                    if (j.suppressed)
+                        return false; // Ignore suppressed junctions
+                    const jx = Math.round(j.at.x);
+                    const jy = Math.round(j.at.y);
+                    return jx === kx && jy === ky;
+                });
+                if (hasJunction)
+                    continue;
                 if (list.length !== 2)
                     continue; // only consider clean 1:1 joins
                 const a = list[0], b = list[1];
@@ -6859,7 +6943,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     continue; // must both be axis-aligned
                 if (a.axis !== b.axis)
                     continue; // must be the same axis
-                const [kx, ky] = key.split(',').map(n => parseInt(n, 10));
                 // Choose the "existing/first" wire as primary by their order in the
                 // `wires` array (earlier index = older/existing). Primary's properties
                 // will be adopted for the merged segment.
@@ -7588,9 +7671,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }
             }
         }
-        // After detecting T-junctions and modifying wire.points arrays, normalize to create separate Wire objects
-        // This ensures that wires split at T-junctions become independent 2-point wire segments
-        normalizeAllWires();
     }
     // ---- SWP Move: collapse current SWP to a single straight wire, constrain move, rebuild on finish ----
     function findSwpById(id) { return topology.swps.find(s => s.id === id); }

@@ -6,6 +6,7 @@ export function clearAll(ctx) {
         return;
     ctx.components.length = 0;
     ctx.wires.length = 0;
+    ctx.junctions.length = 0;
     ctx.selection = { kind: null, id: null, segIndex: null };
     // Cancel any in-progress wire drawing and clear overlay
     ctx.drawing.active = false;
