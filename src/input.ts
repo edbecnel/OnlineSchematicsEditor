@@ -898,9 +898,11 @@ function handlePlaceComponent(ctx: InputContext, x: number, y: number, p: Point)
     }
   }
   
+  // Extract numeric suffix from ID for label (e.g., resistor1 -> R1)
+  const idNumber = id.match(/\d+$/)?.[0] || '0';
   const comp: Component = {
     id, type: ctx.placeType!, x: at.x, y: at.y, rot, 
-    label: `${prefix}${ctx.counters[ctx.placeType!] - 1}`, 
+    label: `${prefix}${idNumber}`, 
     value: '', props: {}
   };
   

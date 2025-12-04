@@ -39,10 +39,8 @@ export function createDefaultValidators() {
     const validators = new Map();
     // Fixed Position Validator
     validators.set('fixed-position', {
-        validate: (entity, proposedPosition, affectedEntities, context) => {
+        validate: (entity, proposedPosition, affectedEntities, context, constraint) => {
             // Entity cannot move from its fixed position
-            const constraint = Array.from(context.allConstraints.values())
-                .find(c => c.type === 'fixed-position' && c.entities.includes(entity.id));
             if (!constraint || !constraint.params) {
                 return { valid: true };
             }
@@ -62,9 +60,7 @@ export function createDefaultValidators() {
     });
     // Fixed Axis Validator
     validators.set('fixed-axis', {
-        validate: (entity, proposedPosition, affectedEntities, context) => {
-            const constraint = Array.from(context.allConstraints.values())
-                .find(c => c.type === 'fixed-axis' && c.entities.includes(entity.id));
+        validate: (entity, proposedPosition, affectedEntities, context, constraint) => {
             if (!constraint || !constraint.params) {
                 return { valid: true };
             }
@@ -127,18 +123,16 @@ export function createDefaultValidators() {
     });
     // Orthogonal Validator (for wire segments)
     validators.set('orthogonal', {
-        validate: (entity, proposedPosition, affectedEntities, context) => {
+        validate: (entity, proposedPosition, affectedEntities, context, constraint) => {
             // Wire segments must remain horizontal or vertical
             // This is more complex - requires checking connected points
             // For now, simplified implementation
             return { valid: true };
         }
     });
-    // Min Distance Validator (using bounding box collision detection)
+    // Min Distance Validator (AABB collision detection)
     validators.set('min-distance', {
-        validate: (entity, proposedPosition, affectedEntities, context) => {
-            const constraint = Array.from(context.allConstraints.values())
-                .find(c => c.type === 'min-distance' && c.entities.includes(entity.id));
+        validate: (entity, proposedPosition, affectedEntities, context, constraint) => {
             if (!constraint || !constraint.params) {
                 return { valid: true };
             }
@@ -160,51 +154,52 @@ export function createDefaultValidators() {
             const isHoriz2 = (normalizedRot2 === 0 || normalizedRot2 === 180);
             const isPerpendicular = isHoriz1 !== isHoriz2;
             // Get bounding box parameters from constraint params
+            // bodyExtent/bodyWidth are for entities[0], bodyExtent2/bodyWidth2 are for entities[1]
             const params = constraint.params;
-            const bodyExtent1 = params.bodyExtent || 50;
-            const bodyWidth1 = params.bodyWidth || 12;
-            const bodyExtent2 = params.bodyExtent2 || params.bodyExtent || 50;
-            const bodyWidth2 = params.bodyWidth2 || params.bodyWidth || 12;
-            // Determine which entity is which in the constraint
-            const isEntity1First = constraint.entities[0] === entity.id;
-            const extent1 = isEntity1First ? bodyExtent1 : bodyExtent2;
-            const width1 = isEntity1First ? bodyWidth1 : bodyWidth2;
-            const extent2 = isEntity1First ? bodyExtent2 : bodyExtent1;
-            const width2 = isEntity1First ? bodyWidth2 : bodyWidth1;
-            // Calculate bounding boxes using each component's actual dimensions
+            const bodyExtent_forEntity0 = params.bodyExtent || 50;
+            const bodyWidth_forEntity0 = params.bodyWidth || 12;
+            const bodyExtent_forEntity1 = params.bodyExtent2 || params.bodyExtent || 50;
+            const bodyWidth_forEntity1 = params.bodyWidth2 || params.bodyWidth || 12;
+            // Determine which entity is the moving one and which is the other
+            const isEntity1MovingEntity = constraint.entities[0] === entity.id;
+            const movingEntityExtent = isEntity1MovingEntity ? bodyExtent_forEntity0 : bodyExtent_forEntity1;
+            const movingEntityWidth = isEntity1MovingEntity ? bodyWidth_forEntity0 : bodyWidth_forEntity1;
+            const otherEntityExtent = isEntity1MovingEntity ? bodyExtent_forEntity1 : bodyExtent_forEntity0;
+            const otherEntityWidth = isEntity1MovingEntity ? bodyWidth_forEntity1 : bodyWidth_forEntity0;
+            // Calculate bounding boxes using each component's actual dimensions and rotation
             let bbox1, bbox2;
             if (isHoriz1) {
                 // Horizontal: wide in X, narrow in Y
                 bbox1 = {
-                    minX: proposedPosition.x - extent1,
-                    maxX: proposedPosition.x + extent1,
-                    minY: proposedPosition.y - width1,
-                    maxY: proposedPosition.y + width1
+                    minX: proposedPosition.x - movingEntityExtent,
+                    maxX: proposedPosition.x + movingEntityExtent,
+                    minY: proposedPosition.y - movingEntityWidth,
+                    maxY: proposedPosition.y + movingEntityWidth
                 };
             }
             else {
                 // Vertical: narrow in X, wide in Y
                 bbox1 = {
-                    minX: proposedPosition.x - width1,
-                    maxX: proposedPosition.x + width1,
-                    minY: proposedPosition.y - extent1,
-                    maxY: proposedPosition.y + extent1
+                    minX: proposedPosition.x - movingEntityWidth,
+                    maxX: proposedPosition.x + movingEntityWidth,
+                    minY: proposedPosition.y - movingEntityExtent,
+                    maxY: proposedPosition.y + movingEntityExtent
                 };
             }
             if (isHoriz2) {
                 bbox2 = {
-                    minX: otherEntity.position.x - extent2,
-                    maxX: otherEntity.position.x + extent2,
-                    minY: otherEntity.position.y - width2,
-                    maxY: otherEntity.position.y + width2
+                    minX: otherEntity.position.x - otherEntityExtent,
+                    maxX: otherEntity.position.x + otherEntityExtent,
+                    minY: otherEntity.position.y - otherEntityWidth,
+                    maxY: otherEntity.position.y + otherEntityWidth
                 };
             }
             else {
                 bbox2 = {
-                    minX: otherEntity.position.x - width2,
-                    maxX: otherEntity.position.x + width2,
-                    minY: otherEntity.position.y - extent2,
-                    maxY: otherEntity.position.y + extent2
+                    minX: otherEntity.position.x - otherEntityWidth,
+                    maxX: otherEntity.position.x + otherEntityWidth,
+                    minY: otherEntity.position.y - otherEntityExtent,
+                    maxY: otherEntity.position.y + otherEntityExtent
                 };
             }
             // Check for bounding box overlap (AABB collision)
@@ -228,9 +223,7 @@ export function createDefaultValidators() {
     });
     // On Grid Validator
     validators.set('on-grid', {
-        validate: (entity, proposedPosition, affectedEntities, context) => {
-            const constraint = Array.from(context.allConstraints.values())
-                .find(c => c.type === 'on-grid' && c.entities.includes(entity.id));
+        validate: (entity, proposedPosition, affectedEntities, context, constraint) => {
             if (!constraint || !constraint.params) {
                 return { valid: true };
             }

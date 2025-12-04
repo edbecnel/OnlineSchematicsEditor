@@ -706,9 +706,11 @@ function handlePlaceComponent(ctx, x, y, p) {
             rot = normDeg(hit.angle);
         }
     }
+    // Extract numeric suffix from ID for label (e.g., resistor1 -> R1)
+    const idNumber = id.match(/\d+$/)?.[0] || '0';
     const comp = {
         id, type: ctx.placeType, x: at.x, y: at.y, rot,
-        label: `${prefix}${ctx.counters[ctx.placeType] - 1}`,
+        label: `${prefix}${idNumber}`,
         value: '', props: {}
     };
     if (ctx.placeType === 'diode') {

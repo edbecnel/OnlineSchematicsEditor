@@ -90,7 +90,7 @@ export class ConstraintSolver {
                 // No validator registered - skip
                 continue;
             }
-            const result = validator.validate(entity, currentPosition, affectedEntities, context);
+            const result = validator.validate(entity, currentPosition, affectedEntities, context, constraint);
             if (!result.valid) {
                 allowed = false;
                 violations.push({

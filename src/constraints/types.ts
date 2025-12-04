@@ -163,13 +163,15 @@ export interface ConstraintValidator {
    * @param proposedPosition Where the entity wants to move
    * @param affectedEntities Other entities that would move as a result
    * @param context Additional context (all entities, other constraints, etc.)
+   * @param constraint The specific constraint being validated
    * @returns Validation result
    */
   validate(
     entity: Entity,
     proposedPosition: Point,
     affectedEntities: EntityUpdate[],
-    context: ValidationContext
+    context: ValidationContext,
+    constraint: Constraint
   ): ValidationResult;
 
   /**

@@ -1035,6 +1035,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             saveSnapMode();
             updateSnapButton();
             updateSnapStatus();
+            // Re-sync constraints to update grid-snap based on new snap mode
+            if (USE_CONSTRAINTS && constraintSolver) {
+                syncConstraints();
+            }
         }
         function updateSnapStatus() {
             const snapK = document.getElementById('snapKbd');
@@ -1398,6 +1402,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 return;
             }
             const p = svgPoint(e);
+            const shiftHeld = e.shiftKey; // Detect Shift key for temporary constraint bypass
             // SWP move: allow free movement in both inline and lateral directions
             // Show stretched SWP wire through component and rubber-band perpendicular wires
             if (moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
@@ -1406,12 +1411,24 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 // Allow free movement in both directions
                 let candX = cand.x;
                 let candY = cand.y;
-                // Check constraints if enabled
+                // Check constraints if enabled (skip bounding box constraint if Shift is held)
                 let moveAllowed = false;
                 if (USE_CONSTRAINTS && constraintSolver) {
                     updateConstraintPositions(); // Sync current positions before solving
+                    // Temporarily disable min-distance constraints if Shift is held
+                    if (shiftHeld) {
+                        constraintSolver.getGraph().getAllConstraints()
+                            .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
+                            .forEach(c => c.enabled = false);
+                    }
                     const result = constraintSolver.solve(c.id, { x: candX, y: candY });
-                    console.log(`🔍 Constraint check: ${c.label} to (${candX}, ${candY}) - Allowed: ${result.allowed}`);
+                    // Re-enable min-distance constraints
+                    if (shiftHeld) {
+                        constraintSolver.getGraph().getAllConstraints()
+                            .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
+                            .forEach(c => c.enabled = true);
+                    }
+                    console.log(`🔍 Constraint check: ${c.label} to (${candX}, ${candY}) - Allowed: ${result.allowed}${shiftHeld ? ' (Shift: bbox disabled)' : ''}`);
                     if (!result.allowed) {
                         console.log(`   Violations:`, result.violatedConstraints.map(v => v.reason));
                     }
@@ -1513,10 +1530,22 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
                 let candX = cand.x;
                 let candY = cand.y;
-                // Check constraints if enabled
+                // Check constraints if enabled (skip bounding box constraint if Shift is held)
                 if (USE_CONSTRAINTS && constraintSolver) {
                     updateConstraintPositions(); // Sync current positions before solving
+                    // Temporarily disable min-distance constraints if Shift is held
+                    if (shiftHeld) {
+                        constraintSolver.getGraph().getAllConstraints()
+                            .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
+                            .forEach(c => c.enabled = false);
+                    }
                     const result = constraintSolver.solve(c.id, { x: candX, y: candY });
+                    // Re-enable min-distance constraints
+                    if (shiftHeld) {
+                        constraintSolver.getGraph().getAllConstraints()
+                            .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
+                            .forEach(c => c.enabled = true);
+                    }
                     if (!result.allowed)
                         return; // Movement blocked
                     candX = result.finalPosition.x;
@@ -1602,10 +1631,22 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     let nx = snap(p.x + dragOff.x);
                     nx = Math.max(Math.min(slideCtx.max, nx), slideCtx.min);
                     let candX = nx, candY = slideCtx.fixed;
-                    // Check constraints if enabled
+                    // Check constraints if enabled (skip bounding box constraint if Shift is held)
                     if (USE_CONSTRAINTS && constraintSolver) {
                         updateConstraintPositions(); // Sync current positions before solving
+                        // Temporarily disable min-distance constraints if Shift is held
+                        if (shiftHeld) {
+                            constraintSolver.getGraph().getAllConstraints()
+                                .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
+                                .forEach(c => c.enabled = false);
+                        }
                         const result = constraintSolver.solve(c.id, { x: candX, y: candY });
+                        // Re-enable min-distance constraints
+                        if (shiftHeld) {
+                            constraintSolver.getGraph().getAllConstraints()
+                                .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
+                                .forEach(c => c.enabled = true);
+                        }
                         if (!result.allowed)
                             return; // Movement blocked
                         candX = result.finalPosition.x;
@@ -1625,10 +1666,22 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     let ny = snap(p.y + dragOff.y);
                     ny = Math.max(Math.min(slideCtx.max, ny), slideCtx.min);
                     let candX = slideCtx.fixed, candY = ny;
-                    // Check constraints if enabled
+                    // Check constraints if enabled (skip bounding box constraint if Shift is held)
                     if (USE_CONSTRAINTS && constraintSolver) {
                         updateConstraintPositions(); // Sync current positions before solving
+                        // Temporarily disable min-distance constraints if Shift is held
+                        if (shiftHeld) {
+                            constraintSolver.getGraph().getAllConstraints()
+                                .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
+                                .forEach(c => c.enabled = false);
+                        }
                         const result = constraintSolver.solve(c.id, { x: candX, y: candY });
+                        // Re-enable min-distance constraints
+                        if (shiftHeld) {
+                            constraintSolver.getGraph().getAllConstraints()
+                                .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
+                                .forEach(c => c.enabled = true);
+                        }
                         if (!result.allowed)
                             return; // Movement blocked
                         candX = result.finalPosition.x;
@@ -1653,10 +1706,22 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
                 let candX = cand.x;
                 let candY = cand.y;
-                // Check constraints if enabled
+                // Check constraints if enabled (skip bounding box constraint if Shift is held)
                 if (USE_CONSTRAINTS && constraintSolver) {
                     updateConstraintPositions(); // Sync current positions before solving
+                    // Temporarily disable min-distance constraints if Shift is held
+                    if (shiftHeld) {
+                        constraintSolver.getGraph().getAllConstraints()
+                            .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
+                            .forEach(c => c.enabled = false);
+                    }
                     const result = constraintSolver.solve(c.id, { x: candX, y: candY });
+                    // Re-enable min-distance constraints
+                    if (shiftHeld) {
+                        constraintSolver.getGraph().getAllConstraints()
+                            .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
+                            .forEach(c => c.enabled = true);
+                    }
                     if (!result.allowed)
                         return; // Movement blocked
                     candX = result.finalPosition.x;
@@ -3229,8 +3294,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     function syncConstraints() {
         if (!constraintSolver || !USE_CONSTRAINTS)
             return;
+        console.log(`🔄 Syncing constraints for ${components.length} components:`, components.map(c => `${c.id}(${c.label})`).join(', '));
         // Clear temporary constraints from previous sync
-        constraintSolver.clearTemporaryConstraints();
+        const clearedCount = constraintSolver.clearTemporaryConstraints();
+        console.log(`   Cleared ${clearedCount} temporary constraints`);
         // Add all components as entities with constraints
         for (const c of components) {
             // Create entity for this component
@@ -3241,75 +3308,79 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 constraints: new Set(),
                 metadata: { type: c.type, label: c.label, rot: c.rot }
             };
-            // Only add if not already in graph
-            if (!constraintSolver.getEntity(c.id)) {
+            // Add or update entity in graph
+            const existing = constraintSolver.getEntity(c.id);
+            if (!existing) {
                 constraintSolver.addEntity(entity);
             }
             else {
-                // Update position
-                constraintSolver.getGraph().updateEntityPosition(c.id, { x: c.x, y: c.y });
+                // Update position and metadata
+                existing.position = { x: c.x, y: c.y };
+                existing.metadata = { type: c.type, label: c.label, rot: c.rot };
             }
-            // Add grid snap constraint
-            constraintSolver.addConstraint({
-                id: `grid_${c.id}`,
-                type: 'on-grid',
-                priority: 50,
-                entities: [c.id],
-                params: { gridSize: baseSnapUser() },
-                enabled: true,
-                metadata: { temporary: true }
-            });
+            // Add grid snap constraint based on current snap mode
+            if (snapMode !== 'off') {
+                const gridSize = snapMode === 'grid'
+                    ? (CURRENT_SNAP_USER_UNITS || baseSnapUser())
+                    : baseSnapUser(); // 50mil mode
+                constraintSolver.addConstraint({
+                    id: `grid_${c.id}`,
+                    type: 'on-grid',
+                    priority: 50,
+                    entities: [c.id],
+                    params: { gridSize },
+                    enabled: true,
+                    metadata: { temporary: true }
+                });
+            }
             // Add directional no-overlap constraints with other components
             // Different min-distances based on component orientation and relative position
-            for (const other of components) {
-                if (other.id !== c.id) {
-                    const alreadyExists = constraintSolver.getConstraintsFor(c.id)
-                        .some(con => con.type === 'min-distance' && con.entities.includes(other.id));
-                    if (!alreadyExists) {
-                        // Calculate relative orientation and position
-                        const rot1 = ((c.rot % 360) + 360) % 360;
-                        const rot2 = ((other.rot % 360) + 360) % 360;
-                        const dx = other.x - c.x;
-                        const dy = other.y - c.y;
-                        // Determine if components are horizontal (0/180) or vertical (90/270)
-                        const isHoriz1 = (rot1 === 0 || rot1 === 180);
-                        const isHoriz2 = (rot2 === 0 || rot2 === 180);
-                        // Check if perpendicular (one horizontal, one vertical)
-                        const isPerpendicular = isHoriz1 !== isHoriz2;
-                        let minDistance;
-                        // Calculate bounding box parameters for both components
-                        const bbox1 = getComponentBoundingBox(c);
-                        const bbox2 = getComponentBoundingBox(other);
-                        if (isPerpendicular) {
-                            // Perpendicular: Allow T-connections, minimal clearance
-                            minDistance = 10;
-                            console.log(`🔍 Min-distance (perpendicular): ${c.label} <-> ${other.label}, Min: ${minDistance}`);
-                        }
-                        else {
-                            // Use bounding box collision - pass geometry parameters
-                            minDistance = 0; // Not used for bbox collision, but required by interface
-                            console.log(`🔍 Bounding box constraint: ${c.label} <-> ${other.label}`);
-                            console.log(`   ${c.label}: extent=${bbox1.extent}, width=${bbox1.width}`);
-                            console.log(`   ${other.label}: extent=${bbox2.extent}, width=${bbox2.width}`);
-                        }
-                        constraintSolver.addConstraint({
-                            id: `no_overlap_${c.id}_${other.id}`,
-                            type: 'min-distance',
-                            priority: 70,
-                            entities: [c.id, other.id],
-                            params: {
-                                distance: minDistance,
-                                measureFrom: 'center',
-                                bodyExtent: bbox1.extent,
-                                bodyWidth: bbox1.width,
-                                bodyExtent2: bbox2.extent,
-                                bodyWidth2: bbox2.width
-                            },
-                            enabled: true,
-                            metadata: { temporary: true }
-                        });
-                    }
+            for (let i = components.indexOf(c) + 1; i < components.length; i++) {
+                const other = components[i];
+                // Only create constraint once per pair by checking index
+                // (component at index i only creates constraints with components at index > i)
+                // Calculate relative orientation and position
+                const rot1 = ((c.rot % 360) + 360) % 360;
+                const rot2 = ((other.rot % 360) + 360) % 360;
+                const dx = other.x - c.x;
+                const dy = other.y - c.y;
+                // Determine if components are horizontal (0/180) or vertical (90/270)
+                const isHoriz1 = (rot1 === 0 || rot1 === 180);
+                const isHoriz2 = (rot2 === 0 || rot2 === 180);
+                // Check if perpendicular (one horizontal, one vertical)
+                const isPerpendicular = isHoriz1 !== isHoriz2;
+                let minDistance;
+                // Calculate bounding box parameters for both components
+                const bbox1 = getComponentBoundingBox(c);
+                const bbox2 = getComponentBoundingBox(other);
+                if (isPerpendicular) {
+                    // Perpendicular: Allow T-connections, minimal clearance
+                    minDistance = 10;
+                    console.log(`🔍 Min-distance (perpendicular): ${c.label} <-> ${other.label}, Min: ${minDistance}`);
                 }
+                else {
+                    // Use bounding box collision - pass geometry parameters
+                    minDistance = 0; // Not used for bbox collision, but required by interface
+                    console.log(`🔍 Bounding box constraint: ${c.label} <-> ${other.label}`);
+                    console.log(`   ${c.label}: extent=${bbox1.extent}, width=${bbox1.width}`);
+                    console.log(`   ${other.label}: extent=${bbox2.extent}, width=${bbox2.width}`);
+                }
+                constraintSolver.addConstraint({
+                    id: `no_overlap_${c.id}_${other.id}`,
+                    type: 'min-distance',
+                    priority: 70,
+                    entities: [c.id, other.id],
+                    params: {
+                        distance: minDistance,
+                        measureFrom: 'center',
+                        bodyExtent: bbox1.extent,
+                        bodyWidth: bbox1.width,
+                        bodyExtent2: bbox2.extent,
+                        bodyWidth2: bbox2.width
+                    },
+                    enabled: true,
+                    metadata: { temporary: true }
+                });
             }
         }
         console.log(`Synced ${components.length} components with constraint system`);
@@ -3872,8 +3943,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     rot = normDeg(hit.angle);
                 }
             }
+            // Extract numeric suffix from ID for label (e.g., resistor1 -> R1)
+            const idNumber = id.match(/\d+$/)?.[0] || '0';
             const comp = {
-                id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType] - 1}`, value: '',
+                id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${idNumber}`, value: '',
                 props: {}
             };
             if (placeType === 'diode') {
@@ -3889,6 +3962,20 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 }
             }
             components.push(comp);
+            // Check constraints if enabled
+            if (USE_CONSTRAINTS && constraintSolver) {
+                syncConstraints(); // Add the new component to constraint system
+                // Check if placement violates any constraints
+                const result = constraintSolver.solve(comp.id, { x: comp.x, y: comp.y });
+                if (!result.allowed) {
+                    // Placement violates constraints - remove the component and resync
+                    components.pop();
+                    syncConstraints();
+                    console.warn(`⚠️ Cannot place ${comp.label} at (${comp.x}, ${comp.y}) - would overlap existing component`);
+                    redraw();
+                    return;
+                }
+            }
             // Break wires at pins and remove inner bridge segment for 2-pin parts
             breakWiresForComponent(comp);
             deleteBridgeBetweenPins(comp);

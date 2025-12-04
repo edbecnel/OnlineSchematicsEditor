@@ -135,7 +135,8 @@ export class ConstraintSolver {
         entity,
         currentPosition,
         affectedEntities,
-        context
+        context,
+        constraint
       );
 
       if (!result.valid) {
