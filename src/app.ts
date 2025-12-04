@@ -4169,8 +4169,9 @@ import {
       }
       components.push(comp);
       
-      // Check constraints if enabled
-      if (USE_CONSTRAINTS && constraintSolver) {
+      // Check constraints if enabled (unless Shift key is held to bypass collision)
+      const shiftHeld = (e as PointerEvent).shiftKey;
+      if (USE_CONSTRAINTS && constraintSolver && !shiftHeld) {
         syncConstraints(); // Add the new component to constraint system
         
         // Check if placement violates any constraints
@@ -4183,6 +4184,10 @@ import {
           redraw();
           return;
         }
+      } else if (USE_CONSTRAINTS && constraintSolver && shiftHeld) {
+        // Shift held - allow overlapping placement
+        syncConstraints(); // Still need to sync the new component
+        console.log(`🔑 Shift: Placed ${comp.label} at (${comp.x}, ${comp.y}) (collision check bypassed)`);
       }
       
       // Break wires at pins and remove inner bridge segment for 2-pin parts
