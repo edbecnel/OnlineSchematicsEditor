@@ -197,44 +197,52 @@ export function createDefaultValidators(): Map<ConstraintType, ConstraintValidat
       
       // Get bounding box parameters from constraint params
       const params = constraint.params as any;
-      const bodyExtent = params.bodyExtent || 50; // Full extent from center to pin tip (500 mils)
-      const bodyWidth = params.bodyWidth || 12; // Half-width of body (resistor = 24 units tall / 2)
+      const bodyExtent1 = params.bodyExtent || 50;
+      const bodyWidth1 = params.bodyWidth || 12;
+      const bodyExtent2 = params.bodyExtent2 || params.bodyExtent || 50;
+      const bodyWidth2 = params.bodyWidth2 || params.bodyWidth || 12;
       
-      // Calculate bounding boxes - ONLY the body, not the pins
-      // This allows pins to extend and touch when bodies are flush
+      // Determine which entity is which in the constraint
+      const isEntity1First = constraint.entities[0] === entity.id;
+      const extent1 = isEntity1First ? bodyExtent1 : bodyExtent2;
+      const width1 = isEntity1First ? bodyWidth1 : bodyWidth2;
+      const extent2 = isEntity1First ? bodyExtent2 : bodyExtent1;
+      const width2 = isEntity1First ? bodyWidth2 : bodyWidth1;
+      
+      // Calculate bounding boxes using each component's actual dimensions
       let bbox1, bbox2;
       
       if (isHoriz1) {
         // Horizontal: wide in X, narrow in Y
         bbox1 = {
-          minX: proposedPosition.x - bodyExtent,
-          maxX: proposedPosition.x + bodyExtent,
-          minY: proposedPosition.y - bodyWidth,
-          maxY: proposedPosition.y + bodyWidth
+          minX: proposedPosition.x - extent1,
+          maxX: proposedPosition.x + extent1,
+          minY: proposedPosition.y - width1,
+          maxY: proposedPosition.y + width1
         };
       } else {
         // Vertical: narrow in X, wide in Y
         bbox1 = {
-          minX: proposedPosition.x - bodyWidth,
-          maxX: proposedPosition.x + bodyWidth,
-          minY: proposedPosition.y - bodyExtent,
-          maxY: proposedPosition.y + bodyExtent
+          minX: proposedPosition.x - width1,
+          maxX: proposedPosition.x + width1,
+          minY: proposedPosition.y - extent1,
+          maxY: proposedPosition.y + extent1
         };
       }
       
       if (isHoriz2) {
         bbox2 = {
-          minX: otherEntity.position.x - bodyExtent,
-          maxX: otherEntity.position.x + bodyExtent,
-          minY: otherEntity.position.y - bodyWidth,
-          maxY: otherEntity.position.y + bodyWidth
+          minX: otherEntity.position.x - extent2,
+          maxX: otherEntity.position.x + extent2,
+          minY: otherEntity.position.y - width2,
+          maxY: otherEntity.position.y + width2
         };
       } else {
         bbox2 = {
-          minX: otherEntity.position.x - bodyWidth,
-          maxX: otherEntity.position.x + bodyWidth,
-          minY: otherEntity.position.y - bodyExtent,
-          maxY: otherEntity.position.y + bodyExtent
+          minX: otherEntity.position.x - width2,
+          maxX: otherEntity.position.x + width2,
+          minY: otherEntity.position.y - extent2,
+          maxY: otherEntity.position.y + extent2
         };
       }
       

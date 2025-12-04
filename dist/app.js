@@ -3147,6 +3147,74 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         return maxDist;
     }
     /**
+     * Calculate bounding box dimensions for a component
+     * Returns { extent: half-length along component axis, width: half-width perpendicular to axis }
+     */
+    function getComponentBoundingBox(c) {
+        // Get pin positions to calculate actual extent
+        const pins = Components.compPinPositions(c);
+        // For transistors and ground symbols
+        if (c.type === 'npn' || c.type === 'pnp' || c.type === 'ground') {
+            // Calculate actual bounding box from pins
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            for (const pin of pins) {
+                minX = Math.min(minX, pin.x);
+                maxX = Math.max(maxX, pin.x);
+                minY = Math.min(minY, pin.y);
+                maxY = Math.max(maxY, pin.y);
+            }
+            const halfWidth = (maxX - minX) / 2;
+            const halfHeight = (maxY - minY) / 2;
+            // For these components, rotation doesn't matter for bounding box
+            return { extent: Math.max(halfWidth, halfHeight), width: Math.min(halfWidth, halfHeight) };
+        }
+        // For two-pin components (resistor, capacitor, inductor, diode, battery, ac)
+        // These are oriented along their rotation axis
+        const pinExtent = getComponentPinExtent(c);
+        // Get body dimensions based on component type and style
+        let bodyHalfLength = 30; // Default for IEC resistor (60/2)
+        let bodyHalfWidth = 12; // Default height (24/2)
+        if (c.type === 'resistor') {
+            const style = c.props?.resistorStyle || 'iec';
+            if (style === 'iec') {
+                bodyHalfLength = 30; // 60 units / 2
+                bodyHalfWidth = 12; // 24 units / 2
+            }
+            else {
+                // ANSI zigzag: x±39 to body edges, ±12 vertical
+                bodyHalfLength = 39;
+                bodyHalfWidth = 12;
+            }
+        }
+        else if (c.type === 'capacitor') {
+            // Capacitor plates at x±6, height ±16, plus possible +/- marks extend to ~±26
+            bodyHalfLength = 26;
+            bodyHalfWidth = 16;
+        }
+        else if (c.type === 'inductor') {
+            // 4 coils of radius 8 = 64px/2 = 32
+            bodyHalfLength = 32;
+            bodyHalfWidth = 8;
+        }
+        else if (c.type === 'diode') {
+            // Diode triangle and cathode bar: roughly ±24 horizontal, ±16 vertical
+            bodyHalfLength = 24;
+            bodyHalfWidth = 16;
+        }
+        else if (c.type === 'battery') {
+            // Battery plates at various positions, roughly ±20 horizontal, ±20 vertical
+            bodyHalfLength = 20;
+            bodyHalfWidth = 20;
+        }
+        else if (c.type === 'ac') {
+            // AC symbol circle, roughly ±16 radius
+            bodyHalfLength = 16;
+            bodyHalfWidth = 16;
+        }
+        // Use pin extent (which includes lead length) for the full extent
+        return { extent: pinExtent, width: bodyHalfWidth };
+    }
+    /**
      * Update all component positions in constraint graph (for live drag checking)
      */
     function updateConstraintPositions() {
@@ -3210,8 +3278,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         const isPerpendicular = isHoriz1 !== isHoriz2;
                         let minDistance;
                         // Calculate bounding box parameters for both components
-                        const extent1 = getComponentPinExtent(c);
-                        const extent2 = getComponentPinExtent(other);
+                        const bbox1 = getComponentBoundingBox(c);
+                        const bbox2 = getComponentBoundingBox(other);
                         if (isPerpendicular) {
                             // Perpendicular: Allow T-connections, minimal clearance
                             minDistance = 10;
@@ -3221,7 +3289,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             // Use bounding box collision - pass geometry parameters
                             minDistance = 0; // Not used for bbox collision, but required by interface
                             console.log(`🔍 Bounding box constraint: ${c.label} <-> ${other.label}`);
-                            console.log(`   Body extent: 50 (500 mils from center - pins connect when flush), Body width: 12`);
+                            console.log(`   ${c.label}: extent=${bbox1.extent}, width=${bbox1.width}`);
+                            console.log(`   ${other.label}: extent=${bbox2.extent}, width=${bbox2.width}`);
                         }
                         constraintSolver.addConstraint({
                             id: `no_overlap_${c.id}_${other.id}`,
@@ -3231,8 +3300,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             params: {
                                 distance: minDistance,
                                 measureFrom: 'center',
-                                bodyExtent: 50,
-                                bodyWidth: 12
+                                bodyExtent: bbox1.extent,
+                                bodyWidth: bbox1.width,
+                                bodyExtent2: bbox2.extent,
+                                bodyWidth2: bbox2.width
                             },
                             enabled: true,
                             metadata: { temporary: true }
