@@ -99,6 +99,8 @@ export interface OrthogonalParams {
 export interface MinDistanceParams {
   distance: number;
   measureFrom: 'center' | 'edge';
+  bodyExtent?: number;           // Half-length of component body for AABB collision
+  bodyWidth?: number;            // Half-width of component body for AABB collision
 }
 
 export interface NoOverlapParams {

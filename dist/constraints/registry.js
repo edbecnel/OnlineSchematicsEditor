@@ -134,7 +134,7 @@ export function createDefaultValidators() {
             return { valid: true };
         }
     });
-    // Min Distance Validator
+    // Min Distance Validator (using bounding box collision detection)
     validators.set('min-distance', {
         validate: (entity, proposedPosition, affectedEntities, context) => {
             const constraint = Array.from(context.allConstraints.values())
@@ -142,8 +142,6 @@ export function createDefaultValidators() {
             if (!constraint || !constraint.params) {
                 return { valid: true };
             }
-            const params = constraint.params;
-            const minDist = params.distance;
             // Find the other entity in the constraint
             const otherEntityId = constraint.entities.find(id => id !== entity.id);
             if (!otherEntityId) {
@@ -153,13 +151,69 @@ export function createDefaultValidators() {
             if (!otherEntity) {
                 return { valid: true };
             }
-            const dx = proposedPosition.x - otherEntity.position.x;
-            const dy = proposedPosition.y - otherEntity.position.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < minDist) {
+            // Get rotations for both entities
+            const rot1 = entity.metadata?.rot || 0;
+            const rot2 = otherEntity.metadata?.rot || 0;
+            const normalizedRot1 = ((rot1 % 360) + 360) % 360;
+            const normalizedRot2 = ((rot2 % 360) + 360) % 360;
+            const isHoriz1 = (normalizedRot1 === 0 || normalizedRot1 === 180);
+            const isHoriz2 = (normalizedRot2 === 0 || normalizedRot2 === 180);
+            const isPerpendicular = isHoriz1 !== isHoriz2;
+            // Get bounding box parameters from constraint params
+            const params = constraint.params;
+            const bodyExtent = params.bodyExtent || 50; // Full extent from center to pin tip (500 mils)
+            const bodyWidth = params.bodyWidth || 12; // Half-width of body (resistor = 24 units tall / 2)
+            // Calculate bounding boxes - ONLY the body, not the pins
+            // This allows pins to extend and touch when bodies are flush
+            let bbox1, bbox2;
+            if (isHoriz1) {
+                // Horizontal: wide in X, narrow in Y
+                bbox1 = {
+                    minX: proposedPosition.x - bodyExtent,
+                    maxX: proposedPosition.x + bodyExtent,
+                    minY: proposedPosition.y - bodyWidth,
+                    maxY: proposedPosition.y + bodyWidth
+                };
+            }
+            else {
+                // Vertical: narrow in X, wide in Y
+                bbox1 = {
+                    minX: proposedPosition.x - bodyWidth,
+                    maxX: proposedPosition.x + bodyWidth,
+                    minY: proposedPosition.y - bodyExtent,
+                    maxY: proposedPosition.y + bodyExtent
+                };
+            }
+            if (isHoriz2) {
+                bbox2 = {
+                    minX: otherEntity.position.x - bodyExtent,
+                    maxX: otherEntity.position.x + bodyExtent,
+                    minY: otherEntity.position.y - bodyWidth,
+                    maxY: otherEntity.position.y + bodyWidth
+                };
+            }
+            else {
+                bbox2 = {
+                    minX: otherEntity.position.x - bodyWidth,
+                    maxX: otherEntity.position.x + bodyWidth,
+                    minY: otherEntity.position.y - bodyExtent,
+                    maxY: otherEntity.position.y + bodyExtent
+                };
+            }
+            // Check for bounding box overlap (AABB collision)
+            // Use <= instead of < to allow touching (flush boundaries) but prevent overlap
+            const overlaps = !(bbox1.maxX <= bbox2.minX ||
+                bbox1.minX >= bbox2.maxX ||
+                bbox1.maxY <= bbox2.minY ||
+                bbox1.minY >= bbox2.maxY);
+            console.log(`🔍 Bounding box check: ${entity.id} -> (${proposedPosition.x}, ${proposedPosition.y})`);
+            console.log(`   BBox1: [${bbox1.minX.toFixed(1)}, ${bbox1.minY.toFixed(1)}] to [${bbox1.maxX.toFixed(1)}, ${bbox1.maxY.toFixed(1)}]`);
+            console.log(`   BBox2: [${bbox2.minX.toFixed(1)}, ${bbox2.minY.toFixed(1)}] to [${bbox2.maxX.toFixed(1)}, ${bbox2.maxY.toFixed(1)}]`);
+            console.log(`   Overlap: ${overlaps}`);
+            if (overlaps) {
                 return {
                     valid: false,
-                    reason: `Too close to ${otherEntityId} (minimum distance: ${minDist})`
+                    reason: `Bounding box overlap with ${otherEntityId}`
                 };
             }
             return { valid: true };

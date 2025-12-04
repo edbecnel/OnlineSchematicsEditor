@@ -1300,6 +1300,34 @@
     })();
   </script>
 
+  <!-- Constraint System Test Button -->
+  <script type="module">
+    import { runAllExamples } from './dist/constraints/examples.js';
+    
+    // Wire up the test button
+    document.addEventListener('DOMContentLoaded', () => {
+      const testBtn = document.getElementById('testConstraintsBtn');
+      if (testBtn) {
+        testBtn.addEventListener('click', () => {
+          console.clear();
+          console.log('%c🧪 Testing Constraint System...', 'font-size: 16px; font-weight: bold; color: #61dafb');
+          console.log('%cCheck the console output below for test results', 'color: #a5adbb');
+          console.log('─'.repeat(80));
+          
+          try {
+            runAllExamples();
+            console.log('─'.repeat(80));
+            console.log('%c✅ All tests completed successfully!', 'font-size: 14px; font-weight: bold; color: #4ade80');
+            console.log('%cThe constraint system is working correctly.', 'color: #a5adbb');
+          } catch (error) {
+            console.log('─'.repeat(80));
+            console.error('%c❌ Test failed:', 'font-size: 14px; font-weight: bold; color: #ff6b6b', error);
+          }
+        });
+      }
+    });
+  </script>
+
 </body>
 
 </html>

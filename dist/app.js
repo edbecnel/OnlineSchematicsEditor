@@ -19,6 +19,7 @@ import * as Inspector from './inspector.js';
 import * as FileIO from './fileio.js';
 import * as Move from './move.js';
 import * as Input from './input.js';
+import { ConstraintSolver } from './constraints/index.js';
 import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
 (function () {
     // --- Add UI for Place/Delete Junction Dot ---
@@ -109,6 +110,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // deprecated and retained only for backwards compatibility (use `null`).
     let selection = { kind: null, id: null, segIndex: null };
     let drawing = { active: false, points: [], cursor: null };
+    // ====== Constraint System ======
+    let USE_CONSTRAINTS = false; // Feature flag for constraint-based movement
+    let constraintSolver = null;
     // Marquee selection (click+drag rectangle) state
     let marquee = { active: false, start: null, end: null, rectEl: null, startedOnEmpty: false, shiftPreferComponents: false };
     // ---- Wire topology (nodes/edges/SWPs) + per-move collapse context ----
@@ -1400,9 +1404,27 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 const mc = moveCollapseCtx;
                 const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
                 // Allow free movement in both directions
-                const candX = cand.x;
-                const candY = cand.y;
-                if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
+                let candX = cand.x;
+                let candY = cand.y;
+                // Check constraints if enabled
+                let moveAllowed = false;
+                if (USE_CONSTRAINTS && constraintSolver) {
+                    updateConstraintPositions(); // Sync current positions before solving
+                    const result = constraintSolver.solve(c.id, { x: candX, y: candY });
+                    console.log(`🔍 Constraint check: ${c.label} to (${candX}, ${candY}) - Allowed: ${result.allowed}`);
+                    if (!result.allowed) {
+                        console.log(`   Violations:`, result.violatedConstraints.map(v => v.reason));
+                    }
+                    if (result.allowed) {
+                        moveAllowed = true;
+                        candX = result.finalPosition.x;
+                        candY = result.finalPosition.y;
+                    }
+                }
+                else if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
+                    moveAllowed = true;
+                }
+                if (moveAllowed) {
                     c.x = candX;
                     c.y = candY;
                     updateComponentDOM(c);
@@ -1489,8 +1511,17 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             // Free drag mode - drag entire wires laterally with component (legacy path for non-SWP components)
             if (componentDragState && componentDragState.wires.length > 0) {
                 const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
-                const candX = cand.x;
-                const candY = cand.y;
+                let candX = cand.x;
+                let candY = cand.y;
+                // Check constraints if enabled
+                if (USE_CONSTRAINTS && constraintSolver) {
+                    updateConstraintPositions(); // Sync current positions before solving
+                    const result = constraintSolver.solve(c.id, { x: candX, y: candY });
+                    if (!result.allowed)
+                        return; // Movement blocked
+                    candX = result.finalPosition.x;
+                    candY = result.finalPosition.y;
+                }
                 // Move component freely
                 c.x = candX;
                 c.y = candY;
@@ -1570,9 +1601,19 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 if (slideCtx.axis === 'x') {
                     let nx = snap(p.x + dragOff.x);
                     nx = Math.max(Math.min(slideCtx.max, nx), slideCtx.min);
-                    const candX = nx, candY = slideCtx.fixed;
-                    if (overlapsAnyOtherAt(c, candX, candY) || pinsCoincideAnyAt(c, candX, candY))
+                    let candX = nx, candY = slideCtx.fixed;
+                    // Check constraints if enabled
+                    if (USE_CONSTRAINTS && constraintSolver) {
+                        updateConstraintPositions(); // Sync current positions before solving
+                        const result = constraintSolver.solve(c.id, { x: candX, y: candY });
+                        if (!result.allowed)
+                            return; // Movement blocked
+                        candX = result.finalPosition.x;
+                        candY = result.finalPosition.y;
+                    }
+                    else if (overlapsAnyOtherAt(c, candX, candY) || pinsCoincideAnyAt(c, candX, candY)) {
                         return;
+                    }
                     c.x = candX;
                     c.y = candY;
                     updateComponentDOM(c);
@@ -1583,11 +1624,24 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 else {
                     let ny = snap(p.y + dragOff.y);
                     ny = Math.max(Math.min(slideCtx.max, ny), slideCtx.min);
-                    const candX = slideCtx.fixed, candY = ny;
-                    if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
-                        c.y = candY;
-                        c.x = candX;
+                    let candX = slideCtx.fixed, candY = ny;
+                    // Check constraints if enabled
+                    if (USE_CONSTRAINTS && constraintSolver) {
+                        updateConstraintPositions(); // Sync current positions before solving
+                        const result = constraintSolver.solve(c.id, { x: candX, y: candY });
+                        if (!result.allowed)
+                            return; // Movement blocked
+                        candX = result.finalPosition.x;
+                        candY = result.finalPosition.y;
                     }
+                    else if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
+                        // Legacy check passed
+                    }
+                    else {
+                        return;
+                    }
+                    c.y = candY;
+                    c.x = candX;
                     updateComponentDOM(c);
                     updateCoordinateDisplay(c.x, c.y);
                     updateCoordinateInputs(c.x, c.y);
@@ -1597,16 +1651,29 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             else {
                 // Regular free drag (no wire stretching)
                 const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
-                const candX = cand.x;
-                const candY = cand.y;
-                if (!overlapsAnyOtherAt(c, candX, candY)) {
-                    c.x = candX;
-                    c.y = candY;
-                    updateComponentDOM(c);
-                    updateCoordinateDisplay(c.x, c.y);
-                    updateCoordinateInputs(c.x, c.y);
-                    renderInspector();
+                let candX = cand.x;
+                let candY = cand.y;
+                // Check constraints if enabled
+                if (USE_CONSTRAINTS && constraintSolver) {
+                    updateConstraintPositions(); // Sync current positions before solving
+                    const result = constraintSolver.solve(c.id, { x: candX, y: candY });
+                    if (!result.allowed)
+                        return; // Movement blocked
+                    candX = result.finalPosition.x;
+                    candY = result.finalPosition.y;
                 }
+                else if (!overlapsAnyOtherAt(c, candX, candY)) {
+                    // Legacy check passed
+                }
+                else {
+                    return;
+                }
+                c.x = candX;
+                c.y = candY;
+                updateComponentDOM(c);
+                updateCoordinateDisplay(c.x, c.y);
+                updateCoordinateInputs(c.x, c.y);
+                renderInspector();
             }
         });
         g.addEventListener('pointerup', (e) => {
@@ -1741,7 +1808,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     updateEndpointCircles();
                     return;
                 }
-                if (overlapsAnyOther(c)) {
+                // When constraints are enabled, skip legacy overlap check (constraints already validated during drag)
+                if (!USE_CONSTRAINTS && overlapsAnyOther(c)) {
                     c.x = dragStart.x;
                     c.y = dragStart.y;
                     if (slideCtx && dragStart.pins?.length === 2) {
@@ -3044,6 +3112,137 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     }
     // Snap a scalar value to the base 50-mil grid in user units
     function snapToBaseScalar(v) { const b = baseSnapUser(); return Math.round(v / b) * b; }
+    // ====== Constraint System Initialization ======
+    function initConstraintSystem() {
+        constraintSolver = new ConstraintSolver(snap, snapToBaseScalar);
+        console.log('✅ Constraint system initialized');
+        // Expose to window for console access
+        window.constraintSolver = constraintSolver;
+        // Make USE_CONSTRAINTS flag accessible from console
+        Object.defineProperty(window, 'USE_CONSTRAINTS', {
+            get() { return USE_CONSTRAINTS; },
+            set(value) {
+                USE_CONSTRAINTS = value;
+                console.log(`Constraint system ${value ? 'ENABLED' : 'DISABLED'}`);
+                if (value) {
+                    syncConstraints(); // Sync when enabling
+                }
+            }
+        });
+    }
+    /**
+     * Calculate maximum pin extent (distance from center to furthest pin) for a component
+     */
+    function getComponentPinExtent(c) {
+        const pins = Components.compPinPositions(c);
+        if (pins.length === 0)
+            return 0;
+        let maxDist = 0;
+        for (const pin of pins) {
+            const dx = pin.x - c.x;
+            const dy = pin.y - c.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            maxDist = Math.max(maxDist, dist);
+        }
+        return maxDist;
+    }
+    /**
+     * Update all component positions in constraint graph (for live drag checking)
+     */
+    function updateConstraintPositions() {
+        if (!constraintSolver)
+            return;
+        for (const c of components) {
+            if (constraintSolver.getEntity(c.id)) {
+                constraintSolver.getGraph().updateEntityPosition(c.id, { x: c.x, y: c.y });
+            }
+        }
+    }
+    function syncConstraints() {
+        if (!constraintSolver || !USE_CONSTRAINTS)
+            return;
+        // Clear temporary constraints from previous sync
+        constraintSolver.clearTemporaryConstraints();
+        // Add all components as entities with constraints
+        for (const c of components) {
+            // Create entity for this component
+            const entity = {
+                id: c.id,
+                type: 'component',
+                position: { x: c.x, y: c.y },
+                constraints: new Set(),
+                metadata: { type: c.type, label: c.label, rot: c.rot }
+            };
+            // Only add if not already in graph
+            if (!constraintSolver.getEntity(c.id)) {
+                constraintSolver.addEntity(entity);
+            }
+            else {
+                // Update position
+                constraintSolver.getGraph().updateEntityPosition(c.id, { x: c.x, y: c.y });
+            }
+            // Add grid snap constraint
+            constraintSolver.addConstraint({
+                id: `grid_${c.id}`,
+                type: 'on-grid',
+                priority: 50,
+                entities: [c.id],
+                params: { gridSize: baseSnapUser() },
+                enabled: true,
+                metadata: { temporary: true }
+            });
+            // Add directional no-overlap constraints with other components
+            // Different min-distances based on component orientation and relative position
+            for (const other of components) {
+                if (other.id !== c.id) {
+                    const alreadyExists = constraintSolver.getConstraintsFor(c.id)
+                        .some(con => con.type === 'min-distance' && con.entities.includes(other.id));
+                    if (!alreadyExists) {
+                        // Calculate relative orientation and position
+                        const rot1 = ((c.rot % 360) + 360) % 360;
+                        const rot2 = ((other.rot % 360) + 360) % 360;
+                        const dx = other.x - c.x;
+                        const dy = other.y - c.y;
+                        // Determine if components are horizontal (0/180) or vertical (90/270)
+                        const isHoriz1 = (rot1 === 0 || rot1 === 180);
+                        const isHoriz2 = (rot2 === 0 || rot2 === 180);
+                        // Check if perpendicular (one horizontal, one vertical)
+                        const isPerpendicular = isHoriz1 !== isHoriz2;
+                        let minDistance;
+                        // Calculate bounding box parameters for both components
+                        const extent1 = getComponentPinExtent(c);
+                        const extent2 = getComponentPinExtent(other);
+                        if (isPerpendicular) {
+                            // Perpendicular: Allow T-connections, minimal clearance
+                            minDistance = 10;
+                            console.log(`🔍 Min-distance (perpendicular): ${c.label} <-> ${other.label}, Min: ${minDistance}`);
+                        }
+                        else {
+                            // Use bounding box collision - pass geometry parameters
+                            minDistance = 0; // Not used for bbox collision, but required by interface
+                            console.log(`🔍 Bounding box constraint: ${c.label} <-> ${other.label}`);
+                            console.log(`   Body extent: 50 (500 mils from center - pins connect when flush), Body width: 12`);
+                        }
+                        constraintSolver.addConstraint({
+                            id: `no_overlap_${c.id}_${other.id}`,
+                            type: 'min-distance',
+                            priority: 70,
+                            entities: [c.id, other.id],
+                            params: {
+                                distance: minDistance,
+                                measureFrom: 'center',
+                                bodyExtent: 50,
+                                bodyWidth: 12
+                            },
+                            enabled: true,
+                            metadata: { temporary: true }
+                        });
+                    }
+                }
+            }
+        }
+        console.log(`Synced ${components.length} components with constraint system`);
+    }
     // Collect anchor points: component pins and wire endpoints (snapped to base grid)
     function collectAnchors() {
         const out = [];
@@ -4355,6 +4554,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         zoom = newZoom;
         applyZoom();
     }, { passive: false });
+    // Initialize constraint system
+    initConstraintSystem();
     window.addEventListener('keydown', (e) => {
         // Block ALL app shortcuts while the user is editing a field in the Inspector (or any editable).
         if (isEditingKeystrokesTarget(e)) {
@@ -6724,7 +6925,47 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     function overlapsAnyOther(c) { return Move.overlapsAnyOther(createMoveContext(), c); }
     function overlapsAnyOtherAt(c, x, y) { return Move.overlapsAnyOtherAt(createMoveContext(), c, x, y); }
     function pinsCoincideAnyAt(c, x, y, eps = 0.75) { return Move.pinsCoincideAnyAt(createMoveContext(), c, x, y, eps); }
-    function moveSelectedBy(dx, dy) { return Move.moveSelectedBy(createMoveContext(), dx, dy); }
+    function moveSelectedBy(dx, dy) {
+        // Try constraint-based movement first
+        if (USE_CONSTRAINTS && constraintSolver && selection.kind === 'component') {
+            return moveComponentWithConstraints(dx, dy);
+        }
+        // Fallback to existing movement logic
+        return Move.moveSelectedBy(createMoveContext(), dx, dy);
+    }
+    function moveComponentWithConstraints(dx, dy) {
+        if (!constraintSolver || selection.kind !== 'component')
+            return;
+        const c = components.find(comp => comp.id === selection.id);
+        if (!c)
+            return;
+        // Calculate proposed position
+        const proposedX = snap(c.x + dx);
+        const proposedY = snap(c.y + dy);
+        // Use constraint solver
+        const result = constraintSolver.solve(c.id, { x: proposedX, y: proposedY });
+        if (result.allowed) {
+            // Move the component
+            c.x = result.finalPosition.x;
+            c.y = result.finalPosition.y;
+            // Apply any cascading updates to other entities
+            for (const update of result.affectedEntities) {
+                if (update.id !== c.id) {
+                    // Handle other entity updates (wires, junctions, etc.)
+                    console.log('Constraint update:', update);
+                }
+            }
+            // Update UI
+            rebuildTopology();
+            redraw();
+            renderInspector();
+        }
+        else {
+            // Movement blocked - do NOT move the component
+            console.log('Movement blocked by constraints:', result.violatedConstraints.map(v => v.reason).join(', '));
+            // Component stays at current position
+        }
+    }
     // --- Mend helpers ---
     // Find a wire whose **endpoint** is near the given point; returns {w, endIndex:0|n-1}
     function findWireEndpointNear(pt, tol = 0.9) {
@@ -7755,6 +7996,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // If we split wires, rebuild topology to detect junctions at the new wire endpoints
         if (didSplitWires) {
             rebuildTopology();
+        }
+        // Sync constraints after topology changes
+        if (USE_CONSTRAINTS && constraintSolver) {
+            syncConstraints();
         }
     }
     // ---- SWP Move: collapse current SWP to a single straight wire, constrain move, rebuild on finish ----
