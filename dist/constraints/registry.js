@@ -1,0 +1,211 @@
+/**
+ * Constraint Validator Registry
+ * Registers validation functions for each constraint type
+ */
+export class ConstraintRegistry {
+    constructor() {
+        this.validators = new Map();
+    }
+    /**
+     * Register a validator for a constraint type
+     */
+    register(type, validator) {
+        this.validators.set(type, validator);
+    }
+    /**
+     * Get validator for a constraint type
+     */
+    getValidator(type) {
+        return this.validators.get(type);
+    }
+    /**
+     * Check if a constraint type is registered
+     */
+    hasValidator(type) {
+        return this.validators.has(type);
+    }
+    /**
+     * Get all registered constraint types
+     */
+    getRegisteredTypes() {
+        return Array.from(this.validators.keys());
+    }
+}
+// ====== Built-in Validators ======
+/**
+ * Create default constraint validators
+ */
+export function createDefaultValidators() {
+    const validators = new Map();
+    // Fixed Position Validator
+    validators.set('fixed-position', {
+        validate: (entity, proposedPosition, affectedEntities, context) => {
+            // Entity cannot move from its fixed position
+            const constraint = Array.from(context.allConstraints.values())
+                .find(c => c.type === 'fixed-position' && c.entities.includes(entity.id));
+            if (!constraint || !constraint.params) {
+                return { valid: true };
+            }
+            const fixedPos = constraint.params.position;
+            const tolerance = 0.1;
+            const atFixedPosition = Math.abs(proposedPosition.x - fixedPos.x) < tolerance &&
+                Math.abs(proposedPosition.y - fixedPos.y) < tolerance;
+            if (!atFixedPosition) {
+                return {
+                    valid: false,
+                    reason: `Entity must stay at fixed position (${fixedPos.x}, ${fixedPos.y})`,
+                    adjustedPosition: fixedPos
+                };
+            }
+            return { valid: true };
+        }
+    });
+    // Fixed Axis Validator
+    validators.set('fixed-axis', {
+        validate: (entity, proposedPosition, affectedEntities, context) => {
+            const constraint = Array.from(context.allConstraints.values())
+                .find(c => c.type === 'fixed-axis' && c.entities.includes(entity.id));
+            if (!constraint || !constraint.params) {
+                return { valid: true };
+            }
+            const params = constraint.params;
+            const axis = params.axis;
+            const fixedValue = params.fixedValue;
+            const tolerance = 0.1;
+            if (axis === 'x') {
+                // X is fixed, can only move in Y
+                if (Math.abs(proposedPosition.x - fixedValue) > tolerance) {
+                    return {
+                        valid: false,
+                        reason: `Movement restricted to Y axis (X must be ${fixedValue})`,
+                        adjustedPosition: { x: fixedValue, y: proposedPosition.y }
+                    };
+                }
+                // Check bounds on Y if specified
+                if (params.minValue !== undefined && proposedPosition.y < params.minValue) {
+                    return {
+                        valid: false,
+                        reason: `Below minimum Y value (${params.minValue})`,
+                        adjustedPosition: { x: fixedValue, y: params.minValue }
+                    };
+                }
+                if (params.maxValue !== undefined && proposedPosition.y > params.maxValue) {
+                    return {
+                        valid: false,
+                        reason: `Above maximum Y value (${params.maxValue})`,
+                        adjustedPosition: { x: fixedValue, y: params.maxValue }
+                    };
+                }
+            }
+            else if (axis === 'y') {
+                // Y is fixed, can only move in X
+                if (Math.abs(proposedPosition.y - fixedValue) > tolerance) {
+                    return {
+                        valid: false,
+                        reason: `Movement restricted to X axis (Y must be ${fixedValue})`,
+                        adjustedPosition: { x: proposedPosition.x, y: fixedValue }
+                    };
+                }
+                // Check bounds on X if specified
+                if (params.minValue !== undefined && proposedPosition.x < params.minValue) {
+                    return {
+                        valid: false,
+                        reason: `Below minimum X value (${params.minValue})`,
+                        adjustedPosition: { x: params.minValue, y: fixedValue }
+                    };
+                }
+                if (params.maxValue !== undefined && proposedPosition.x > params.maxValue) {
+                    return {
+                        valid: false,
+                        reason: `Above maximum X value (${params.maxValue})`,
+                        adjustedPosition: { x: params.maxValue, y: fixedValue }
+                    };
+                }
+            }
+            return { valid: true };
+        }
+    });
+    // Orthogonal Validator (for wire segments)
+    validators.set('orthogonal', {
+        validate: (entity, proposedPosition, affectedEntities, context) => {
+            // Wire segments must remain horizontal or vertical
+            // This is more complex - requires checking connected points
+            // For now, simplified implementation
+            return { valid: true };
+        }
+    });
+    // Min Distance Validator
+    validators.set('min-distance', {
+        validate: (entity, proposedPosition, affectedEntities, context) => {
+            const constraint = Array.from(context.allConstraints.values())
+                .find(c => c.type === 'min-distance' && c.entities.includes(entity.id));
+            if (!constraint || !constraint.params) {
+                return { valid: true };
+            }
+            const params = constraint.params;
+            const minDist = params.distance;
+            // Find the other entity in the constraint
+            const otherEntityId = constraint.entities.find(id => id !== entity.id);
+            if (!otherEntityId) {
+                return { valid: true };
+            }
+            const otherEntity = context.allEntities.get(otherEntityId);
+            if (!otherEntity) {
+                return { valid: true };
+            }
+            const dx = proposedPosition.x - otherEntity.position.x;
+            const dy = proposedPosition.y - otherEntity.position.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < minDist) {
+                return {
+                    valid: false,
+                    reason: `Too close to ${otherEntityId} (minimum distance: ${minDist})`
+                };
+            }
+            return { valid: true };
+        }
+    });
+    // On Grid Validator
+    validators.set('on-grid', {
+        validate: (entity, proposedPosition, affectedEntities, context) => {
+            const constraint = Array.from(context.allConstraints.values())
+                .find(c => c.type === 'on-grid' && c.entities.includes(entity.id));
+            if (!constraint || !constraint.params) {
+                return { valid: true };
+            }
+            const params = constraint.params;
+            const gridSize = params.gridSize;
+            // Check if position is on grid
+            const onGridX = Math.abs(proposedPosition.x % gridSize) < 0.1 ||
+                Math.abs(proposedPosition.x % gridSize - gridSize) < 0.1;
+            const onGridY = Math.abs(proposedPosition.y % gridSize) < 0.1 ||
+                Math.abs(proposedPosition.y % gridSize - gridSize) < 0.1;
+            if (!onGridX || !onGridY) {
+                // Snap to grid
+                const snappedX = Math.round(proposedPosition.x / gridSize) * gridSize;
+                const snappedY = Math.round(proposedPosition.y / gridSize) * gridSize;
+                return {
+                    valid: true, // Auto-fix by snapping
+                    adjustedPosition: { x: snappedX, y: snappedY }
+                };
+            }
+            return { valid: true };
+        }
+    });
+    // Placeholder validators for other types (to be implemented)
+    const placeholderTypes = [
+        'coincident',
+        'connected',
+        'no-overlap',
+        'rubber-band',
+        'align',
+        'maintain-topology'
+    ];
+    placeholderTypes.forEach(type => {
+        validators.set(type, {
+            validate: () => ({ valid: true }) // Placeholder - always valid
+        });
+    });
+    return validators;
+}
+//# sourceMappingURL=registry.js.map
