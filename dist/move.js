@@ -142,7 +142,10 @@ export function replaceEndpoint(ctx, w, oldEnd, newEnd) {
 // Move selected component by dx, dy (handles arrow keys & clamping)
 export function moveSelectedBy(ctx, dx, dy) {
     ctx.pushUndo();
-    const c = ctx.components.find(x => x.id === ctx.selection.id);
+    const firstSel = ctx.selection.items[0];
+    if (!firstSel || firstSel.kind !== 'component')
+        return;
+    const c = ctx.components.find(x => x.id === firstSel.id);
     if (!c)
         return;
     // If an SWP is collapsed for THIS component, move along that SWP with proper clamps

@@ -28,7 +28,7 @@ import { ConstraintSolver } from './constraints/index.js';
 import type { Entity } from './constraints/types.js';
 
 import type {
-  Point, Axis, Mode, PlaceType, CounterKey, Selection, DiodeSubtype, ResistorStyle, CapacitorSubtype,
+  Point, Axis, Mode, PlaceType, CounterKey, Selection, SelectionItem, DiodeSubtype, ResistorStyle, CapacitorSubtype,
   Component, RGBA01, StrokeType, Stroke, Wire, WireColorMode,
   NetClass, Theme, Junction, SWPEdge, SWP, Topology,
   MoveCollapseCtx, KWire
@@ -167,10 +167,73 @@ import {
 
   let mode: EditorMode = 'select';
   let placeType: PlaceType | null = null;
-  // Selection object: prefer `wire.id` for segment selections. `segIndex` is
-  // deprecated and retained only for backwards compatibility (use `null`).
-  let selection: Selection = { kind: null, id: null, segIndex: null };
+  // Selection object: supports multiple items
+  let selection: Selection = { items: [] };
   let drawing: { active: boolean; points: Point[]; cursor: Point | null } = { active: false, points: [], cursor: null };
+  
+  // ====== Selection Helper Functions ======
+  
+  /**
+   * Check if selection is empty
+   */
+  function isSelectionEmpty(): boolean {
+    return selection.items.length === 0;
+  }
+  
+  /**
+   * Check if a specific item is selected
+   */
+  function isSelected(kind: string, id: string): boolean {
+    return selection.items.some(item => item.kind === kind && item.id === id);
+  }
+  
+  /**
+   * Add an item to selection (for shift-click)
+   */
+  function addToSelection(kind: string, id: string, segIndex: number | null = null) {
+    if (!isSelected(kind, id)) {
+      selection.items.push({ kind, id, segIndex } as SelectionItem);
+    }
+  }
+  
+  /**
+   * Remove an item from selection (for shift-click on already selected item)
+   */
+  function removeFromSelection(kind: string, id: string) {
+    selection.items = selection.items.filter(item => !(item.kind === kind && item.id === id));
+  }
+  
+  /**
+   * Toggle an item in selection (for shift-click)
+   */
+  function toggleSelection(kind: string, id: string, segIndex: number | null = null) {
+    if (isSelected(kind, id)) {
+      removeFromSelection(kind, id);
+    } else {
+      addToSelection(kind, id, segIndex);
+    }
+  }
+  
+  /**
+   * Set selection to a single item (clears existing selection)
+   */
+  function selectSingle(kind: string, id: string, segIndex: number | null = null) {
+    selection.items = [{ kind, id, segIndex } as SelectionItem];
+  }
+  
+  /**
+   * Clear all selection
+   */
+  function clearSelection() {
+    selection.items = [];
+  }
+  
+  /**
+   * Get first selected item (for backwards compatibility)
+   */
+  function getFirstSelection(): SelectionItem | null {
+    return selection.items.length > 0 ? selection.items[0] : null;
+  }
   
   // ====== Constraint System ======
   let USE_CONSTRAINTS = false; // Feature flag for constraint-based movement
@@ -184,7 +247,8 @@ import {
     rectEl: SVGRectElement | null;
     startedOnEmpty: boolean;
     shiftPreferComponents: boolean;
-  } = { active: false, start: null, end: null, rectEl: null, startedOnEmpty: false, shiftPreferComponents: false };
+    shiftCrossingMode: boolean; // true = select items crossing boundary, false = select items fully inside
+  } = { active: false, start: null, end: null, rectEl: null, startedOnEmpty: false, shiftPreferComponents: false, shiftCrossingMode: false };
 
   // ---- Wire topology (nodes/edges/SWPs) + per-move collapse context ----
   let topology: Topology = { nodes: [], edges: [], swps: [], compToSwp: new Map() };
@@ -1004,15 +1068,16 @@ import {
     document.body.classList.remove('mode-select', 'mode-wire', 'mode-delete', 'mode-place', 'mode-pan', 'mode-move');
     document.body.classList.add(`mode-${m}`);
     // If user switches to Delete with an active selection, apply delete immediately
-    if (m === 'delete' && selection.kind) {
-      if (selection.kind === 'component') { removeComponent(selection.id); return; }
-      if (selection.kind === 'wire') {
-        const w = wires.find(x => x.id === selection.id);
+    const firstSel = getFirstSelection();
+    if (m === 'delete' && firstSel) {
+      if (firstSel.kind === 'component') { removeComponent(firstSel.id); return; }
+      if (firstSel.kind === 'wire') {
+        const w = wires.find(x => x.id === firstSel.id);
         if (w) {
           removeJunctionsAtWireEndpoints(w);
           pushUndo();
           wires = wires.filter(x => x.id !== w.id);
-          selection = { kind: null, id: null, segIndex: null };
+          clearSelection();
           normalizeAllWires();
           unifyInlineWires();
           redraw();
@@ -1473,7 +1538,7 @@ import {
     g.style.pointerEvents = (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction') ? 'none' : 'auto';
     
     // Set cursor style based on mode and selection
-    if (mode === 'move' && selection.kind === 'component' && selection.id === c.id) {
+    if (mode === 'move' && isSelected('component', c.id)) {
       g.style.cursor = 'move';
     } else if (mode === 'select') {
       g.style.cursor = 'pointer';
@@ -1489,16 +1554,31 @@ import {
       // If no action is active, automatically activate Select mode when
       // the user clicks a component so the click behaves like a selection.
       if (mode === 'none') { setMode('select'); }
-      // If Select mode is active and this component is already selected,
-      // interpret the click as intent to move the component: switch to Move.
-      if (mode === 'select' && selection.kind === 'component' && selection.id === c.id) {
-        setMode('move');
-      }
+      
       if (!(mode === 'select' || mode === 'move')) return;
       if (e.button !== 0) return;
-      // persist selection until user clicks elsewhere
-      selection = { kind: 'component', id: c.id, segIndex: null };
-      renderInspector(); Rendering.updateSelectionOutline(selection);
+      
+      // Handle shift-click for multi-select
+      if (e.shiftKey) {
+        toggleSelection('component', c.id, null);
+        renderInspector(); 
+        Rendering.updateSelectionOutline(selection);
+        e.stopPropagation();
+        return; // Don't drag or switch to move mode with shift-click
+      }
+      
+      // If Select mode is active and this component is already selected,
+      // interpret the click as intent to move the component: switch to Move.
+      const firstSel = getFirstSelection();
+      if (mode === 'select' && firstSel && firstSel.kind === 'component' && firstSel.id === c.id) {
+        setMode('move');
+      }
+      
+      // Regular click: select single item (clear multi-select)
+      selectSingle('component', c.id, null);
+      renderInspector(); 
+      Rendering.updateSelectionOutline(selection);
+      
       // If switching to a different component while in Move mode, finalize the prior SWP first.
       if (mode === 'move' && moveCollapseCtx && moveCollapseCtx.kind === 'swp' && lastMoveCompId && lastMoveCompId !== c.id) {
         ensureFinishSwpMove();
@@ -2114,7 +2194,7 @@ import {
         
         e.stopPropagation(); // Prevent component selection
         e.preventDefault(); // Prevent text selection
-        selection = { kind: 'label', id: c.id, segIndex: null };
+        selectSingle('label', c.id, null);
         renderInspector(); 
         Rendering.updateSelectionOutline(selection);
         
@@ -2184,7 +2264,7 @@ import {
         
         e.stopPropagation(); // Prevent component selection
         e.preventDefault(); // Prevent text selection
-        selection = { kind: 'value', id: c.id, segIndex: null };
+        selectSingle('value', c.id, null);
         renderInspector();
         Rendering.updateSelectionOutline(selection);
         
@@ -2290,8 +2370,17 @@ import {
       const vis = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
       vis.setAttribute('class', 'wire-stroke');
       vis.setAttribute('fill', 'none');
-      vis.setAttribute('stroke', rgba01ToCss(eff.color));
-      vis.setAttribute('stroke-width', String(mmToPx(eff.width))); // default 0.25mm -> 1px
+      
+      // Apply selection highlighting if this wire is selected
+      const wireSelected = isSelected('wire', w.id);
+      if (wireSelected) {
+        vis.setAttribute('stroke', 'var(--accent)');
+        vis.setAttribute('stroke-width', '3');
+      } else {
+        vis.setAttribute('stroke', rgba01ToCss(eff.color));
+        vis.setAttribute('stroke-width', String(mmToPx(eff.width))); // default 0.25mm -> 1px
+      }
+      
       vis.setAttribute('stroke-linecap', 'butt');
       vis.setAttribute('stroke-linejoin', 'miter');
       const dashes = dashArrayFor(eff.type);
@@ -2313,7 +2402,7 @@ import {
       hit.setAttribute('points', vis.getAttribute('points')); // IMPORTANT: give the hit polyline geometry
       
       // Set cursor style based on mode and selection
-      if (mode === 'move' && selection.kind === 'wire' && selection.id === w.id) {
+      if (mode === 'move' && isSelected('wire', w.id)) {
         hit.style.cursor = 'move';
       } else if (mode === 'select') {
         hit.style.cursor = 'pointer';
@@ -2325,23 +2414,36 @@ import {
       hit.addEventListener('pointerenter', () => { if (allowHits) vis.classList.add('hover'); });
       hit.addEventListener('pointerleave', () => { if (allowHits) vis.classList.remove('hover'); });
       hit.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return; // Only handle left mouse button
+        
         if (mode === 'delete') { 
           removeWireAtPoint(w, svgPoint(e));
         }
         else {
           if (mode === 'none') { setMode('select'); }
           
-          // If in Select mode and this wire is already selected, switch to Move mode
-          if (mode === 'select' && selection.kind === 'wire' && selection.id === w.id) {
-            setMode('move');
-          }
-          
           if (mode === 'select' || mode === 'move') {
-            // Select by wire (segment) id only; legacy segIndex is no longer required.
+            // Handle shift-click for multi-select
+            if (e.shiftKey) {
+              toggleSelection('wire', w.id, null);
+              renderInspector();
+              redraw();
+              e.stopPropagation();
+              return; // Don't drag or switch to move mode with shift-click
+            }
+            
+            // If in Select mode and this wire is already selected, switch to Move mode
+            const firstSel = getFirstSelection();
+            if (mode === 'select' && firstSel && firstSel.kind === 'wire' && firstSel.id === w.id) {
+              setMode('move');
+            }
+            
+            // Regular click: select single item (clear multi-select)
             selecting('wire', w.id, null);
             
             // If in move mode and selected, initiate wire drag
-            if (mode === 'move' && selection.kind === 'wire' && selection.id === w.id) {
+            const currentSel = getFirstSelection();
+            if (mode === 'move' && currentSel && currentSel.kind === 'wire' && currentSel.id === w.id) {
               const p0 = { x: snapToBaseScalar(w.points[0].x), y: snapToBaseScalar(w.points[0].y) };
               const p1 = { x: snapToBaseScalar(w.points[w.points.length - 1].x), y: snapToBaseScalar(w.points[w.points.length - 1].y) };
               
@@ -2551,7 +2653,7 @@ import {
       // Wire endpoint markers removed - drawn centrally to avoid duplicates
 
       // persistent selection highlight for the selected wire segment
-      if (selection.kind === 'wire' && selection.id === w.id) {
+      if (isSelected('wire', w.id)) {
         if (w.points.length >= 2) {
           const a = w.points[0], b = w.points[w.points.length - 1];
           const selSeg = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -2613,13 +2715,13 @@ import {
         // Add click handler to select junction
         dot.addEventListener('pointerdown', (e) => {
           if (mode === 'select' || mode === 'move') {
-            selection = { kind: 'junction', id: j.id, segIndex: null };
+            selectSingle('junction', j.id, null);
             renderInspector();
             Rendering.updateSelectionOutline(selection);
             e.stopPropagation();
           } else if (mode === 'none') {
             setMode('select');
-            selection = { kind: 'junction', id: j.id, segIndex: null };
+            selectSingle('junction', j.id, null);
             renderInspector();
             Rendering.updateSelectionOutline(selection);
             e.stopPropagation();
@@ -2695,7 +2797,7 @@ import {
             }
             ev.preventDefault(); ev.stopPropagation();
             if (mode === 'select') {
-              if (wid) { selection = { kind: 'wire', id: wid, segIndex: null }; renderInspector(); Rendering.updateSelectionOutline(selection); }
+              if (wid) { selectSingle('wire', wid, null); renderInspector(); Rendering.updateSelectionOutline(selection); }
               return;
             }
             if (!ep) return;
@@ -2733,7 +2835,7 @@ import {
               breakWiresForComponent(comp);
               if (isTwoPinType(placeType)) deleteBridgeBetweenPins(comp);
               setMode('select'); placeType = null;
-              selection = { kind: 'component', id, segIndex: null };
+              selectSingle('component', id, null);
               redraw();
             }
           });
@@ -2775,7 +2877,7 @@ import {
             }
             ev.preventDefault(); ev.stopPropagation();
             if (mode === 'select') {
-              if (cid) { selection = { kind: 'component', id: cid, segIndex: null }; renderInspector(); Rendering.updateSelectionOutline(selection); }
+              if (cid) { selectSingle('component', cid, null); renderInspector(); Rendering.updateSelectionOutline(selection); }
               return;
             }
             if (!ep) return;
@@ -2813,7 +2915,7 @@ import {
               breakWiresForComponent(comp);
               if (isTwoPinType(placeType)) deleteBridgeBetweenPins(comp);
               setMode('select'); placeType = null;
-              selection = { kind: 'component', id, segIndex: null };
+              selectSingle('component', id, null);
               redraw();
             }
           });
@@ -2907,15 +3009,17 @@ import {
   function selecting(kind, id, segIndex = null) {
     // If we're in Move mode and have a collapsed SWP, finalize it when switching away
     // from the current component (or to a non-component selection).
-    if (mode === 'move' && moveCollapseCtx && selection.kind === 'component') {
-      const prevId = selection.id;
+    const firstSel = getFirstSelection();
+    if (mode === 'move' && moveCollapseCtx && firstSel && firstSel.kind === 'component') {
+      const prevId = firstSel.id;
       if (kind !== 'component' || id !== prevId) {
         ensureFinishSwpMove();
       }
     }
     // Normalize segIndex: legacy callers may pass undefined; prefer null for clarity.
     const si = Number.isInteger(segIndex) ? segIndex : null;
-    selection = { kind, id, segIndex: si };
+    // Use new helper function to select single item
+    selectSingle(kind, id, si);
     // If we're in Move mode and a component is now selected, collapse its SWP immediately.
     if (mode === 'move' && kind === 'component') {
       ensureCollapseForSelection();
@@ -2967,7 +3071,7 @@ import {
       }
     }
     components = components.filter(c => c.id !== id);
-    if (selection.id === id) selection = { kind: null, id: null, segIndex: null };
+    if (isSelected('component', id)) removeFromSelection('component', id);
     normalizeAllWires();
     unifyInlineWires();
     redraw();
@@ -2980,7 +3084,7 @@ import {
       removeJunctionsAtWireEndpoints(w);
       pushUndo();
       wires = wires.filter(x => x.id !== w.id);
-      selection = { kind: null, id: null, segIndex: null };
+      clearSelection();
       
       // Clear wireStretchState if the deleted wire was being tracked (or was created by stretching)
       if (wireStretchState) {
@@ -3017,7 +3121,7 @@ import {
     const R = Geometry.normalizedPolylineOrNull(right);
     if (L) wires.push({ id: State.uid('wire'), points: L, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
     if (R) wires.push({ id: State.uid('wire'), points: R, color: w.color, stroke: w.stroke ? { ...w.stroke } : undefined });
-    if (selection.id === w.id) selection = { kind: null, id: null, segIndex: null };
+    if (isSelected('wire', w.id)) removeFromSelection('wire', w.id);
     normalizeAllWires();
     unifyInlineWires();
     redraw();
@@ -3073,6 +3177,7 @@ import {
   function beginMarqueeAt(p, startedOnEmpty, preferComponents) {
     marquee.active = true; marquee.start = p; marquee.end = p; marquee.startedOnEmpty = !!startedOnEmpty;
     marquee.shiftPreferComponents = !!preferComponents;
+    marquee.shiftCrossingMode = !!preferComponents; // Shift enables crossing mode selection
     if (marquee.rectEl) marquee.rectEl.remove();
     marquee.rectEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     marquee.rectEl.setAttribute('class', 'marquee');
@@ -3094,84 +3199,99 @@ import {
     const movedEnough = (Math.abs(r.w) > 2 || Math.abs(r.h) > 2);
     // remove rect
     marquee.rectEl?.remove(); marquee.rectEl = null;
+    const wasShiftMode = marquee.shiftCrossingMode;
     marquee.active = false;
+    
     // If it wasn't really a drag, treat it as a normal empty click
     if (!movedEnough) {
       if (marquee.startedOnEmpty) {
-        selection = { kind: null, id: null, segIndex: null };
+        clearSelection();
         redraw();
       }
       return false;
     }
-    // Build candidates once
-    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-    const segs = [];
+    
+    // Collect all items in/crossing the marquee rectangle
+    const selectedItems: SelectionItem[] = [];
+    
+    // Check wires - either fully inside or crossing boundary
     for (const w of wires) {
+      // For wires, we check if any segment is in/crossing the rectangle
+      let wireSelected = false;
       for (let i = 0; i < w.points.length - 1; i++) {
         const a = w.points[i], b = w.points[i + 1];
-        if (segmentIntersectsRect(a, b, r)) {
-          const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-          const d2 = (mx - cx) * (mx - cx) + (my - cy) * (my - cy);
-          segs.push({ w, idx: i, d2 });
+        
+        if (wasShiftMode) {
+          // Shift mode: select if crossing boundary
+          if (segmentIntersectsRect(a, b, r)) {
+            wireSelected = true;
+            break;
+          }
+        } else {
+          // Normal mode: select if fully inside (both endpoints inside)
+          if (inRect(a, r) && inRect(b, r)) {
+            wireSelected = true;
+            break;
+          }
         }
       }
-    }
-    const comps = [];
-    for (const c of components) {
-      if (inRect({ x: c.x, y: c.y }, r)) {
-        const d2 = (c.x - cx) * (c.x - cx) + (c.y - cy) * (c.y - cy);
-        comps.push({ c, d2 });
+      
+      if (wireSelected && !isSelected('wire', w.id)) {
+        selectedItems.push({ kind: 'wire', id: w.id, segIndex: null });
       }
     }
-    const juncs = [];
-    for (let i = 0; i < junctions.length; i++) {
-      const j = junctions[i];
+    
+    // Check components - center point must be inside for normal mode, any pin inside for crossing mode
+    for (const c of components) {
+      let compSelected = false;
+      
+      if (wasShiftMode) {
+        // Shift mode: select if any pin crosses boundary or is inside
+        const pins = Components.compPinPositions(c);
+        for (const pin of pins) {
+          if (inRect(pin, r)) {
+            compSelected = true;
+            break;
+          }
+        }
+      } else {
+        // Normal mode: select if center is fully inside
+        if (inRect({ x: c.x, y: c.y }, r)) {
+          compSelected = true;
+        }
+      }
+      
+      if (compSelected && !isSelected('component', c.id)) {
+        selectedItems.push({ kind: 'component', id: c.id, segIndex: null });
+      }
+    }
+    
+    // Check junctions - point must be inside
+    for (const j of junctions) {
       // Skip suppressed junctions (invisible markers)
       if (j.suppressed) continue;
-      if (inRect(j.at, r)) {
-        const d2 = (j.at.x - cx) * (j.at.x - cx) + (j.at.y - cy) * (j.at.y - cy);
-        juncs.push({ j, d2 });
+      
+      if (inRect(j.at, r) && !isSelected('junction', j.id)) {
+        selectedItems.push({ kind: 'junction', id: j.id, segIndex: null });
       }
     }
-    // Decide priority based on Shift during drag
-    const preferComponents = !!marquee.shiftPreferComponents;
-    if (preferComponents) {
-      // Shift-drag priority: junctions > components > wires
-      if (juncs.length) {
-        juncs.sort((u, v) => u.d2 - v.d2);
-        selection = { kind: 'junction', id: juncs[0].j.id, segIndex: null };
-        redraw(); 
-        return true;
+    
+    // If no items found, clear selection (unless started on empty and no drag)
+    if (selectedItems.length === 0) {
+      if (!marquee.startedOnEmpty) {
+        // Keep existing selection if we didn't start on empty space
+        redraw();
+        return false;
       }
-      if (comps.length) {
-        comps.sort((u, v) => u.d2 - v.d2);
-        selection = { kind: 'component', id: comps[0].c.id, segIndex: null };
-        redraw(); return true;
-      }
-      if (segs.length) {
-        segs.sort((u, v) => u.d2 - v.d2);
-        const pick = segs[0];
-        selection = { kind: 'wire', id: pick.w.id, segIndex: null };
-        redraw(); return true;
-      }
-    } else {
-      // Normal drag priority: wires > components (junctions not selected without shift)
-      if (segs.length) {
-        segs.sort((u, v) => u.d2 - v.d2);
-        const pick = segs[0];
-        selection = { kind: 'wire', id: pick.w.id, segIndex: null };
-        redraw(); return true;
-      }
-      if (comps.length) {
-        comps.sort((u, v) => u.d2 - v.d2);
-        selection = { kind: 'component', id: comps[0].c.id, segIndex: null };
-        redraw(); return true;
-      }
+      clearSelection();
+      redraw();
+      return false;
     }
-    // Nothing hit: clear selection
-    selection = { kind: null, id: null, segIndex: null };
+    
+    // Update selection - replace current selection with marquee selection
+    selection.items = selectedItems;
     redraw();
-    return false;
+    return true;
   }
 
   function breakWiresForComponent(c) {
@@ -3888,7 +4008,7 @@ import {
       const len = Math.hypot(w.points[1].x - w.points[0].x, w.points[1].y - w.points[0].y);
       if (len < 5) {
         wires = wires.filter(wire => wire.id !== w.id);
-        selection = { kind: null, id: null, segIndex: null };
+        clearSelection();
       }
       
       // Normalize and clean up
@@ -4187,7 +4307,7 @@ import {
               gDrawing.appendChild(dot);
               
               setMode('move');
-              selection = { kind: null, id: null, segIndex: null }; // Don't select the wire so endpoint remains visible
+              clearSelection(); // Don't select the wire so endpoint remains visible
               e.stopPropagation();
               e.preventDefault();
               return;
@@ -4197,14 +4317,14 @@ import {
       }
       
       if (mode === 'move' && e.button === 0 && !onComp && !onWire && !onJunction && !onEndpoint) {
-        selection = { kind: null, id: null, segIndex: null };
+        clearSelection();
         setMode('select');
         renderInspector(); redraw();
         return;
       }
       // If in none mode with something selected, clicking empty space should deselect
-      if (mode === 'none' && e.button === 0 && !onComp && !onWire && !onJunction && !onEndpoint && selection.kind) {
-        selection = { kind: null, id: null, segIndex: null };
+      if (mode === 'none' && e.button === 0 && !onComp && !onWire && !onJunction && !onEndpoint && !isSelectionEmpty()) {
+        clearSelection();
         renderInspector(); redraw();
         return;
       }
@@ -4304,7 +4424,7 @@ import {
       deleteBridgeBetweenPins(comp);
       setMode('select');
       placeType = null;
-      selection = { kind: 'component', id, segIndex: null };
+      selectSingle('component', id, null);
       redraw();
       return;
     }
@@ -4963,10 +5083,11 @@ import {
     }
 
     // Update coordinate display and input boxes when placing wire, components, or moving
-    if (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction' || (mode === 'move' && selection.kind === 'component')) {
+    const firstSel = getFirstSelection();
+    if (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction' || (mode === 'move' && firstSel && firstSel.kind === 'component')) {
       // For move mode, show component's current position
-      if (mode === 'move' && selection.kind === 'component') {
-        const comp = components.find(c => c.id === selection.id);
+      if (mode === 'move' && firstSel && firstSel.kind === 'component') {
+        const comp = components.find(c => c.id === firstSel.id);
         if (comp) {
           updateCoordinateDisplay(comp.x, comp.y);
           updateCoordinateInputs(comp.x, comp.y);
@@ -5011,7 +5132,7 @@ import {
       const len = Math.hypot(w.points[1].x - w.points[0].x, w.points[1].y - w.points[0].y);
       if (len < 5) {
         wires = wires.filter(wire => wire.id !== w.id);
-        selection = { kind: null, id: null, segIndex: null };
+        clearSelection();
       }
       
       // Normalize and clean up
@@ -5193,8 +5314,9 @@ import {
         return;
       }
       // If already in 'none', fallback to clearing selection if present.
-      if (selection.kind === 'component' || selection.kind === 'wire') {
-        selection = { kind: null, id: null, segIndex: null };
+      const firstSel = getFirstSelection();
+      if (firstSel && (firstSel.kind === 'component' || firstSel.kind === 'wire')) {
+        clearSelection();
         renderInspector(); redraw();
       }
     }
@@ -5213,15 +5335,16 @@ import {
       rotateSelected();
     }
     if (e.key === 'Delete') {
-      if (selection.kind === 'component') { removeComponent(selection.id); }
-      if (selection.kind === 'wire') {
+      const delSel = getFirstSelection();
+      if (delSel && delSel.kind === 'component') { removeComponent(delSel.id); }
+      if (delSel && delSel.kind === 'wire') {
         // Per-segment model: each segment is its own Wire object. Delete the selected segment wire.
-        const w = wires.find(x => x.id === selection.id);
+        const w = wires.find(x => x.id === delSel.id);
         if (w) {
           removeJunctionsAtWireEndpoints(w);
           pushUndo();
           wires = wires.filter(x => x.id !== w.id);
-          selection = { kind: null, id: null, segIndex: null };
+          clearSelection();
           normalizeAllWires();
           unifyInlineWires();
           redraw();
@@ -5231,13 +5354,14 @@ import {
       }
     }
     // Arrow-key move when component, label, or value is selected
-    if ((selection.kind === 'component' || selection.kind === 'label' || selection.kind === 'value') && e.key.startsWith('Arrow')) {
+    const arrowSel = getFirstSelection();
+    if (arrowSel && (arrowSel.kind === 'component' || arrowSel.kind === 'label' || arrowSel.kind === 'value') && e.key.startsWith('Arrow')) {
       // If in Select mode, automatically switch to Move mode
       if (mode === 'select') {
         setMode('move');
         // Show coordinate inputs immediately after switching to Move mode (only for components)
-        if (selection.kind === 'component') {
-          const comp = components.find(c => c.id === selection.id);
+        if (arrowSel.kind === 'component') {
+          const comp = components.find(c => c.id === arrowSel.id);
           if (comp) {
             updateCoordinateDisplay(comp.x, comp.y);
             updateCoordinateInputs(comp.x, comp.y);
@@ -5267,9 +5391,9 @@ import {
         e.preventDefault();
         
         // Move label or value text (update offsets)
-        if (selection.kind === 'label' || selection.kind === 'value') {
+        if (arrowSel.kind === 'label' || arrowSel.kind === 'value') {
           pushUndo();
-          const comp = components.find(c => c.id === selection.id);
+          const comp = components.find(c => c.id === arrowSel.id);
           if (comp) {
             // Transform delta to component's local coordinate system (inverse rotation)
             const radians = -(comp.rot * Math.PI / 180);
@@ -5278,10 +5402,10 @@ import {
             const localDx = dx * cos - dy * sin;
             const localDy = dx * sin + dy * cos;
             
-            if (selection.kind === 'label') {
+            if (arrowSel.kind === 'label') {
               comp.labelOffsetX = (comp.labelOffsetX || 0) + localDx;
               comp.labelOffsetY = (comp.labelOffsetY || 0) + localDy;
-            } else if (selection.kind === 'value') {
+            } else if (arrowSel.kind === 'value') {
               comp.valueOffsetX = (comp.valueOffsetX || 0) + localDx;
               comp.valueOffsetY = (comp.valueOffsetY || 0) + localDy;
             }
@@ -5293,7 +5417,7 @@ import {
           // Move component
           moveSelectedBy(dx, dy);
           // Update coordinate display and inputs after move
-          const comp = components.find(c => c.id === selection.id);
+          const comp = components.find(c => c.id === arrowSel.id);
           if (comp) {
             updateCoordinateDisplay(comp.x, comp.y);
             updateCoordinateInputs(comp.x, comp.y);
@@ -5305,7 +5429,8 @@ import {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); clearAll(); }
 
     // Coordinate input activation shortcut (Ctrl+L for cartesian, Ctrl+Shift+L for polar when drawing wire)
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction' || (mode === 'move' && selection.kind === 'component'))) {
+    const ctrlLSel = getFirstSelection();
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l' && (mode === 'wire' || mode === 'place' || mode === 'place-junction' || mode === 'delete-junction' || (mode === 'move' && ctrlLSel && ctrlLSel.kind === 'component'))) {
       e.preventDefault();
       
       // Use polar input if Shift is held and we're actively drawing a wire
@@ -5513,6 +5638,30 @@ import {
       for (const p of drawing.points) {
         if (!pts.length || pts[pts.length - 1].x !== p.x || pts[pts.length - 1].y !== p.y) pts.push({ x: p.x, y: p.y });
       }
+      
+      // Filter out short segments caused by accidental mouse movements.
+      // Strategy: Keep first point, then only add subsequent points if they create
+      // a segment longer than MIN_SEGMENT_LENGTH from the last kept point.
+      const MIN_SEGMENT_LENGTH = 10;
+      if (pts.length >= 2) {
+        const filtered = [pts[0]]; // Always keep the first point
+        for (let i = 1; i < pts.length; i++) {
+          const last = filtered[filtered.length - 1];
+          const curr = pts[i];
+          const dx = curr.x - last.x;
+          const dy = curr.y - last.y;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          
+          // Keep this point if it's far enough from the last kept point,
+          // OR if it's the final point and creates any movement at all
+          if (len >= MIN_SEGMENT_LENGTH || (i === pts.length - 1 && len > 1)) {
+            filtered.push(curr);
+          }
+        }
+        pts.length = 0;
+        pts.push(...filtered);
+      }
+      
       if (pts.length >= 2) {
         pushUndo();
         // Emit per-run so only truly colinear joins adopt an existing Wire's color.
@@ -5594,8 +5743,47 @@ import {
     // KiCad-style Manhattan routing: If enabled, show Manhattan path preview for current segment
     // This takes precedence over simple ortho constraint
     if (USE_MANHATTAN_ROUTING && drawing.cursor && drawing.points.length >= 1) {
-      const start = drawing.points[drawing.points.length - 1]; // Last placed point
-      const end = drawing.cursor;
+      const cursor = drawing.cursor;
+      
+      // Check for backtracking: if we have at least 2 placed points and the cursor
+      // has moved back past the last placed point, remove that point from preview
+      let effectivePoints = [...drawing.points];
+      
+      if (effectivePoints.length >= 2) {
+        const prevPoint = effectivePoints[effectivePoints.length - 2];
+        const lastPoint = effectivePoints[effectivePoints.length - 1];
+        
+        // Determine if last segment was horizontal or vertical
+        const lastDx = Math.abs(lastPoint.x - prevPoint.x);
+        const lastDy = Math.abs(lastPoint.y - prevPoint.y);
+        
+        if (lastDx > 0.5 && lastDy < 0.5) {
+          // Last segment was horizontal
+          // Check if cursor has backtracked past prevPoint on X axis
+          const movedRight = lastPoint.x > prevPoint.x;
+          const cursorBacktracked = movedRight 
+            ? cursor.x < prevPoint.x 
+            : cursor.x > prevPoint.x;
+          
+          if (cursorBacktracked) {
+            effectivePoints.pop(); // Remove the last point that we've backtracked past
+          }
+        } else if (lastDy > 0.5 && lastDx < 0.5) {
+          // Last segment was vertical
+          // Check if cursor has backtracked past prevPoint on Y axis
+          const movedDown = lastPoint.y > prevPoint.y;
+          const cursorBacktracked = movedDown 
+            ? cursor.y < prevPoint.y 
+            : cursor.y > prevPoint.y;
+          
+          if (cursorBacktracked) {
+            effectivePoints.pop(); // Remove the last point that we've backtracked past
+          }
+        }
+      }
+      
+      const start = effectivePoints[effectivePoints.length - 1]; // Last effective point
+      const end = cursor;
       
       // Check if segment would be diagonal
       const dx = Math.abs(end.x - start.x);
@@ -5606,18 +5794,20 @@ import {
       if (dx > minDistance && dy > minDistance) {
         const mode: 'HV' | 'VH' = dx >= dy ? 'HV' : 'VH';
         const manhattanPts = manhattanPath(start, end, mode);
-        pts = [...drawing.points, ...manhattanPts.slice(1)];
+        pts = [...effectivePoints, ...manhattanPts.slice(1)];
       } else if (dx > minDistance || dy > minDistance) {
         // One dimension is dominant - show orthogonal line (snap to axis)
         if (dx >= dy) {
           // Horizontal movement dominant
-          pts = [...drawing.points, { x: end.x, y: start.y }];
+          pts = [...effectivePoints, { x: end.x, y: start.y }];
         } else {
           // Vertical movement dominant
-          pts = [...drawing.points, { x: start.x, y: end.y }];
+          pts = [...effectivePoints, { x: start.x, y: end.y }];
         }
+      } else {
+        // If both dimensions are too small, just show the effective points
+        pts = effectivePoints;
       }
-      // If both dimensions are too small, pts = drawing.points (no preview segment)
     } else if (drawing.cursor && drawing.points.length > 0 && (orthoMode || globalShiftDown) && !USE_MANHATTAN_ROUTING) {
       // Simple ortho constraint (only when Manhattan routing is disabled)
       // This prevents any non-orthogonal lines from flickering during rendering
@@ -6096,9 +6286,10 @@ import {
     const y = point.y;
     const snapPt = { x, y };
 
-    if (mode === 'move' && selection.kind === 'component') {
+    const coordSel = getFirstSelection();
+    if (mode === 'move' && coordSel && coordSel.kind === 'component') {
       // Move selected component to typed coordinates
-      const comp = components.find(c => c.id === selection.id);
+      const comp = components.find(c => c.id === coordSel.id);
       if (comp) {
         if (!overlapsAnyOtherAt(comp, snapPt.x, snapPt.y) && !pinsCoincideAnyAt(comp, snapPt.x, snapPt.y)) {
           pushUndo();
@@ -6290,8 +6481,9 @@ import {
   }
 
   function rotateSelected() {
-    if (selection.kind !== 'component') return;
-    const c = components.find(x => x.id === selection.id); if (!c) return;
+    const rotSel = getFirstSelection();
+    if (!rotSel || rotSel.kind !== 'component') return;
+    const c = components.find(x => x.id === rotSel.id); if (!c) return;
     pushUndo();
     c.rot = (c.rot + 90) % 360;
     // After rotation, if pins now cross a wire, split and remove bridge
@@ -6318,6 +6510,16 @@ import {
     const compG = (e.target as Element).closest('g.comp') as SVGGElement | null;
     if (compG) {
       const id = compG.getAttribute('data-id');
+      
+      // Handle shift-click for multi-select
+      if (e.shiftKey) {
+        toggleSelection('component', id, null);
+        renderInspector();
+        Rendering.updateSelectionOutline(selection);
+        e.stopPropagation();
+        return;
+      }
+      
       selecting('component', id);
       e.stopPropagation();
     }
@@ -7572,7 +7774,8 @@ import {
   function pinsCoincideAnyAt(c, x, y, eps = 0.75) { return Move.pinsCoincideAnyAt(createMoveContext(), c, x, y, eps); }
   function moveSelectedBy(dx, dy) { 
     // Try constraint-based movement first
-    if (USE_CONSTRAINTS && constraintSolver && selection.kind === 'component') {
+    const moveSel = getFirstSelection();
+    if (USE_CONSTRAINTS && constraintSolver && moveSel && moveSel.kind === 'component') {
       return moveComponentWithConstraints(dx, dy);
     }
     
@@ -7581,9 +7784,10 @@ import {
   }
   
   function moveComponentWithConstraints(dx: number, dy: number) {
-    if (!constraintSolver || selection.kind !== 'component') return;
+    const constraintSel = getFirstSelection();
+    if (!constraintSolver || !constraintSel || constraintSel.kind !== 'component') return;
     
-    const c = components.find(comp => comp.id === selection.id);
+    const c = components.find(comp => comp.id === constraintSel.id);
     if (!c) return;
     
     // Calculate proposed position
@@ -8709,8 +8913,9 @@ import {
   }
 
   function ensureCollapseForSelection() {
-    if (selection.kind !== 'component') return;
-    const c = components.find(x => x.id === selection.id); if (!c) return;
+    const collapseSel = getFirstSelection();
+    if (!collapseSel || collapseSel.kind !== 'component') return;
+    const c = components.find(x => x.id === collapseSel.id); if (!c) return;
     rebuildTopology();
     const sid = swpIdForComponent(c);
     if (!sid) return;

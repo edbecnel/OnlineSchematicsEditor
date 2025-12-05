@@ -232,13 +232,14 @@ export function setMode(ctx, m, updateOrthoButtonVisual) {
     document.body.classList.remove('mode-select', 'mode-wire', 'mode-delete', 'mode-place', 'mode-pan', 'mode-move', 'mode-place-junction', 'mode-delete-junction');
     document.body.classList.add(`mode-${m}`);
     // If user switches to Delete with an active selection, apply delete immediately
-    if (m === 'delete' && ctx.selection.kind) {
-        if (ctx.selection.kind === 'component') {
-            ctx.removeComponent(ctx.selection.id);
+    const firstSel = ctx.selection.items[0];
+    if (m === 'delete' && firstSel) {
+        if (firstSel.kind === 'component') {
+            ctx.removeComponent(firstSel.id);
             return;
         }
-        if (ctx.selection.kind === 'wire') {
-            const w = ctx.wires.find((x) => x.id === ctx.selection.id);
+        if (firstSel.kind === 'wire') {
+            const w = ctx.wires.find((x) => x.id === firstSel.id);
             if (w) {
                 ctx.removeJunctionsAtWireEndpoints(w);
                 ctx.pushUndo();
@@ -246,7 +247,7 @@ export function setMode(ctx, m, updateOrthoButtonVisual) {
                 const idx = wires.indexOf(w);
                 if (idx >= 0)
                     wires.splice(idx, 1);
-                ctx.selection = { kind: null, id: null, segIndex: null };
+                ctx.selection.items = [];
                 ctx.normalizeAllWires();
                 ctx.unifyInlineWires();
                 ctx.redraw();
@@ -268,10 +269,11 @@ export function setMode(ctx, m, updateOrthoButtonVisual) {
 }
 // Rotate selected component
 export function rotateSelected(ctx) {
-    if (ctx.selection.kind !== 'component')
+    const firstSel = ctx.selection.items[0];
+    if (!firstSel || firstSel.kind !== 'component')
         return;
     const components = ctx.components;
-    const c = components.find((x) => x.id === ctx.selection.id);
+    const c = components.find((x) => x.id === firstSel.id);
     if (!c)
         return;
     ctx.pushUndo();

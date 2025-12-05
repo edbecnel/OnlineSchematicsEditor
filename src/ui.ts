@@ -1,7 +1,7 @@
 // ui.ts - UI controls, mode management, and toolbar handlers
 // Handles editor modes, grid/snap/ortho/crosshair toggles, theme switching, and UI state
 
-import type { EditorMode, DiodeSubtype, CapacitorSubtype, ResistorStyle, GridMode, SnapMode } from './types.js';
+import type { EditorMode, DiodeSubtype, CapacitorSubtype, ResistorStyle, GridMode, SnapMode, Selection } from './types.js';
 
 // Context interface for UI operations
 export interface UIContext {
@@ -17,7 +17,7 @@ export interface UIContext {
   diodeSubtype: DiodeSubtype;
   capacitorSubtype: CapacitorSubtype;
   defaultResistorStyle: ResistorStyle;
-  selection: { kind: string | null; id: string | null; segIndex: number | null };
+  selection: Selection;
   endpointOverrideActive: boolean;
   shiftOrthoVisualActive: boolean;
   connectionHint: any;
@@ -295,20 +295,21 @@ export function setMode(ctx: UIContext, m: EditorMode, updateOrthoButtonVisual: 
   document.body.classList.add(`mode-${m}`);
 
   // If user switches to Delete with an active selection, apply delete immediately
-  if (m === 'delete' && ctx.selection.kind) {
-    if (ctx.selection.kind === 'component') {
-      ctx.removeComponent(ctx.selection.id);
+  const firstSel = ctx.selection.items[0];
+  if (m === 'delete' && firstSel) {
+    if (firstSel.kind === 'component') {
+      ctx.removeComponent(firstSel.id);
       return;
     }
-    if (ctx.selection.kind === 'wire') {
-      const w = (ctx as any).wires.find((x: any) => x.id === ctx.selection.id);
+    if (firstSel.kind === 'wire') {
+      const w = (ctx as any).wires.find((x: any) => x.id === firstSel.id);
       if (w) {
         ctx.removeJunctionsAtWireEndpoints(w);
         ctx.pushUndo();
         const wires = (ctx as any).wires;
         const idx = wires.indexOf(w);
         if (idx >= 0) wires.splice(idx, 1);
-        ctx.selection = { kind: null, id: null, segIndex: null };
+        ctx.selection.items = [];
         ctx.normalizeAllWires();
         ctx.unifyInlineWires();
         ctx.redraw();
@@ -333,9 +334,10 @@ export function setMode(ctx: UIContext, m: EditorMode, updateOrthoButtonVisual: 
 
 // Rotate selected component
 export function rotateSelected(ctx: UIContext): void {
-  if (ctx.selection.kind !== 'component') return;
+  const firstSel = ctx.selection.items[0];
+  if (!firstSel || firstSel.kind !== 'component') return;
   const components = (ctx as any).components;
-  const c = components.find((x: any) => x.id === ctx.selection.id);
+  const c = components.find((x: any) => x.id === firstSel.id);
   if (!c) return;
   
   ctx.pushUndo();

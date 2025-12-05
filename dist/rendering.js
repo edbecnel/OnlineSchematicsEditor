@@ -485,31 +485,39 @@ export function createEndpointCircle(pt, options) {
 // ========================================================================================
 /**
  * Update selection styling on component elements.
+ * Helper function to check if an item is selected
  */
+function isItemSelected(selection, kind, id) {
+    return selection.items.some(item => item.kind === kind && item.id === id);
+}
 export function updateSelectionOutline(selection) {
     document.querySelectorAll('#components g.comp').forEach(g => {
         const id = g.getAttribute('data-id');
-        const on = selection.kind === 'component' && selection.id === id;
+        if (!id)
+            return;
+        const on = isItemSelected(selection, 'component', id);
         g.classList.toggle('selected', !!on);
         // Highlight label or value text if selected
         const labelText = g.querySelector(`[data-label-for="${id}"]`);
         const valueText = g.querySelector(`[data-value-for="${id}"]`);
         if (labelText) {
-            const labelSelected = selection.kind === 'label' && selection.id === id;
+            const labelSelected = isItemSelected(selection, 'label', id);
             labelText.style.fill = labelSelected ? 'var(--accent)' : 'var(--ink)';
             labelText.style.fontWeight = labelSelected ? 'bold' : 'normal';
         }
         if (valueText) {
-            const valueSelected = selection.kind === 'value' && selection.id === id;
+            const valueSelected = isItemSelected(selection, 'value', id);
             valueText.style.fill = valueSelected ? 'var(--accent)' : 'var(--ink)';
             valueText.style.fontWeight = valueSelected ? 'bold' : 'normal';
         }
     });
-    // Highlight selected junction dot
+    // Highlight selected junction dots
     document.querySelectorAll('[data-junction-id]').forEach(dot => {
         const jId = dot.getAttribute('data-junction-id');
-        const isSelected = selection.kind === 'junction' && selection.id === jId;
-        if (isSelected) {
+        if (!jId)
+            return;
+        const selected = isItemSelected(selection, 'junction', jId);
+        if (selected) {
             dot.setAttribute('stroke', 'var(--accent)');
             dot.setAttribute('stroke-width', '3');
         }

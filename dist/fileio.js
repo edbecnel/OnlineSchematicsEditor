@@ -7,7 +7,7 @@ export function clearAll(ctx) {
     ctx.components.length = 0;
     ctx.wires.length = 0;
     ctx.junctions.length = 0;
-    ctx.selection = { kind: null, id: null, segIndex: null };
+    ctx.selection.items = [];
     // Cancel any in-progress wire drawing and clear overlay
     ctx.drawing.active = false;
     ctx.drawing.points = [];
@@ -218,7 +218,7 @@ export function loadFromJSON(ctx, text) {
     Object.keys(ctx.counters).forEach(k => {
         ctx.counters[k] = used[k] + 1;
     });
-    ctx.selection = { kind: null, id: null, segIndex: null };
+    ctx.selection.items = [];
     ctx.renderNetList();
     ctx.redraw();
 }

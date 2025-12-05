@@ -20,7 +20,7 @@ export let junctions: Junction[] = [];
 
 // ====== Selection State ======
 
-export let selection: Selection = { kind: null, id: null, segIndex: null };
+export let selection: Selection = { items: [] };
 
 export function setSelection(sel: Selection) {
   selection = sel;
@@ -232,7 +232,7 @@ export function clearAllState() {
   components = [];
   wires = [];
   junctions = [];
-  selection = { kind: null, id: null, segIndex: null };
+  selection = { items: [] };
   nets = new Set(['default']);
   activeNetClass = 'default';
   resetCounters();

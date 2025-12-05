@@ -117,8 +117,9 @@ export function dimNumberPx(pxVal, onCommit, pxToNm, nmToPx, formatDimForDisplay
 export function renderInspector(ctx, inspector, inspectorNone) {
     inspector.replaceChildren();
     // COMPONENT INSPECTOR
-    if (ctx.selection.kind === 'component') {
-        const c = ctx.components.find(x => x.id === ctx.selection.id);
+    const firstSel = ctx.selection.items[0];
+    if (firstSel && firstSel.kind === 'component') {
+        const c = ctx.components.find(x => x.id === firstSel.id);
         inspectorNone.style.display = c ? 'none' : 'block';
         if (!c)
             return;
@@ -286,8 +287,9 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         return;
     }
     // LABEL TEXT INSPECTOR
-    if (ctx.selection.kind === 'label') {
-        const c = ctx.components.find(x => x.id === ctx.selection.id);
+    const labelSel = ctx.selection.items[0];
+    if (labelSel && labelSel.kind === 'label') {
+        const c = ctx.components.find(x => x.id === labelSel.id);
         inspectorNone.style.display = c ? 'none' : 'block';
         if (!c)
             return;
@@ -367,8 +369,9 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         return;
     }
     // VALUE TEXT INSPECTOR
-    if (ctx.selection.kind === 'value') {
-        const c = ctx.components.find(x => x.id === ctx.selection.id);
+    const valueSel = ctx.selection.items[0];
+    if (valueSel && valueSel.kind === 'value') {
+        const c = ctx.components.find(x => x.id === valueSel.id);
         inspectorNone.style.display = c ? 'none' : 'block';
         if (!c)
             return;
@@ -446,8 +449,9 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         return;
     }
     // JUNCTION INSPECTOR
-    if (ctx.selection.kind === 'junction') {
-        const jId = ctx.selection.id;
+    const juncSel = ctx.selection.items[0];
+    if (juncSel && juncSel.kind === 'junction') {
+        const jId = juncSel.id;
         const j = ctx.junctions.find(j => j.id === jId);
         inspectorNone.style.display = j ? 'none' : 'block';
         if (!j)
@@ -765,7 +769,7 @@ export function renderInspector(ctx, inspector, inspectorNone) {
                 ctx.junctions.splice(jIdx, 1);
                 ctx.junctions.push({ id: ctx.uid('junction'), at: j.at, manual: true, suppressed: true });
             }
-            ctx.selection = { kind: null, id: null, segIndex: null };
+            ctx.selection.items = [];
             ctx.redrawCanvasOnly();
             ctx.renderInspector();
         };
@@ -774,8 +778,8 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         return;
     }
     // WIRE INSPECTOR
-    if (ctx.selection.kind === 'wire') {
-        const w = ctx.wires.find(x => x.id === ctx.selection.id);
+    if (firstSel && firstSel.kind === 'wire') {
+        const w = ctx.wires.find(x => x.id === firstSel.id);
         inspectorNone.style.display = w ? 'none' : 'block';
         if (!w)
             return;
@@ -887,7 +891,7 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
             ctx.updateWireDOM(w);
             ctx.redrawCanvasOnly();
         }
-        ctx.selection = { kind: 'wire', id: w.id, segIndex: null };
+        ctx.selection.items = [{ kind: 'wire', id: w.id, segIndex: null }];
         syncWidth();
         syncStyle();
         syncColor();
@@ -923,7 +927,7 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
         }
         ctx.updateWireDOM(w);
         ctx.redrawCanvasOnly();
-        ctx.selection = { kind: 'wire', id: w.id, segIndex: null };
+        ctx.selection.items = [{ kind: 'wire', id: w.id, segIndex: null }];
         syncWidth();
         syncStyle();
         syncColor();
@@ -990,7 +994,7 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
             w.color = ctx.rgba01ToCss(w.stroke.color);
             ctx.updateWireDOM(w);
             ctx.redrawCanvasOnly();
-            ctx.selection = { kind: 'wire', id: w.id, segIndex: null };
+            ctx.selection.items = [{ kind: 'wire', id: w.id, segIndex: null }];
         }
         else if (swp) {
             ctx.restrokeSwpSegments(swp, {
@@ -1044,7 +1048,7 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
             w.stroke.type = val;
             ctx.updateWireDOM(w);
             ctx.redrawCanvasOnly();
-            ctx.selection = { kind: 'wire', id: w.id, segIndex: null };
+            ctx.selection.items = [{ kind: 'wire', id: w.id, segIndex: null }];
         }
         else if (swp) {
             // Only change the style; do not force width to 0 when 'default' is chosen.
@@ -1229,7 +1233,7 @@ function buildColorEditor(ctx, w, swp, holder, chkCustom, syncWidth, syncStyle, 
             w.color = ctx.rgba01ToCss(w.stroke.color);
             ctx.updateWireDOM(w);
             ctx.redrawCanvasOnly();
-            ctx.selection = { kind: 'wire', id: w.id, segIndex: null };
+            ctx.selection.items = [{ kind: 'wire', id: w.id, segIndex: null }];
         }
         else if (swp) {
             ctx.restrokeSwpSegments(swp, patch);

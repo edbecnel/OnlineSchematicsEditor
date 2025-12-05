@@ -21,18 +21,39 @@ export type SnapMode = 'grid' | '50mil' | 'off';
 // ====== Selection Types ======
 
 /**
- * Selection shape. Note: legacy `segIndex` support remains for backward
+ * Single selection item. Note: legacy `segIndex` support remains for backward
  * compatibility (some UI code may still set it to `null`), but the editor now
  * treats each visible straight sub-segment as its own `Wire` (identified by
- * `wire.id`). Prefer selecting segments by `selection = { kind: 'wire', id: <wireId>, segIndex: null }`.
+ * `wire.id`). Prefer selecting segments by `{ kind: 'wire', id: <wireId>, segIndex: null }`.
  */
-export type Selection =
-  | { kind: null; id: null; segIndex: null }
+export type SelectionItem =
   | { kind: 'component'; id: string; segIndex: null }
   | { kind: 'wire'; id: string; segIndex: number | null }
   | { kind: 'label'; id: string; segIndex: null }    // component label text
   | { kind: 'value'; id: string; segIndex: null }    // component value text
   | { kind: 'junction'; id: string; segIndex: null }; // junction dot (id is stable unique identifier)
+
+/**
+ * Selection can be:
+ * - Empty (items array is empty)
+ * - Single item (items array has one element)
+ * - Multiple items (items array has multiple elements)
+ */
+export interface Selection {
+  items: SelectionItem[];
+}
+
+/**
+ * Legacy single-selection type (deprecated - kept for backwards compatibility during migration)
+ * @deprecated Use Selection with items array instead
+ */
+export type LegacySelection =
+  | { kind: null; id: null; segIndex: null }
+  | { kind: 'component'; id: string; segIndex: null }
+  | { kind: 'wire'; id: string; segIndex: number | null }
+  | { kind: 'label'; id: string; segIndex: null }
+  | { kind: 'value'; id: string; segIndex: null }
+  | { kind: 'junction'; id: string; segIndex: null };
 
 // ====== Component Types ======
 

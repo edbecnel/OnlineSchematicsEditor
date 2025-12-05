@@ -2,7 +2,7 @@
 // Handles JSON serialization, file downloads, and canvas clearing
 
 import type {
-  Component, Wire, Junction, NetClass, Theme, ResistorStyle
+  Component, Wire, Junction, NetClass, Theme, ResistorStyle, Selection
 } from './types.js';
 
 // Context interface for file I/O operations
@@ -36,7 +36,7 @@ export interface FileIOContext {
   deleteBridgeBetweenPins?: (c: Component) => void;
 
   // Selection
-  selection: { kind: string | null; id: string | number | null; segIndex: number | null };
+  selection: Selection;
 
   // Drawing state
   drawing: {
@@ -53,7 +53,7 @@ export function clearAll(ctx: FileIOContext): void {
   ctx.components.length = 0;
   ctx.wires.length = 0;
   ctx.junctions.length = 0;
-  ctx.selection = { kind: null, id: null, segIndex: null };
+  ctx.selection.items = [];
   
   // Cancel any in-progress wire drawing and clear overlay
   ctx.drawing.active = false;
@@ -287,7 +287,7 @@ export function loadFromJSON(ctx: FileIOContext, text: string): void {
     ctx.counters[k] = used[k] + 1;
   });
   
-  ctx.selection = { kind: null, id: null, segIndex: null };
+  ctx.selection.items = [];
   ctx.renderNetList();
   ctx.redraw();
 }

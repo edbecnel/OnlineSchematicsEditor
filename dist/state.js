@@ -11,7 +11,7 @@ export let components = [];
 export let wires = [];
 export let junctions = [];
 // ====== Selection State ======
-export let selection = { kind: null, id: null, segIndex: null };
+export let selection = { items: [] };
 export function setSelection(sel) {
     selection = sel;
 }
@@ -153,7 +153,7 @@ export function clearAllState() {
     components = [];
     wires = [];
     junctions = [];
-    selection = { kind: null, id: null, segIndex: null };
+    selection = { items: [] };
     nets = new Set(['default']);
     activeNetClass = 'default';
     resetCounters();
