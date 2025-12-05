@@ -112,6 +112,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     let drawing = { active: false, points: [], cursor: null };
     // ====== Constraint System ======
     let USE_CONSTRAINTS = false; // Feature flag for constraint-based movement
+    let USE_MANHATTAN_ROUTING = false; // Feature flag for KiCad-style Manhattan path routing
     let constraintSolver = null;
     // Marquee selection (click+drag rectangle) state
     let marquee = { active: false, start: null, end: null, rectEl: null, startedOnEmpty: false, shiftPreferComponents: false };
@@ -3177,6 +3178,94 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     }
     // Snap a scalar value to the base 50-mil grid in user units
     function snapToBaseScalar(v) { const b = baseSnapUser(); return Math.round(v / b) * b; }
+    // ====== Manhattan Path Helper (KiCad-style routing) ======
+    /**
+     * Generate orthogonal Manhattan path between two points.
+     * Returns array of points forming horizontal-then-vertical or vertical-then-horizontal path.
+     * @param A Start point (fixed, never moves)
+     * @param P End point (target, may be off-grid)
+     * @param mode 'HV' = horizontal first, then vertical; 'VH' = vertical first, then horizontal
+     * @returns Array of points: [A, ..., P] with 0 or 1 intermediate bend point
+     */
+    function manhattanPath(A, P, mode) {
+        // If A and P already share X or Y, only need straight segment
+        if (Math.abs(A.x - P.x) < 0.01) {
+            return [{ x: A.x, y: A.y }, { x: A.x, y: P.y }];
+        }
+        if (Math.abs(A.y - P.y) < 0.01) {
+            return [{ x: A.x, y: A.y }, { x: P.x, y: A.y }];
+        }
+        // Need a bend - create intermediate point
+        if (mode === 'HV') {
+            // Horizontal first, then vertical
+            const B = { x: P.x, y: A.y };
+            return [{ x: A.x, y: A.y }, B, { x: P.x, y: P.y }];
+        }
+        else {
+            // Vertical first, then horizontal
+            const B = { x: A.x, y: P.y };
+            return [{ x: A.x, y: A.y }, B, { x: P.x, y: P.y }];
+        }
+    }
+    /**
+     * Snap to grid or nearby object (pin, wire endpoint, junction).
+     * Object snap overrides grid snap when cursor is near a connection point.
+     * @param pos Raw cursor position in SVG user coordinates
+     * @param snapRadius Radius in SVG user units to search for nearby objects
+     * @returns Snapped point
+     */
+    function snapToGridOrObject(pos, snapRadius = 10) {
+        // Search for nearby snap objects
+        const nearby = findNearbySnapObject(pos, snapRadius);
+        if (nearby) {
+            return nearby.position;
+        }
+        // No object nearby - snap to grid
+        return { x: snap(pos.x), y: snap(pos.y) };
+    }
+    /**
+     * Find nearby snap object (pin, wire endpoint, junction) within radius.
+     * @param pos Cursor position
+     * @param radius Search radius in SVG user units
+     * @returns Snap object with position, or null if none found
+     */
+    function findNearbySnapObject(pos, radius) {
+        let nearest = null;
+        let nearestDist = radius;
+        // Check component pins
+        for (const comp of components) {
+            const pins = Components.compPinPositions(comp);
+            for (const pin of pins) {
+                const dist = Math.hypot(pin.x - pos.x, pin.y - pos.y);
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    nearest = { position: { x: pin.x, y: pin.y }, type: 'pin' };
+                }
+            }
+        }
+        // Check wire endpoints
+        for (const wire of wires) {
+            if (wire.points.length < 2)
+                continue;
+            const endpoints = [wire.points[0], wire.points[wire.points.length - 1]];
+            for (const ep of endpoints) {
+                const dist = Math.hypot(ep.x - pos.x, ep.y - pos.y);
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    nearest = { position: { x: ep.x, y: ep.y }, type: 'wireEnd' };
+                }
+            }
+        }
+        // Check junctions
+        for (const junction of junctions) {
+            const dist = Math.hypot(junction.at.x - pos.x, junction.at.y - pos.y);
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearest = { position: { x: junction.at.x, y: junction.at.y }, type: 'junction' };
+            }
+        }
+        return nearest;
+    }
     // ====== Constraint System Initialization ======
     function initConstraintSystem() {
         constraintSolver = new ConstraintSolver(snap, snapToBaseScalar);
@@ -3191,6 +3280,17 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 console.log(`Constraint system ${value ? 'ENABLED' : 'DISABLED'}`);
                 if (value) {
                     syncConstraints(); // Sync when enabling
+                }
+            }
+        });
+        // Make USE_MANHATTAN_ROUTING flag accessible from console
+        Object.defineProperty(window, 'USE_MANHATTAN_ROUTING', {
+            get() { return USE_MANHATTAN_ROUTING; },
+            set(value) {
+                USE_MANHATTAN_ROUTING = value;
+                console.log(`Manhattan routing ${value ? 'ENABLED' : 'DISABLED'}`);
+                if (drawing.active) {
+                    renderDrawing(); // Update preview if wire drawing is active
                 }
             }
         });
@@ -3994,9 +4094,13 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         if (mode === 'wire') {
             // start drawing if not active, else add point
             if (!drawing.active) {
+                // Use object snap if Manhattan routing is enabled, otherwise use standard grid snap
+                const startPoint = USE_MANHATTAN_ROUTING
+                    ? snapToGridOrObject({ x: p.x, y: p.y }, 10)
+                    : { x, y };
                 drawing.active = true;
-                drawing.points = [{ x, y }];
-                drawing.cursor = { x, y };
+                drawing.points = [startPoint];
+                drawing.cursor = startPoint;
             }
             else {
                 // Check if we clicked on an endpoint circle (during drawing)
@@ -4037,13 +4141,51 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 else {
                     // Use the cursor position which already respects ortho mode and connection hints
                     // This ensures clicks place points where the visual preview shows them
-                    nx = drawing.cursor ? drawing.cursor.x : x;
-                    ny = drawing.cursor ? drawing.cursor.y : y;
+                    if (USE_MANHATTAN_ROUTING && drawing.cursor) {
+                        // With Manhattan routing, try object snap first before using cursor position
+                        const snapped = snapToGridOrObject({ x: p.x, y: p.y }, 10);
+                        nx = snapped.x;
+                        ny = snapped.y;
+                    }
+                    else {
+                        nx = drawing.cursor ? drawing.cursor.x : x;
+                        ny = drawing.cursor ? drawing.cursor.y : y;
+                    }
                 }
-                drawing.points.push({ x: nx, y: ny });
+                // KiCad-style Manhattan routing: If enabled, check if we need to insert bend for orthogonality
+                if (USE_MANHATTAN_ROUTING && drawing.points.length >= 1) {
+                    const start = drawing.points[drawing.points.length - 1]; // Last placed point
+                    const end = { x: nx, y: ny };
+                    // Check if this segment would be diagonal (not orthogonal)
+                    const dx = Math.abs(end.x - start.x);
+                    const dy = Math.abs(end.y - start.y);
+                    const isDiagonal = dx > 0.01 && dy > 0.01; // Both X and Y differ significantly
+                    if (isDiagonal) {
+                        // Would be diagonal - insert bend to make it orthogonal
+                        const mode = dx >= dy ? 'HV' : 'VH';
+                        const manhattanPts = manhattanPath(start, end, mode);
+                        // Add intermediate bend points (skip first point which is already in drawing.points,
+                        // and skip last point which is the click position - it becomes the new cursor position)
+                        for (let i = 1; i < manhattanPts.length - 1; i++) {
+                            drawing.points.push(manhattanPts[i]);
+                        }
+                        // Add the final clicked point
+                        drawing.points.push({ x: nx, y: ny });
+                        drawing.cursor = { x: nx, y: ny };
+                    }
+                    else {
+                        // Already orthogonal - just add the point
+                        drawing.points.push({ x: nx, y: ny });
+                        drawing.cursor = { x: nx, y: ny };
+                    }
+                }
+                else {
+                    // Manhattan routing disabled or no points yet - normal behavior
+                    drawing.points.push({ x: nx, y: ny });
+                    drawing.cursor = { x: nx, y: ny };
+                }
                 // Clear connection hint after placing a point
                 connectionHint = null;
-                drawing.cursor = { x: nx, y: ny };
             }
             renderDrawing();
         }
@@ -4308,7 +4450,17 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         }
         const p = svgPoint(e);
         // Prefer anchors while wiring so cursor and added points align to endpoints/pins
-        const snapCandMove = (mode === 'wire') ? snapPointPreferAnchor({ x: p.x, y: p.y }) : { x: snap(p.x), y: snap(p.y) };
+        // When Manhattan routing is enabled, use object snap to connect to off-grid pins
+        let snapCandMove;
+        if (mode === 'wire' && USE_MANHATTAN_ROUTING) {
+            snapCandMove = snapToGridOrObject({ x: p.x, y: p.y }, 10);
+        }
+        else if (mode === 'wire') {
+            snapCandMove = snapPointPreferAnchor({ x: p.x, y: p.y });
+        }
+        else {
+            snapCandMove = { x: snap(p.x), y: snap(p.y) };
+        }
         let x = snapCandMove.x, y = snapCandMove.y;
         // Marquee update (Select mode). Track Shift to flip priority while dragging.
         if (marquee.active) {
@@ -5047,9 +5199,29 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // - each axis-aligned run becomes one wire
     // - only the run that attaches *colinear* to an existing SWP adopts that SWP's color
     // - bends (non-axis) are emitted as their own wires with the current toolbar color
+    // - UNLESS Manhattan routing is enabled, in which case keep as single polyline
     function emitRunsFromPolyline(pts) {
-        const runs = splitPolylineIntoRuns(pts);
         const curCol = resolveWireColor(currentWireColorMode);
+        // When Manhattan routing is enabled, emit as single polyline wire to avoid junctions at bends
+        if (USE_MANHATTAN_ROUTING && pts.length >= 2) {
+            const tool = strokeForNewWires();
+            const stroke = tool
+                ? { width: tool.width, type: tool.type, color: tool.color }
+                : { width: 0, type: 'default', color: cssToRGBA01(curCol) };
+            const css = rgba01ToCss(stroke.color);
+            const netId = activeNetClass;
+            // Create single wire with all points (polyline)
+            wires.push({
+                id: State.uid('wire'),
+                points: pts.map(p => ({ x: p.x, y: p.y })),
+                color: css,
+                stroke: { ...stroke, color: { ...stroke.color } },
+                netId
+            });
+            return;
+        }
+        // Original behavior: split into runs
+        const runs = splitPolylineIntoRuns(pts);
         for (const run of runs) {
             const subPts = pts.slice(run.start, run.end + 2); // include end+1 vertex
             // default/fallback stroke: use toolbar's explicit stroke when not using netclass; otherwise palette color only
@@ -5161,10 +5333,40 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         }
         if (!drawing.active)
             return;
-        let pts = drawing.cursor ? [...drawing.points, drawing.cursor] : drawing.points;
-        // Apply ortho constraint to cursor position in rendered polyline if ortho mode is active
-        // This prevents any non-orthogonal lines from flickering during rendering
-        if (drawing.cursor && drawing.points.length > 0 && (orthoMode || globalShiftDown)) {
+        // For Manhattan routing, start with just the placed points (no cursor preview by default)
+        // We'll add orthogonal preview segments below based on cursor position
+        let pts = USE_MANHATTAN_ROUTING ? drawing.points : (drawing.cursor ? [...drawing.points, drawing.cursor] : drawing.points);
+        // KiCad-style Manhattan routing: If enabled, show Manhattan path preview for current segment
+        // This takes precedence over simple ortho constraint
+        if (USE_MANHATTAN_ROUTING && drawing.cursor && drawing.points.length >= 1) {
+            const start = drawing.points[drawing.points.length - 1]; // Last placed point
+            const end = drawing.cursor;
+            // Check if segment would be diagonal
+            const dx = Math.abs(end.x - start.x);
+            const dy = Math.abs(end.y - start.y);
+            const minDistance = 0.5; // Minimum distance to consider for direction
+            // If both dimensions are significant, show Manhattan path
+            if (dx > minDistance && dy > minDistance) {
+                const mode = dx >= dy ? 'HV' : 'VH';
+                const manhattanPts = manhattanPath(start, end, mode);
+                pts = [...drawing.points, ...manhattanPts.slice(1)];
+            }
+            else if (dx > minDistance || dy > minDistance) {
+                // One dimension is dominant - show orthogonal line (snap to axis)
+                if (dx >= dy) {
+                    // Horizontal movement dominant
+                    pts = [...drawing.points, { x: end.x, y: start.y }];
+                }
+                else {
+                    // Vertical movement dominant
+                    pts = [...drawing.points, { x: start.x, y: end.y }];
+                }
+            }
+            // If both dimensions are too small, pts = drawing.points (no preview segment)
+        }
+        else if (drawing.cursor && drawing.points.length > 0 && (orthoMode || globalShiftDown) && !USE_MANHATTAN_ROUTING) {
+            // Simple ortho constraint (only when Manhattan routing is disabled)
+            // This prevents any non-orthogonal lines from flickering during rendering
             const last = drawing.points[drawing.points.length - 1];
             const cursor = drawing.cursor;
             const dx = Math.abs(cursor.x - last.x);
@@ -8095,13 +8297,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         }
                         // Check if an automatic junction already exists at this location (preserve ID and per-instance overrides)
                         const existingAuto = oldAutomaticJunctions.find(j => Math.abs(j.at.x - node.x) < 1e-3 && Math.abs(j.at.y - node.y) < 1e-3);
-                        // Add junction as MANUAL so it behaves identically to user-placed junctions
-                        // This ensures automatic junctions act as fixed connection points
+                        // Add as automatic junction (will be recreated by topology rebuild if wires change)
                         junctions.push({
                             id: existingAuto ? existingAuto.id : State.uid('junction'),
                             at: { x: node.x, y: node.y },
                             netId,
-                            manual: true, // Mark as manual so it behaves like a user-placed junction
                             size: existingAuto?.size, // preserve per-instance override if it existed, else undefined
                             color: existingAuto?.color // preserve per-instance override if it existed, else undefined
                         });

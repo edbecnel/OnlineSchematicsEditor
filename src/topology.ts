@@ -538,7 +538,21 @@ function detectJunctions(
     // 1. Two or more wires meet and at least one passes through (T-junction), OR
     // 2. Two or more wires meet at a component pin (even if all are endpoints)
     const isComponentPin = pinKeys.has(k);
-    const shouldCreateJunction = wireIds.size >= 2 && (hasMidSegment || isComponentPin);
+    let shouldCreateJunction = wireIds.size >= 2 && (hasMidSegment || isComponentPin);
+    
+    // Skip junction at bend points: if exactly 2 edges meet at 90 degrees and it's not a T-junction
+    if (shouldCreateJunction && !hasMidSegment && !isComponentPin && node.edges.size === 2) {
+      const edgeList = Array.from(node.edges).map(eid => edges.find(e => e.id === eid)).filter(e => e);
+      if (edgeList.length === 2) {
+        const e1 = edgeList[0], e2 = edgeList[1];
+        // Check if edges are perpendicular (one horizontal, one vertical)
+        const axis1 = e1!.axis, axis2 = e2!.axis;
+        if (axis1 && axis2 && axis1 !== axis2) {
+          // This is a bend point (90 degree turn) - don't create junction
+          shouldCreateJunction = false;
+        }
+      }
+    }
     
     if (shouldCreateJunction) {
       // Check if this location has been manually suppressed
