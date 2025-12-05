@@ -245,7 +245,14 @@
       <li>Click the <b>mil/mm</b> button in the status bar or press <span class="kbd">U</span> to toggle between unit systems:</li>
       <li><b>Imperial (mil):</b> Grid based on 50 mil spacing (1.27 mm). Standard for North American designs and components with 0.1" pin spacing</li>
       <li><b>Metric (mm):</b> Grid based on 0.5 mm spacing. Common for European designs and metric components</li>
-      <li><b>Auto-Snap Switch:</b> Switching units automatically changes snap mode (50mil ↔ 1mm) for convenience, but you can manually select any snap mode</li>
+      <li><b>Auto-Snap Switch:</b> Switching grid units automatically changes snap mode (50mil ↔ 1mm) for convenience, but you can manually select any snap mode</li>
+      <li><b>Auto-Display Units:</b> Switching grid units also changes display units for consistency:
+        <ul>
+          <li>Switching to metric → display units change to mm (if currently in/mils)</li>
+          <li>Switching to imperial → display units change to mils (if currently mm)</li>
+          <li>You can still manually override display units via the Units dropdown</li>
+        </ul>
+      </li>
       <li><b>Zoom Adaptive:</b> Grid spacing adjusts with zoom level:
         <ul>
           <li>Low zoom: 250 mil / 2.5 mm (coarse grid for overview)</li>

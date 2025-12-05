@@ -1330,6 +1330,19 @@ import {
         saveSnapMode();
       }
       
+      // Auto-switch display units to match grid unit system
+      if (gridUnit === 'metric' && (globalUnits === 'in' || globalUnits === 'mils')) {
+        // Switching to metric: change display units to mm
+        setGlobalUnits('mm');
+        const unitsSelect = document.getElementById('unitsSelect') as HTMLSelectElement;
+        if (unitsSelect) unitsSelect.value = 'mm';
+      } else if (gridUnit === 'imperial' && globalUnits === 'mm') {
+        // Switching to imperial: change display units to mils (more common than inches)
+        setGlobalUnits('mils');
+        const unitsSelect = document.getElementById('unitsSelect') as HTMLSelectElement;
+        if (unitsSelect) unitsSelect.value = 'mils';
+      }
+      
       // Update snap button to reflect potential mode change
       const snapBtn = document.getElementById('snapToggleBtn') as HTMLButtonElement | null;
       if (snapBtn) {
