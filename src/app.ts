@@ -1391,12 +1391,18 @@ import {
     const crosshairBtn = document.getElementById('crosshairToggleBtn') as HTMLButtonElement | null;
     function updateCrosshairButton() {
       if (!crosshairBtn) return;
-      // Full mode: outline in crosshair color (darker gray #888)
-      // Short mode: outline in lighter gray
+      // Toggle visibility of full vs short crosshair lines in the SVG
+      const fullLines = crosshairBtn.querySelectorAll('.crosshair-full');
+      const shortLines = crosshairBtn.querySelectorAll('.crosshair-short');
+      
       if (crosshairMode === 'full') {
-        crosshairBtn.style.outline = '2px solid #888';
+        fullLines.forEach(line => (line as SVGElement).style.display = '');
+        shortLines.forEach(line => (line as SVGElement).style.display = 'none');
+        crosshairBtn.classList.add('active');
       } else {
-        crosshairBtn.style.outline = '2px solid #555';
+        fullLines.forEach(line => (line as SVGElement).style.display = 'none');
+        shortLines.forEach(line => (line as SVGElement).style.display = '');
+        crosshairBtn.classList.remove('active');
       }
     }
 

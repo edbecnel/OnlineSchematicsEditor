@@ -1142,9 +1142,27 @@
             <button id="gridToggleBtn" title="Toggle Grid (G)">Grid</button>
           </div>
           <div class="status-group">
-            <button id="crosshairToggleBtn" title="Toggle Crosshair Length (X)">+</button>
-            <button id="junctionDotsBtn" title="Toggle Junction Dots">.</button>
-            <button id="trackingToggleBtn" title="Toggle Tracking (T)">- -</button>
+            <button id="crosshairToggleBtn" title="Toggle Crosshair Length (X)">
+              <svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                <line x1="8" y1="0" x2="8" y2="16" stroke="currentColor" stroke-width="1.5" class="crosshair-full"/>
+                <line x1="0" y1="8" x2="16" y2="8" stroke="currentColor" stroke-width="1.5" class="crosshair-full"/>
+                <line x1="8" y1="4" x2="8" y2="12" stroke="currentColor" stroke-width="1.5" class="crosshair-short" style="display:none;"/>
+                <line x1="4" y1="8" x2="12" y2="8" stroke="currentColor" stroke-width="1.5" class="crosshair-short" style="display:none;"/>
+              </svg>
+            </button>
+            <button id="junctionDotsBtn" title="Toggle Junction Dots">
+              <svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="8" cy="8" r="3" fill="currentColor"/>
+              </svg>
+            </button>
+            <button id="trackingToggleBtn" title="Toggle Tracking (T)">
+              <svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                <line x1="2" y1="12" x2="12" y2="12" stroke="currentColor" stroke-width="1.5"/>
+                <line x1="12" y1="12" x2="12" y2="4" stroke="#4CAF50" stroke-width="1.5" stroke-dasharray="2,2"/>
+                <circle cx="12" cy="4" r="1.5" fill="#4CAF50"/>
+                <circle cx="12" cy="12" r="1.5" fill="#4CAF50"/>
+              </svg>
+            </button>
           </div>
           <div class="status-group">
             <button id="themeToggleBtn" title="Toggle Dark/Light Theme">☀</button>
