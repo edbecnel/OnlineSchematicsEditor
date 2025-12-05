@@ -3278,15 +3278,47 @@ import {
   const isTwoPinType = (t: string) => ['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'].includes(t);
 
   // nearestSegmentAtPoint - local app-specific version that searches wires array
+  // For T-junction snapping, a segment is "near" if the point is close to the segment in the perpendicular direction
   function nearestSegmentAtPoint(p, maxDist = 18) {
     let best = null, bestD = Infinity;
+    const EPS = 0.01;
     for (const w of wires) {
       for (let i = 0; i < w.points.length - 1; i++) {
         const a = w.points[i], b = w.points[i + 1];
-        const { proj, t } = Geometry.projectPointToSegmentWithT(p, a, b);
-        if (t <= 0 || t >= 1) continue; // interior only
-        const d = Math.hypot(p.x - proj.x, p.y - proj.y);
-        if (d < bestD) { bestD = d; best = { w, idx: i, q: proj, angle: segmentAngle(a, b) }; }
+        
+        // For horizontal/vertical segments, check distance in perpendicular axis only
+        const isVertical = Math.abs(a.x - b.x) < EPS;
+        const isHorizontal = Math.abs(a.y - b.y) < EPS;
+        
+        if (isVertical) {
+          // Vertical segment: check if Y is within segment bounds and X is close
+          const minY = Math.min(a.y, b.y);
+          const maxY = Math.max(a.y, b.y);
+          if (p.y >= minY && p.y <= maxY) {
+            const d = Math.abs(p.x - a.x);
+            if (d < bestD) { 
+              bestD = d; 
+              best = { w, idx: i, q: { x: a.x, y: p.y }, angle: segmentAngle(a, b) }; 
+            }
+          }
+        } else if (isHorizontal) {
+          // Horizontal segment: check if X is within segment bounds and Y is close
+          const minX = Math.min(a.x, b.x);
+          const maxX = Math.max(a.x, b.x);
+          if (p.x >= minX && p.x <= maxX) {
+            const d = Math.abs(p.y - a.y);
+            if (d < bestD) { 
+              bestD = d; 
+              best = { w, idx: i, q: { x: p.x, y: a.y }, angle: segmentAngle(a, b) }; 
+            }
+          }
+        } else {
+          // Diagonal segment: use original projection logic
+          const { proj, t } = Geometry.projectPointToSegmentWithT(p, a, b);
+          if (t <= 0 || t >= 1) continue; // interior only
+          const d = Math.hypot(p.x - proj.x, p.y - proj.y);
+          if (d < bestD) { bestD = d; best = { w, idx: i, q: proj, angle: segmentAngle(a, b) }; }
+        }
       }
     }
     return (best && bestD <= maxDist) ? best : null;
@@ -3939,14 +3971,17 @@ import {
   }
 
   // Find nearest anchor to `pt` within thresholdPx screen pixels. Returns Point or null.
+  // For T-junction and orthogonal snapping, an anchor is "near" if it's close in EITHER X or Y axis.
   function nearestAnchorTo(pt: Point, thresholdPx = 10) {
     const anchors = collectAnchors();
     const scale = userScale();
     let best: Point | null = null; let bestD = Infinity;
     for (const a of anchors) {
-      const dx = (a.x - pt.x) * scale; const dy = (a.y - pt.y) * scale;
-      const d = Math.hypot(dx, dy);
-      if (d < bestD) { bestD = d; best = a; }
+      const dx = Math.abs(a.x - pt.x) * scale;
+      const dy = Math.abs(a.y - pt.y) * scale;
+      // Check if close in either X or Y direction (not requiring both)
+      const minAxisDist = Math.min(dx, dy);
+      if (minAxisDist < bestD) { bestD = minAxisDist; best = a; }
     }
     if (bestD <= thresholdPx) return best;
     return null;
@@ -3962,6 +3997,54 @@ import {
         bbox: (r as SVGGraphicsElement).getBBox()
       }));
     } catch (err) { }
+  }
+
+  /**
+   * Snap point for T-junction creation (used when clicking to place a wire point).
+   * When near an anchor or wire, locks to its X or Y coordinate (whichever is closer)
+   * while allowing free positioning (snapped to grid) on the perpendicular axis.
+   */
+  function snapPointForTJunction(p: Point, thresholdPx = 10) {
+    const scale = userScale();
+    
+    // First, check for anchors (wire endpoints and component pins) - these take priority
+    const a = nearestAnchorTo(p, thresholdPx);
+    if (a) {
+      // Lock to whichever axis is closer
+      const dx = Math.abs(a.x - p.x) * scale;
+      const dy = Math.abs(a.y - p.y) * scale;
+      
+      if (dx < dy) {
+        // Closer in X - lock X to anchor, snap Y to grid
+        return { x: a.x, y: snap(p.y) };
+      } else {
+        // Closer in Y - lock Y to anchor, snap X to grid
+        return { x: snap(p.x), y: a.y };
+      }
+    }
+
+    // Check for nearby wire segments to create T-junction
+    // nearestSegmentAtPoint expects threshold in user units, not screen pixels
+    // Use a larger threshold to make it easier to click on wires (18 user units is standard)
+    const seg = nearestSegmentAtPoint(p, 18);
+    if (seg && seg.q) {
+      const a = seg.w.points[seg.idx];
+      const b = seg.w.points[seg.idx + 1];
+      const EPS = 0.01; // Tolerance for axis alignment check
+      
+      // For T-junctions: adopt wire's fixed coordinate, snap the perpendicular axis
+      if (Math.abs(a.x - b.x) < EPS) {
+        // Vertical wire - adopt the wire's X coordinate, snap Y to grid
+        return { x: a.x, y: snap(p.y) };
+      } else if (Math.abs(a.y - b.y) < EPS) {
+        // Horizontal wire - adopt the wire's Y coordinate, snap X to grid
+        return { x: snap(p.x), y: a.y };
+      }
+      // Non-orthogonal wire - fall through to default behavior
+    }
+
+    // Finally, fall back to grid snapping
+    return { x: snap(p.x), y: snap(p.y) };
   }
 
   // Snap a user-space point to nearest anchor or wire segment if within threshold, else to grid via snap().
@@ -4159,9 +4242,14 @@ import {
     if (tgt && (tgt.tagName === 'rect' || tgt.tagName === 'circle') && (tgt as any).endpoint) {
       endpointClicked = (tgt as any).endpoint as Point;
     }
+    // For wire clicks: Use T-junction smart snapping to properly align with wire segments
+    // This works for both Manhattan and non-Manhattan modes - it preserves wire coordinates
+    // while snapping the perpendicular axis according to snap mode
     const snapCandDown = endpointClicked
       ? endpointClicked
-      : (mode === 'wire') ? snapPointPreferAnchor({ x: p.x, y: p.y }) : { x: snap(p.x), y: snap(p.y) };
+      : (mode === 'wire') 
+        ? snapPointForTJunction({ x: p.x, y: p.y }) 
+        : { x: snap(p.x), y: snap(p.y) };
     const x = snapCandDown.x, y = snapCandDown.y;
 
     if (mode === 'place-junction' && e.button === 0) {
@@ -4562,13 +4650,10 @@ import {
     if (mode === 'wire') {
       // start drawing if not active, else add point
       if (!drawing.active) {
-        // Use object snap if Manhattan routing is enabled, otherwise use standard grid snap
-        const startPoint = USE_MANHATTAN_ROUTING 
-          ? snapToGridOrObject({ x: p.x, y: p.y }, 10) 
-          : { x, y };
+        // Use the T-junction smart snap point (x, y) which already handles wire alignment
         drawing.active = true; 
-        drawing.points = [startPoint]; 
-        drawing.cursor = startPoint;
+        drawing.points = [{ x, y }]; 
+        drawing.cursor = { x, y };
       } else {
         // Check if we clicked on an endpoint circle (during drawing)
         const tgt = e.target as Element;
@@ -5193,8 +5278,80 @@ import {
       renderConnectionHint();
     } else {
       drawing.cursor = null;
-      connectionHint = null; // clear hint when not drawing
-      renderConnectionHint(); // clear visual hint
+      
+      // When in wire mode but not actively drawing, show connection hints when Shift is held
+      // This provides visual feedback for snapping to anchors (endpoints/pins) or wire segments
+      const isShift = (e as PointerEvent).shiftKey || globalShiftDown;
+      if (mode === 'wire' && isShift) {
+        // First check for nearby anchors (wire endpoints, component pins)
+        const snapTol = 10; // screen pixels
+        const anchor = nearestAnchorTo(p, snapTol);
+        
+        if (anchor) {
+          // Show hint from mouse position to anchor point (both orthogonally)
+          const dx = Math.abs(anchor.x - p.x);
+          const dy = Math.abs(anchor.y - p.y);
+          
+          // Show orthogonal hint line (either horizontal or vertical)
+          if (dx > 0.01 || dy > 0.01) {
+            if (dx > dy) {
+              // Horizontal hint line (lock Y to anchor)
+              connectionHint = {
+                lockedPt: { x: p.x, y: anchor.y },
+                targetPt: { x: anchor.x, y: anchor.y },
+                wasOrthoActive: false,
+                lockAxis: 'y'
+              };
+            } else {
+              // Vertical hint line (lock X to anchor)
+              connectionHint = {
+                lockedPt: { x: anchor.x, y: p.y },
+                targetPt: { x: anchor.x, y: anchor.y },
+                wasOrthoActive: false,
+                lockAxis: 'x'
+              };
+            }
+          } else {
+            connectionHint = null;
+          }
+        } else {
+          // No anchor nearby, check for wire segments (T-junction)
+          const seg = nearestSegmentAtPoint(p, 18);
+          if (seg && seg.q) {
+            const a = seg.w.points[seg.idx];
+            const b = seg.w.points[seg.idx + 1];
+            const EPS = 0.01;
+            
+            // Show hint for horizontal or vertical wires
+            if (Math.abs(a.x - b.x) < EPS) {
+              // Vertical wire - show hint snapping to wire's X, grid Y
+              connectionHint = {
+                lockedPt: { x: a.x, y: snap(p.y) },
+                targetPt: { x: a.x, y: p.y },
+                wasOrthoActive: false,
+                lockAxis: 'x'
+              };
+            } else if (Math.abs(a.y - b.y) < EPS) {
+              // Horizontal wire - show hint snapping to wire's Y, grid X
+              connectionHint = {
+                lockedPt: { x: snap(p.x), y: a.y },
+                targetPt: { x: p.x, y: a.y },
+                wasOrthoActive: false,
+                lockAxis: 'y'
+              };
+            } else {
+              connectionHint = null;
+            }
+          } else {
+            connectionHint = null;
+          }
+        }
+      } else if (!drawing.active) {
+        // Clear hint when not in wire mode or Shift not held (only when not actively drawing)
+        connectionHint = null;
+      }
+      
+      renderConnectionHint(); // render or clear visual hint
       // Clear shift visual if active
       if (shiftOrthoVisualActive) {
         shiftOrthoVisualActive = false;
@@ -6052,7 +6209,7 @@ import {
     // Remove any existing hint
     $qa<SVGElement>('[data-hint]', gOverlay).forEach(el => el.remove());
 
-    if (connectionHint && drawing.active && drawing.points.length > 0) {
+    if (connectionHint) {
       const hintLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       hintLine.setAttribute('data-hint', '1');
       hintLine.setAttribute('stroke', '#00ff00'); // bright green
@@ -6069,10 +6226,12 @@ import {
       hintLine.setAttribute('pointer-events', 'none');
       hintLine.setAttribute('opacity', '1');
 
-      // Draw from the current cursor position to the target point
-      // The cursor has been snapped to align orthogonally with the target
-      hintLine.setAttribute('x1', String(drawing.cursor.x));
-      hintLine.setAttribute('y1', String(drawing.cursor.y));
+      // Draw from the locked point (where click will place) to the target point (on the wire)
+      // Before drawing: lockedPt is the snap position, targetPt is on the wire
+      // During drawing: cursor is the snap position, targetPt is the connection target
+      const fromPt = (drawing.active && drawing.cursor) ? drawing.cursor : connectionHint.lockedPt;
+      hintLine.setAttribute('x1', String(fromPt.x));
+      hintLine.setAttribute('y1', String(fromPt.y));
       hintLine.setAttribute('x2', String(connectionHint.targetPt.x));
       hintLine.setAttribute('y2', String(connectionHint.targetPt.y));
 
