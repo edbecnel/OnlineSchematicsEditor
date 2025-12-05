@@ -90,6 +90,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // Ortho mode: when true, all wiring is forced orthogonal (persisted)
     let orthoMode = (localStorage.getItem('ortho.mode') === 'true');
     function saveOrthoMode() { localStorage.setItem('ortho.mode', orthoMode ? 'true' : 'false'); }
+    let gridUnit = localStorage.getItem('grid.unit') || 'imperial';
+    function saveGridUnit() { localStorage.setItem('grid.unit', gridUnit); }
     let snapMode = localStorage.getItem('snap.mode') || '50mil';
     function saveSnapMode() { localStorage.setItem('snap.mode', snapMode); }
     // Crosshair display mode: 'full' or 'short'
@@ -218,30 +220,53 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // Calculate grid spacing using the same algorithm as dot grid
         // This ensures line grid intersections align with dot positions
         const scale = svg.clientWidth / Math.max(1, viewW); // screen px per user unit
-        // Grid spacing must always be a multiple of the base 50 mil grid
-        // Use zoom-dependent spacing for readability
-        const baseSnapUser = nmToPx(SNAP_NM); // 50 mils = 5 user units
-        const zoomMin = 0.25, zoom1x = 10;
+        // Grid spacing depends on grid unit system (imperial vs metric)
+        let baseSnapUser;
         let snapMultiplier;
-        if (zoom <= zoomMin) {
-            snapMultiplier = 5; // 250 mils (5 * 50 mils) at low zoom
-        }
-        else if (zoom >= zoom1x) {
-            snapMultiplier = 1; // 50 mils from 10x zoom onward
+        const zoomMin = 0.25, zoom1x = 10;
+        if (gridUnit === 'metric') {
+            // Metric system: use mm-based grids
+            // Base: 0.5mm, Zoom adaptive: 2.5mm (low) → 1mm (mid) → 0.5mm (high)
+            baseSnapUser = mmToPx(0.5); // 0.5mm base grid
+            if (zoom <= zoomMin) {
+                snapMultiplier = 5; // 2.5mm at low zoom
+            }
+            else if (zoom >= zoom1x) {
+                snapMultiplier = 1; // 0.5mm from 10x zoom onward
+            }
+            else {
+                // Discrete multipliers [1, 2, 5] for intermediate zooms
+                const t = (zoom - zoomMin) / (zoom1x - zoomMin);
+                const interpolated = 5 - t * 4;
+                if (interpolated > 3)
+                    snapMultiplier = 5;
+                else if (interpolated > 1.5)
+                    snapMultiplier = 2;
+                else
+                    snapMultiplier = 1;
+            }
         }
         else {
-            // Use discrete multipliers at intermediate zooms to maintain 50 mil alignment
-            // Choose the nearest integer multiplier from [1, 2, 5]
-            const t = (zoom - zoomMin) / (zoom1x - zoomMin);
-            const interpolated = 5 - t * 4; // 5 down to 1
-            if (interpolated > 3)
-                snapMultiplier = 5;
-            else if (interpolated > 1.5)
-                snapMultiplier = 2;
-            else
-                snapMultiplier = 1;
+            // Imperial system: use mil-based grids (existing behavior)
+            baseSnapUser = nmToPx(SNAP_NM); // 50 mils = 5 user units
+            if (zoom <= zoomMin) {
+                snapMultiplier = 5; // 250 mils at low zoom
+            }
+            else if (zoom >= zoom1x) {
+                snapMultiplier = 1; // 50 mils from 10x zoom onward
+            }
+            else {
+                const t = (zoom - zoomMin) / (zoom1x - zoomMin);
+                const interpolated = 5 - t * 4;
+                if (interpolated > 3)
+                    snapMultiplier = 5;
+                else if (interpolated > 1.5)
+                    snapMultiplier = 2;
+                else
+                    snapMultiplier = 1;
+            }
         }
-        // Grid spacing in user units - always a multiple of 50 mils
+        // Grid spacing in user units
         const minorUser = baseSnapUser * snapMultiplier;
         // Major grid lines every 5 minor divisions
         const cellsPerMajor = 5;
@@ -699,6 +724,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             const gridUnits = CURRENT_SNAP_USER_UNITS || baseSnapUser();
             return Math.round(v / gridUnits) * gridUnits;
         }
+        if (snapMode === '1mm') {
+            // Snap to 1mm grid
+            const mmUnits = mmToPx(1.0);
+            return Math.round(v / mmUnits) * mmUnits;
+        }
         // Default: '50mil' mode - snap to 50-mil base grid
         const snapUnits = baseSnapUser(); // Returns 5 for 50 mil spacing
         return Math.round(v / snapUnits) * snapUnits;
@@ -1075,6 +1105,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 snapBtn.classList.add('active');
                 snapBtn.title = 'Snap mode: 50mil (S)';
             }
+            else if (snapMode === '1mm') {
+                snapBtn.textContent = '1mm';
+                snapBtn.classList.add('active');
+                snapBtn.title = 'Snap mode: 1mm (S)';
+            }
             else { // 'off'
                 snapBtn.textContent = 'Off';
                 snapBtn.classList.remove('active');
@@ -1082,8 +1117,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
         }
         function cycleSnapMode() {
-            // Cycle: 50mil → grid → off → 50mil
+            // Cycle through all modes: 50mil → 1mm → grid → off → 50mil
+            // This allows users to choose any snap mode regardless of grid unit
             if (snapMode === '50mil')
+                snapMode = '1mm';
+            else if (snapMode === '1mm')
                 snapMode = 'grid';
             else if (snapMode === 'grid')
                 snapMode = 'off';
@@ -1107,6 +1145,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             else if (snapMode === 'grid') {
                 snapK.textContent = 'grid';
             }
+            else if (snapMode === '1mm') {
+                snapK.textContent = '1mm';
+            }
             else {
                 snapK.textContent = '50mil';
             }
@@ -1125,6 +1166,80 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             if (e.key === 's' || e.key === 'S') {
                 e.preventDefault();
                 cycleSnapMode();
+            }
+        });
+    })();
+    // Grid Unit Toggle (imperial/metric)
+    (function attachGridUnitToggle() {
+        const gridUnitBtn = document.getElementById('gridUnitBtn');
+        function updateGridUnitButton() {
+            if (!gridUnitBtn)
+                return;
+            if (gridUnit === 'metric') {
+                gridUnitBtn.textContent = 'mm';
+                gridUnitBtn.title = 'Grid Units: Metric (U) - 0.5mm base';
+            }
+            else {
+                gridUnitBtn.textContent = 'mil';
+                gridUnitBtn.title = 'Grid Units: Imperial (U) - 50mil base';
+            }
+        }
+        function toggleGridUnit() {
+            gridUnit = gridUnit === 'imperial' ? 'metric' : 'imperial';
+            saveGridUnit();
+            updateGridUnitButton();
+            // Auto-switch snap mode between 50mil ↔ 1mm when switching units
+            if (gridUnit === 'metric' && snapMode === '50mil') {
+                snapMode = '1mm';
+                saveSnapMode();
+            }
+            else if (gridUnit === 'imperial' && snapMode === '1mm') {
+                snapMode = '50mil';
+                saveSnapMode();
+            }
+            // Update snap button to reflect potential mode change
+            const snapBtn = document.getElementById('snapToggleBtn');
+            if (snapBtn) {
+                const updateBtn = () => {
+                    if (snapMode === 'grid') {
+                        snapBtn.textContent = 'Grid';
+                        snapBtn.classList.add('active');
+                    }
+                    else if (snapMode === '50mil') {
+                        snapBtn.textContent = '50mil';
+                        snapBtn.classList.add('active');
+                    }
+                    else if (snapMode === '1mm') {
+                        snapBtn.textContent = '1mm';
+                        snapBtn.classList.add('active');
+                    }
+                    else {
+                        snapBtn.textContent = 'Off';
+                        snapBtn.classList.remove('active');
+                    }
+                };
+                updateBtn();
+            }
+            redrawGrid(); // Redraw grid with new unit system
+            redraw(); // Redraw canvas to apply new snapping
+            // Re-sync constraints if enabled
+            if (USE_CONSTRAINTS && constraintSolver) {
+                syncConstraints();
+            }
+        }
+        if (gridUnitBtn) {
+            gridUnitBtn.addEventListener('click', toggleGridUnit);
+            updateGridUnitButton();
+        }
+        window.addEventListener('keydown', (e) => {
+            if (e.altKey || e.ctrlKey || e.metaKey)
+                return;
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable))
+                return;
+            if (e.key === 'u' || e.key === 'U') {
+                e.preventDefault();
+                toggleGridUnit();
             }
         });
     })();
@@ -3260,9 +3375,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     function userScale() { return svg.clientWidth / Math.max(1, viewW); }
     // base snap in SVG user units corresponding to SNAP_NM (50 mils)
     function baseSnapUser() {
-        // 50 mils is always 5 user units in our coordinate system (100 px/inch DPI)
+        // Return the base snap grid spacing in user units based on grid unit system
         // This is independent of zoom - the viewBox scaling handles the visual zoom
-        return nmToPx(SNAP_NM); // Returns 5 user units for 50 mils
+        if (gridUnit === 'metric') {
+            return mmToPx(0.5); // 0.5mm for metric
+        }
+        return nmToPx(SNAP_NM); // 50 mils (5 user units) for imperial
     }
     // Snap a scalar value to the base 50-mil grid in user units
     function snapToBaseScalar(v) { const b = baseSnapUser(); return Math.round(v / b) * b; }

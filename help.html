@@ -75,13 +75,27 @@
     <h2>Modes</h2>
     <p>Click a mode button in the toolbar or use keyboard shortcuts to switch between modes:</p>
     <ul>
-      <li><b>Select (V):</b> Click components or wires to select and edit their properties</li>
+      <li><b>Select (V):</b> Click components or wires to select and edit their properties. Hold <span class="kbd">Shift</span> while clicking to select multiple items</li>
       <li><b>Wire (W):</b> Draw wires between components to create connections</li>
       <li><b>Delete (X):</b> Click components or wires to remove them</li>
       <li><b>Place (1-9):</b> Place components on the canvas</li>
       <li><b>Pan (P):</b> Drag to pan around the canvas</li>
       <li><b>Move (M):</b> Drag components to reposition them</li>
     </ul>
+
+    <h2>Multi-Selection</h2>
+    <h3>Selecting Multiple Items</h3>
+    <ul>
+      <li><b>Shift-Click:</b> Hold <span class="kbd">Shift</span> and click items to add/remove them from selection</li>
+      <li><b>Window Selection:</b> In Select mode, click and drag on empty canvas to create a selection window
+        <ul>
+          <li><b>Normal Drag:</b> Selects items completely inside the window</li>
+          <li><b>Shift-Drag:</b> Selects items crossing the window boundary (includes partially inside items)</li>
+        </ul>
+      </li>
+      <li><b>Visual Feedback:</b> All selected items are highlighted in the accent color</li>
+    </ul>
+    <p class="tip"><b>Note:</b> Multi-selection currently shows properties of the first selected item in the Inspector. Operations (move/delete/rotate) apply to the first selected item.</p>
 
     <h2>Drawing Wires</h2>
     <h3>Basic Wire Drawing</h3>
@@ -226,15 +240,31 @@
       <li><b>Status Display:</b> Current grid spacing shown in status bar updates as you zoom in/out</li>
     </ul>
 
+    <h3>Grid Unit System</h3>
+    <ul>
+      <li>Click the <b>mil/mm</b> button in the status bar or press <span class="kbd">U</span> to toggle between unit systems:</li>
+      <li><b>Imperial (mil):</b> Grid based on 50 mil spacing (1.27 mm). Standard for North American designs and components with 0.1" pin spacing</li>
+      <li><b>Metric (mm):</b> Grid based on 0.5 mm spacing. Common for European designs and metric components</li>
+      <li><b>Auto-Snap Switch:</b> Switching units automatically changes snap mode (50mil ↔ 1mm) for convenience, but you can manually select any snap mode</li>
+      <li><b>Zoom Adaptive:</b> Grid spacing adjusts with zoom level:
+        <ul>
+          <li>Low zoom: 250 mil / 2.5 mm (coarse grid for overview)</li>
+          <li>Mid zoom: 100 mil / 1 mm (medium grid for layout)</li>
+          <li>High zoom (10×+): 50 mil / 0.5 mm (fine grid for detail work)</li>
+        </ul>
+      </li>
+    </ul>
+
     <h3>Snap Modes</h3>
     <ul>
       <li>Click the <b>Snap</b> button in the status bar or press <span class="kbd">S</span> to cycle through modes:</li>
-      <li><b>50mil:</b> Always snap to the base 50 mil grid (1.27 mm) regardless of zoom — ensures proper electrical connections at standard component pin spacing</li>
-      <li><b>Grid:</b> Snap to currently visible grid lines or dots — spacing matches the Grid status (50 mil, 100 mil, or 250 mil depending on zoom level). Use this for faster rough layout at lower zoom levels.</li>
+      <li><b>50mil:</b> Always snap to 50 mil grid (1.27 mm) regardless of zoom — ensures proper electrical connections at standard component pin spacing</li>
+      <li><b>1mm:</b> Always snap to 1 mm grid regardless of zoom — metric alternative for 50mil mode</li>
+      <li><b>Grid:</b> Snap to currently visible grid lines or dots — spacing matches the Grid status and adjusts with zoom. Use this for faster rough layout at lower zoom levels</li>
       <li><b>Off:</b> No snapping — free placement anywhere for custom positioning</li>
       <li><b>Wire Segment Priority:</b> When within 50 mils of any wire, snapping automatically locks to that wire, overriding the current snap mode</li>
       <li><b>Connection Circles:</b> Green endpoint markers always connect to exact wire positions for precise connections</li>
-      <li><b>Status Display:</b> Current snap mode shown in status bar (50mil, grid, or off)</li>
+      <li><b>Status Display:</b> Current snap mode shown in status bar (50mil, 1mm, grid, or off)</li>
     </ul>
 
     <h3>Coordinate Display</h3>
@@ -404,7 +434,8 @@
     <h3>Drawing Aids (Left Section)</h3>
     <ul>
       <li><b>Ortho (O):</b> Toggle orthogonal mode for horizontal/vertical wire routing</li>
-      <li><b>Snap (S):</b> Cycle through snap modes (50mil → Grid → Off)</li>
+      <li><b>Snap (S):</b> Cycle through snap modes (50mil → 1mm → Grid → Off)</li>
+      <li><b>Units (U):</b> Toggle grid unit system (mil ↔ mm)</li>
       <li><b>Grid (G):</b> Cycle through grid display (Lines → Dots → Off)</li>
     </ul>
     
@@ -424,15 +455,14 @@
     <h3>Status Indicators (Far Right)</h3>
     <ul>
       <li><b>Mode:</b> Current editing mode (Select, Wire, Delete, etc.)</li>
-      <li><b>Grid:</b> Current spacing between visible grid lines/dots in mils. Shows one of three values:
+      <li><b>Grid:</b> Current spacing between visible grid lines/dots. Adapts based on grid unit system and zoom level:
         <ul>
-          <li><b>250 mil</b> — Zoomed out view (every 5th snap point visible)</li>
-          <li><b>100 mil</b> — Medium zoom (every 2nd snap point visible)</li>
-          <li><b>50 mil</b> — Zoomed in view (every snap point visible)</li>
+          <li><b>Imperial:</b> 250 mil (low zoom) → 100 mil (mid) → 50 mil (high zoom)</li>
+          <li><b>Metric:</b> 2.5 mm (low zoom) → 1 mm (mid) → 0.5 mm (high zoom)</li>
         </ul>
         This value indicates what spacing you'll get when using "Grid" snap mode.
       </li>
-      <li><b>Snap:</b> Current snap mode (50mil, grid, or off)</li>
+      <li><b>Snap:</b> Current snap mode (50mil, 1mm, grid, or off)</li>
     </ul>
 
     <h2>Theme &amp; Units</h2>
@@ -652,7 +682,8 @@
     <ul>
       <li><span class="kbd">R</span> — Rotate selected component 90° clockwise</li>
       <li><span class="kbd">O</span> — Toggle orthogonal mode</li>
-      <li><span class="kbd">S</span> — Cycle snap mode (50mil → Grid → Off)</li>
+      <li><span class="kbd">S</span> — Cycle snap mode (50mil → 1mm → Grid → Off)</li>
+      <li><span class="kbd">U</span> — Toggle grid unit system (mil ↔ mm)</li>
       <li><span class="kbd">G</span> — Cycle grid display (Lines → Dots → Off)</li>
       <li><span class="kbd">X</span> — Cycle crosshair style (+ → Full → Off)</li>
       <li><span class="kbd">T</span> — Toggle connection tracking on/off</li>
@@ -661,7 +692,7 @@
       <li><span class="kbd">Esc</span> — Cancel drawing / Deselect / Exit mode / Cancel coordinate input / Cancel endpoint stretch</li>
       <li><span class="kbd">Enter</span> — Finish wire drawing / Exit junction dot mode / Accept coordinate input</li>
       <li><span class="kbd">Delete</span> — Delete selected component or wire</li>
-      <li><span class="kbd">Shift</span> — Hold while wiring for temporary orthogonal mode</li>
+      <li><span class="kbd">Shift</span> — Hold while clicking to add/remove items from multi-selection; Hold while wiring for temporary orthogonal mode; Hold while dragging selection window to use crossing mode</li>
       <li><span class="kbd">Right-click</span> — Finish wire drawing / Exit junction dot mode / Cancel endpoint stretch</li>
       <li><span class="kbd">Left-click</span> — Confirm endpoint stretch position</li>
     </ul>
