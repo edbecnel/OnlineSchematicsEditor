@@ -347,14 +347,14 @@ import {
     const scale = svg.clientWidth / Math.max(1, viewW); // screen px per user unit
 
     // Grid spacing depends on grid unit system (imperial vs metric)
-    let baseSnapUser: number;
+    let baseGridUser: number;
     let snapMultiplier: number;
     const zoomMin = 0.25, zoom1x = 10;
 
     if (gridUnit === 'metric') {
       // Metric system: use mm-based grids
       // Base: 0.5mm, Zoom adaptive: 2.5mm (low) → 1mm (mid) → 0.5mm (high)
-      baseSnapUser = mmToPx(0.5); // 0.5mm base grid
+      baseGridUser = mmToPx(0.5); // 0.5mm base grid
       
       if (zoom <= zoomMin) {
         snapMultiplier = 5; // 2.5mm at low zoom
@@ -370,7 +370,7 @@ import {
       }
     } else {
       // Imperial system: use mil-based grids (existing behavior)
-      baseSnapUser = nmToPx(SNAP_NM); // 50 mils = 5 user units
+      baseGridUser = nmToPx(SNAP_NM); // 50 mils = 5 user units
       
       if (zoom <= zoomMin) {
         snapMultiplier = 5; // 250 mils at low zoom
@@ -386,7 +386,7 @@ import {
     }
 
     // Grid spacing in user units
-    const minorUser = baseSnapUser * snapMultiplier;
+    const minorUser = baseGridUser * snapMultiplier;
 
     // Major grid lines every 5 minor divisions
     const cellsPerMajor = 5;
