@@ -4227,18 +4227,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     ny = endpointData.y;
                 }
                 else {
-                    // Use the cursor position which already respects ortho mode and connection hints
-                    // This ensures clicks place points where the visual preview shows them
-                    if (USE_MANHATTAN_ROUTING && drawing.cursor) {
-                        // With Manhattan routing, try object snap first before using cursor position
-                        const snapped = snapToGridOrObject({ x: p.x, y: p.y }, 10);
-                        nx = snapped.x;
-                        ny = snapped.y;
-                    }
-                    else {
-                        nx = drawing.cursor ? drawing.cursor.x : x;
-                        ny = drawing.cursor ? drawing.cursor.y : y;
-                    }
+                    // Always use drawing.cursor position which already has connection hints,
+                    // ortho constraints, and object snapping applied from the pointermove handler.
+                    // This ensures clicks place points exactly where the visual preview shows them.
+                    nx = drawing.cursor ? drawing.cursor.x : x;
+                    ny = drawing.cursor ? drawing.cursor.y : y;
                 }
                 // KiCad-style Manhattan routing: If enabled, check if we need to insert bend for orthogonality
                 if (USE_MANHATTAN_ROUTING && drawing.points.length >= 1) {
@@ -5356,9 +5349,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     pts.push({ x: p.x, y: p.y });
             }
             // Filter out short segments caused by accidental mouse movements.
-            // Strategy: Keep first point, then only add subsequent points if they create
-            // a segment longer than MIN_SEGMENT_LENGTH from the last kept point.
-            const MIN_SEGMENT_LENGTH = 10;
+            // For Manhattan routing, we need to be more careful to preserve orthogonality
+            // while removing tiny segments from mouse jitter.
+            const MIN_SEGMENT_LENGTH = 15; // Increased threshold for better filtering
             if (pts.length >= 2) {
                 const filtered = [pts[0]]; // Always keep the first point
                 for (let i = 1; i < pts.length; i++) {
@@ -5367,10 +5360,18 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     const dx = curr.x - last.x;
                     const dy = curr.y - last.y;
                     const len = Math.sqrt(dx * dx + dy * dy);
-                    // Keep this point if it's far enough from the last kept point,
-                    // OR if it's the final point and creates any movement at all
-                    if (len >= MIN_SEGMENT_LENGTH || (i === pts.length - 1 && len > 1)) {
-                        filtered.push(curr);
+                    // For intermediate points: only keep if segment is long enough
+                    if (i < pts.length - 1) {
+                        if (len >= MIN_SEGMENT_LENGTH) {
+                            filtered.push(curr);
+                        }
+                    }
+                    else {
+                        // Last point: keep if it's far enough OR if we only have one segment total
+                        if (len >= MIN_SEGMENT_LENGTH || filtered.length === 1) {
+                            filtered.push(curr);
+                        }
+                        // If last segment is too short and we have multiple segments, drop it
                     }
                 }
                 pts.length = 0;
@@ -5454,65 +5455,86 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // This takes precedence over simple ortho constraint
         if (USE_MANHATTAN_ROUTING && drawing.cursor && drawing.points.length >= 1) {
             const cursor = drawing.cursor;
-            // Check for backtracking: if we have at least 2 placed points and the cursor
-            // has moved back past the last placed point, remove that point from preview
-            let effectivePoints = [...drawing.points];
-            if (effectivePoints.length >= 2) {
-                const prevPoint = effectivePoints[effectivePoints.length - 2];
-                const lastPoint = effectivePoints[effectivePoints.length - 1];
-                // Determine if last segment was horizontal or vertical
-                const lastDx = Math.abs(lastPoint.x - prevPoint.x);
-                const lastDy = Math.abs(lastPoint.y - prevPoint.y);
-                if (lastDx > 0.5 && lastDy < 0.5) {
-                    // Last segment was horizontal
-                    // Check if cursor has backtracked past prevPoint on X axis
-                    const movedRight = lastPoint.x > prevPoint.x;
-                    const cursorBacktracked = movedRight
-                        ? cursor.x < prevPoint.x
-                        : cursor.x > prevPoint.x;
-                    if (cursorBacktracked) {
-                        effectivePoints.pop(); // Remove the last point that we've backtracked past
-                    }
-                }
-                else if (lastDy > 0.5 && lastDx < 0.5) {
-                    // Last segment was vertical
-                    // Check if cursor has backtracked past prevPoint on Y axis
-                    const movedDown = lastPoint.y > prevPoint.y;
-                    const cursorBacktracked = movedDown
-                        ? cursor.y < prevPoint.y
-                        : cursor.y > prevPoint.y;
-                    if (cursorBacktracked) {
-                        effectivePoints.pop(); // Remove the last point that we've backtracked past
-                    }
-                }
-            }
-            const start = effectivePoints[effectivePoints.length - 1]; // Last effective point
-            const end = cursor;
-            // Check if segment would be diagonal
-            const dx = Math.abs(end.x - start.x);
-            const dy = Math.abs(end.y - start.y);
-            const minDistance = 0.5; // Minimum distance to consider for direction
-            // If both dimensions are significant, show Manhattan path
-            if (dx > minDistance && dy > minDistance) {
-                const mode = dx >= dy ? 'HV' : 'VH';
-                const manhattanPts = manhattanPath(start, end, mode);
-                pts = [...effectivePoints, ...manhattanPts.slice(1)];
-            }
-            else if (dx > minDistance || dy > minDistance) {
-                // One dimension is dominant - show orthogonal line (snap to axis)
-                if (dx >= dy) {
-                    // Horizontal movement dominant
-                    pts = [...effectivePoints, { x: end.x, y: start.y }];
-                }
-                else {
-                    // Vertical movement dominant
-                    pts = [...effectivePoints, { x: start.x, y: end.y }];
-                }
+            const lastPlaced = drawing.points[drawing.points.length - 1];
+            // Skip preview if cursor is at the same position as the last placed point
+            // This prevents duplicate overlapping segments after a click
+            const cursorAtLastPoint = Math.abs(cursor.x - lastPlaced.x) < 0.1 &&
+                Math.abs(cursor.y - lastPlaced.y) < 0.1;
+            if (cursorAtLastPoint) {
+                pts = drawing.points; // Just show the placed points, no preview
             }
             else {
-                // If both dimensions are too small, just show the effective points
-                pts = effectivePoints;
-            }
+                // Check for backtracking: if we have at least 2 placed points and the cursor
+                // has moved back past the last placed point, remove that point from preview
+                let effectivePoints = [...drawing.points];
+                if (effectivePoints.length >= 2) {
+                    const prevPoint = effectivePoints[effectivePoints.length - 2];
+                    const lastPoint = effectivePoints[effectivePoints.length - 1];
+                    // Determine if last segment was horizontal or vertical
+                    const lastDx = Math.abs(lastPoint.x - prevPoint.x);
+                    const lastDy = Math.abs(lastPoint.y - prevPoint.y);
+                    if (lastDx > 0.5 && lastDy < 0.5) {
+                        // Last segment was horizontal
+                        // Check if cursor has backtracked past prevPoint on X axis
+                        const movedRight = lastPoint.x > prevPoint.x;
+                        const cursorBacktracked = movedRight
+                            ? cursor.x < prevPoint.x
+                            : cursor.x > prevPoint.x;
+                        if (cursorBacktracked) {
+                            effectivePoints.pop(); // Remove the last point that we've backtracked past
+                        }
+                    }
+                    else if (lastDy > 0.5 && lastDx < 0.5) {
+                        // Last segment was vertical
+                        // Check if cursor has backtracked past prevPoint on Y axis
+                        const movedDown = lastPoint.y > prevPoint.y;
+                        const cursorBacktracked = movedDown
+                            ? cursor.y < prevPoint.y
+                            : cursor.y > prevPoint.y;
+                        if (cursorBacktracked) {
+                            effectivePoints.pop(); // Remove the last point that we've backtracked past
+                        }
+                    }
+                }
+                const start = effectivePoints[effectivePoints.length - 1]; // Last effective point
+                const end = cursor;
+                // Check if segment would be diagonal
+                const dx = Math.abs(end.x - start.x);
+                const dy = Math.abs(end.y - start.y);
+                const minDistance = 0.5; // Minimum distance to consider for direction
+                // If both dimensions are significant, show Manhattan path
+                if (dx > minDistance && dy > minDistance) {
+                    // Determine mode based on connection hint if active, otherwise use distance
+                    let mode;
+                    if (connectionHint) {
+                        // Connection hint is active - respect the locked axis
+                        // If Y is locked (horizontal hint), we must move horizontally first
+                        // If X is locked (vertical hint), we must move vertically first
+                        mode = connectionHint.lockAxis === 'y' ? 'HV' : 'VH';
+                    }
+                    else {
+                        // No hint - use normal distance-based logic
+                        mode = dx >= dy ? 'HV' : 'VH';
+                    }
+                    const manhattanPts = manhattanPath(start, end, mode);
+                    pts = [...effectivePoints, ...manhattanPts.slice(1)];
+                }
+                else if (dx > minDistance || dy > minDistance) {
+                    // One dimension is dominant - show orthogonal line (snap to axis)
+                    if (dx >= dy) {
+                        // Horizontal movement dominant
+                        pts = [...effectivePoints, { x: end.x, y: start.y }];
+                    }
+                    else {
+                        // Vertical movement dominant
+                        pts = [...effectivePoints, { x: start.x, y: end.y }];
+                    }
+                }
+                else {
+                    // If both dimensions are too small, just show the effective points
+                    pts = effectivePoints;
+                }
+            } // end of else block for cursorAtLastPoint check
         }
         else if (drawing.cursor && drawing.points.length > 0 && (orthoMode || globalShiftDown) && !USE_MANHATTAN_ROUTING) {
             // Simple ortho constraint (only when Manhattan routing is disabled)
