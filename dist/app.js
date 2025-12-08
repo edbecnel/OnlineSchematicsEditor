@@ -971,6 +971,14 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         }
         // Note: redraw() removed - it was destroying components during drag initialization
         // Components/wires update their pointer-events based on mode automatically
+        // Update wire hit overlay pointer-events based on new mode
+        const allowHits = (m !== 'wire' && m !== 'place' && m !== 'place-junction' && m !== 'delete-junction');
+        document.querySelectorAll('polyline[stroke-opacity="0.001"]').forEach(hit => {
+            hit.setAttribute('pointer-events', allowHits ? 'stroke' : 'none');
+        });
+        // Refresh endpoint circles visibility for the new mode
+        // When leaving Select/Move/Wire/Place modes, this removes circles.
+        updateEndpointCircles();
     }
     // Wire up Grid toggle button and shortcut (G)
     (function attachGridToggle() {
@@ -1592,6 +1600,32 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 const wAEndAtA = wireEndsAt(wA, pinA);
                 const wBEndAtB = wireEndsAt(wB, pinB);
                 if (wA.id !== wB.id && wAEndAtA !== null && wBEndAtB !== null) {
+                    // BEFORE mending, find all components on these aligned wires
+                    const axis = axisFromPins(pins0);
+                    const fixed = axis === 'x' ? pins0[0].y : pins0[0].x;
+                    const otherComponentsOnWire = [];
+                    if (axis) {
+                        // Find all components whose pins are on this wire alignment
+                        for (const comp of components) {
+                            if (comp.id === c.id)
+                                continue; // Skip the one being moved
+                            const compPins = Components.compPinPositions(comp);
+                            if (compPins.length !== 2)
+                                continue;
+                            // Check if both pins are on the same alignment
+                            const pinAxis = Math.abs(compPins[0].x - compPins[1].x) < 0.1 ? 'y' : 'x';
+                            if (pinAxis !== axis)
+                                continue;
+                            const pinFixed = axis === 'x' ? compPins[0].y : compPins[0].x;
+                            // Relax condition: include components aligned on the same axis and fixed coord
+                            // even if wiresEndingAt() later changes due to mending; we'll break at their pins
+                            const EPS_FIX = 1; // pixel tolerance for fixed coordinate match
+                            if (Math.abs(pinFixed - fixed) <= EPS_FIX) {
+                                otherComponentsOnWire.push(comp);
+                            }
+                        }
+                        // (cleaned) no-op: capture list used later via slideCtx.otherComponents
+                    }
                     // Join the wires, removing the component bridge
                     // mendWireAtPoints merges the two wires and removes the originals
                     // After this, we need to find the newly created mended wire
@@ -1600,7 +1634,6 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     // Don't call redrawCanvasOnly() here - it would destroy the component we're dragging!
                     // After mending, find ALL wire points on the same axis at the same fixed coordinate
                     // mendWireAtPoints creates multiple single-segment wires, not one polyline
-                    const axis = axisFromPins(pins0);
                     if (axis) {
                         const fixed = axis === 'x' ? pins0[0].y : pins0[0].x;
                         // Find all wire segments on this axis at this fixed coordinate
@@ -1642,7 +1675,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                                 wA: alignedWires[0],
                                 wB: alignedWires[alignedWires.length - 1],
                                 pinAStart: pins0[0],
-                                pinBStart: pins0[1]
+                                pinBStart: pins0[1],
+                                otherComponents: otherComponentsOnWire // Store components that need gaps restored
                             };
                         }
                         else {
@@ -2161,14 +2195,27 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     updateEndpointCircles();
                     return;
                 }
-                // For embedded components (slideCtx), always break wires at new position and redraw
+                // For embedded components (slideCtx), restore gaps for all components on this wire alignment
                 if (slideCtx && dragStart.embedded) {
-                    breakWiresForComponent(c);
-                    deleteBridgeBetweenPins(c);
-                    normalizeAllWires();
-                    unifyInlineWires();
-                    rebuildTopology();
-                    redraw();
+                    const componentsToBreakFor = [c];
+                    if (slideCtx.otherComponents) {
+                        componentsToBreakFor.push(...slideCtx.otherComponents);
+                    }
+                    let anyBroke = false;
+                    for (const embComp of componentsToBreakFor) {
+                        if (breakWiresForComponent(embComp))
+                            anyBroke = true;
+                        deleteBridgeBetweenPins(embComp);
+                    }
+                    if (anyBroke) {
+                        normalizeAllWires();
+                        unifyInlineWires();
+                        rebuildTopology();
+                        redraw();
+                    }
+                    else {
+                        updateComponentDOM(c);
+                    }
                     componentDragState = null;
                     dragStart = null;
                     draggedComponentId = null;
@@ -2209,10 +2256,22 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                         const finalWsB = wiresEndingAt(finalPins[1] || finalPins[0]);
                         const stillEmbedded = (finalWsA.length === 1 && finalWsB.length === 1 && finalWsA[0] && finalWsB[0]);
                         if (stillEmbedded) {
-                            // Still on wire - break wire at new position
-                            const didBreak = breakWiresForComponent(c);
-                            if (didBreak) {
-                                deleteBridgeBetweenPins(c);
+                            // Still on wire - break wire for this component AND restore gaps for other components
+                            const componentsToBreakFor = [c];
+                            if (slideCtx && slideCtx.otherComponents) {
+                                componentsToBreakFor.push(...slideCtx.otherComponents);
+                            }
+                            // Break wires for all components on this wire alignment
+                            let anyBroke = false;
+                            for (const embComp of componentsToBreakFor) {
+                                if (breakWiresForComponent(embComp))
+                                    anyBroke = true;
+                            }
+                            // Delete bridges for all components
+                            for (const embComp of componentsToBreakFor) {
+                                deleteBridgeBetweenPins(embComp);
+                            }
+                            if (anyBroke) {
                                 redraw();
                             }
                             else {
@@ -3035,32 +3094,34 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     gOverlay.appendChild(circle);
                 }
             }
-            // Component pin endpoints
-            for (const c of components) {
-                if (draggedComponentId && c.id === draggedComponentId)
-                    continue;
-                const pins = Components.compPinPositions(c);
-                for (const pin of pins) {
-                    let desiredScreenPx = 9;
-                    if (zoom <= 0.25)
-                        desiredScreenPx = 6;
-                    else if (zoom < 0.75)
-                        desiredScreenPx = 7;
-                    const scale = userScale();
-                    const widthUser = desiredScreenPx / Math.max(1e-6, scale);
-                    const circle = document.createElementNS(ns, 'circle');
-                    circle.setAttribute('data-endpoint', '1');
-                    circle.setAttribute('cx', String(pin.x));
-                    circle.setAttribute('cy', String(pin.y));
-                    circle.setAttribute('r', String(widthUser / 2));
-                    circle.setAttribute('fill', 'rgba(0,200,0,0.08)');
-                    circle.setAttribute('stroke', 'lime');
-                    circle.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
-                    circle.style.cursor = 'pointer';
-                    circle.style.pointerEvents = 'all'; // Ensure circle captures pointer events
-                    circle.endpoint = { x: pin.x, y: pin.y };
-                    circle.componentId = c.id;
-                    gOverlay.appendChild(circle);
+            // Component pin endpoints (but not in place mode - they would block component placement)
+            if (mode !== 'place') {
+                for (const c of components) {
+                    if (draggedComponentId && c.id === draggedComponentId)
+                        continue;
+                    const pins = Components.compPinPositions(c);
+                    for (const pin of pins) {
+                        let desiredScreenPx = 9;
+                        if (zoom <= 0.25)
+                            desiredScreenPx = 6;
+                        else if (zoom < 0.75)
+                            desiredScreenPx = 7;
+                        const scale = userScale();
+                        const widthUser = desiredScreenPx / Math.max(1e-6, scale);
+                        const circle = document.createElementNS(ns, 'circle');
+                        circle.setAttribute('data-endpoint', '1');
+                        circle.setAttribute('cx', String(pin.x));
+                        circle.setAttribute('cy', String(pin.y));
+                        circle.setAttribute('r', String(widthUser / 2));
+                        circle.setAttribute('fill', 'rgba(0,200,0,0.08)');
+                        circle.setAttribute('stroke', 'lime');
+                        circle.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
+                        circle.style.cursor = 'pointer';
+                        circle.style.pointerEvents = 'all'; // Ensure circle captures pointer events
+                        circle.endpoint = { x: pin.x, y: pin.y };
+                        circle.componentId = c.id;
+                        gOverlay.appendChild(circle);
+                    }
                 }
             }
         }
@@ -3398,13 +3459,51 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         redraw();
         return true;
     }
+    function findAllComponentsOnAlignedWires(targetComp) {
+        // Find all components that are embedded on the same wire alignment as targetComp
+        const pins = Components.compPinPositions(targetComp);
+        if (pins.length !== 2)
+            return [targetComp];
+        // Determine if targetComp is on horizontal or vertical wire
+        const axis = Math.abs(pins[0].x - pins[1].x) < 0.1 ? 'y' : 'x';
+        const fixed = axis === 'x' ? pins[0].y : pins[0].x;
+        // Find all wire segments on this alignment
+        const alignedWires = wires.filter(w => {
+            if (w.points.length !== 2)
+                return false;
+            const p0 = w.points[0], p1 = w.points[1];
+            if (axis === 'x')
+                return p0.y === fixed && p1.y === fixed;
+            else
+                return p0.x === fixed && p1.x === fixed;
+        });
+        if (alignedWires.length === 0)
+            return [targetComp];
+        // Find all components whose pins are on these aligned wires
+        const embeddedComps = [];
+        for (const comp of components) {
+            const compPins = Components.compPinPositions(comp);
+            if (compPins.length !== 2)
+                continue;
+            // Check if both pins are on the aligned wires
+            const wsA = wiresEndingAt(compPins[0]);
+            const wsB = wiresEndingAt(compPins[1]);
+            if (wsA.length === 1 && wsB.length === 1) {
+                // Check if these wires are in our aligned set
+                const onAligned = alignedWires.some(aw => aw.id === wsA[0].id || aw.id === wsB[0].id);
+                if (onAligned)
+                    embeddedComps.push(comp);
+            }
+        }
+        return embeddedComps;
+    }
     function breakWiresForComponent(c) {
         // Break wires at EACH connection pin (not at component center)
         // Special handling: if a wire segment has both its endpoints near component pins,
         // remove it entirely (it will be replaced by the component)
         let broke = false;
         const pins = Components.compPinPositions(c);
-        const PIN_TOLERANCE = 5; // pixels
+        const PIN_TOLERANCE = 5; // pixels;
         // Check for wire segments that span between the two pins
         if (pins.length === 2) {
             const wiresToRemove = [];
