@@ -283,6 +283,10 @@ import {
    * Clear all selection
    */
   function clearSelection() {
+    // If a SWP is collapsed for Move, finalize it when clearing selection
+    if (mode === 'move') {
+      ensureFinishSwpMove();
+    }
     selection.items = [];
   }
   
@@ -297,12 +301,12 @@ import {
   let USE_CONSTRAINTS = true; // Feature flag for constraint-based movement
   let USE_MANHATTAN_ROUTING = true; // Feature flag for KiCad-style Manhattan path routing
   let constraintSolver: ConstraintSolver | null = null;
-  const DEBUG_MOVES = true;
+  const DEBUG_MOVES = false;
   function dbg(tag: string, data?: any) {
     if (!DEBUG_MOVES) return;
     try {
-      if (data !== undefined) console.debug(`[moves] ${tag}`, data);
-      else console.debug(`[moves] ${tag}`);
+      if (data !== undefined) console.log(`[moves] ${tag}`, data);
+      else console.log(`[moves] ${tag}`);
     } catch (_) { }
   }
   // Marquee selection (click+drag rectangle) state
@@ -1355,6 +1359,23 @@ import {
     }
   })();
 
+  // Wire up Mode buttons to call setMode based on data-mode
+  (function attachModeButtons() {
+    try {
+      const modeGroup = document.getElementById('modeGroup');
+      const buttons = modeGroup ? Array.from(modeGroup.querySelectorAll('button[data-mode]')) as HTMLButtonElement[] : [];
+      for (const btn of buttons) {
+        btn.addEventListener('click', (e) => {
+          const nextMode = (btn.dataset.mode || '') as EditorMode;
+          if (nextMode) {
+            setMode(nextMode);
+          }
+          e.stopPropagation();
+        });
+      }
+    } catch (_) { }
+  })();
+
   function setMode(m: EditorMode) {
     // Finalize any active wire drawing before mode change
     if (drawing.active && drawing.points.length > 0) {
@@ -1362,7 +1383,11 @@ import {
     }
     // Finalize any active SWP move when leaving Move mode
     if (mode === 'move' && m !== 'move') {
+      dbg('mode-change', { from: mode, to: m });
+      dbg('swp:finalize-on-mode-change');
       ensureFinishSwpMove();
+      // If we were in embedded slide context (no SWP), restore gaps at the component pins.
+      finalizeEmbeddedMove('mode-change');
     }
     mode = m; overlayMode.textContent = m[0].toUpperCase() + m.slice(1);
 
@@ -1417,7 +1442,11 @@ import {
       ensureCollapseForSelection();
     } else {
       // Leaving Move mode finalizes any collapsed SWP back into segments.
+      dbg('swp:finalize-on-leave-move');
       ensureFinishSwpMove();
+      // Extra safety: finalize again on the next frame in case other handlers
+      // changed selection after this call.
+      try { requestAnimationFrame(() => ensureFinishSwpMove()); } catch (_) { setTimeout(() => ensureFinishSwpMove(), 0); }
     }
     // Note: redraw() removed - it was destroying components during drag initialization
     // Components/wires update their pointer-events based on mode automatically
@@ -1431,7 +1460,50 @@ import {
     // Refresh endpoint circles visibility for the new mode
     // When leaving Select/Move/Wire/Place modes, this removes circles.
     updateEndpointCircles();
-  }
+    }
+    // Additional functionality can be added here
+
+  // Ensure mode buttons explicitly finalize collapsed SWP when leaving Move
+  (function attachModeButtonsFinalizeGuard() {
+    try {
+      // Use a global delegated handler to catch buttons anywhere
+      document.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement | null;
+        const btn = target ? (target.closest('button[data-mode]') as HTMLButtonElement | null) : null;
+        const nextMode = btn?.dataset?.mode as EditorMode | undefined;
+        if (nextMode && mode === 'move' && nextMode !== 'move' && moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
+          dbg('swp:finalize-on-mode-button');
+          ensureFinishSwpMove();
+          // Allow the click to proceed to setMode; just ensure cleanup happened
+          try { requestAnimationFrame(() => redraw()); } catch (_) { }
+        }
+      }, true);
+
+      // Direct handler for Select button for additional certainty and logging
+      const selectBtn = document.getElementById('selectModeBtn') as HTMLButtonElement | null;
+      if (selectBtn) {
+        selectBtn.addEventListener('click', () => {
+          if (mode === 'move' && moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
+            dbg('swp:finalize-on-select-button');
+            ensureFinishSwpMove();
+            requestAnimationFrame(() => redraw());
+          }
+        }, true);
+      }
+    } catch (_) { }
+  })();
+
+  // Expose a direct helper for HTML onclick to ensure finalize + select
+  (window as any).finalizeAndSelect = () => {
+    try {
+      if (mode === 'move' && moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
+        dbg('swp:finalize-on-onclick-select');
+        ensureFinishSwpMove();
+      }
+      setMode('select');
+      requestAnimationFrame(() => redraw());
+    } catch (_) { }
+  };
 
   // Wire up Grid toggle button and shortcut (G)
   (function attachGridToggle() {
@@ -2775,6 +2847,11 @@ import {
           // Rebuild topology and redraw
           rebuildTopology();
           redraw();
+          // Ensure the gap at the component pins is restored at the new position
+          // and remove any segments that might run through the component body
+          breakWiresForComponent(c);
+          deleteBridgeBetweenPins(c);
+          removeThroughBodySegmentsForComponent(c);
           // Do not auto-bridge near the moved component; avoid creating through-body wires
           normalizeAllWires();
           unifyInlineWires();
@@ -3067,6 +3144,29 @@ import {
     }
     
     return g;
+  }
+  // Finalize embedded slide moves (no SWP) by restoring gaps at pins.
+  function finalizeEmbeddedMove(source: 'mode-change' | 'empty-click' | 'document-click') {
+    // Prefer currently selected component; else find any component flagged as embedded.
+    let comp: Component | undefined;
+    const sel = getFirstSelection();
+    if (sel && sel.kind === 'component') comp = components.find(x => x.id === sel.id);
+    if (!comp) {
+      comp = components.find(x => (x as any).embeddedInWireId);
+    }
+    if (!comp) return;
+    dbg(`embedded:finalize-on-${source}`, { id: comp.id });
+    if (breakWiresForComponent(comp)) {
+      deleteBridgeBetweenPins(comp);
+    }
+    // Clear embedded flags to avoid repeated finalization
+    (comp as any).embeddedInWireId = undefined;
+    (comp as any).embeddedAxis = undefined;
+    (comp as any).embeddedFixed = undefined;
+    normalizeAllWires();
+    unifyInlineWires();
+    rebuildTopology();
+    redraw();
   }
 
 
@@ -3737,6 +3837,16 @@ import {
   }
 
   function redraw() {
+    // Safety: if an SWP is collapsed but we're not actively moving
+    // the owning component anymore, finalize it before redraw.
+    if (moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
+      const sel = getFirstSelection();
+      const stillMovingSameComp = (mode === 'move' && sel && sel.kind === 'component' && sel.id === lastMoveCompId);
+      if (!stillMovingSameComp) {
+        dbg('swp:finalize-on-redraw');
+        ensureFinishSwpMove();
+      }
+    }
     rebuildTopology();
     redrawCanvasOnly();
     renderInspector();
@@ -4993,6 +5103,26 @@ import {
     // --- Manual Junction Dot Placement/Deletion and shared pointerdown setup ---
     const p = svgPoint(e);
     const tgt = e.target as Element;
+
+    // If we're in Move mode with a collapsed SWP and the user clicks the empty canvas,
+    // finalize the SWP back into segments even if no movement occurred.
+    if (mode === 'move' && e.button === 0) {
+      const clickedCanvas = tgt === svg;
+      if (clickedCanvas) {
+        // Finalize SWP if active, otherwise finalize embedded slide
+        if (moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
+          dbg('swp:finalize-on-empty-click');
+          ensureFinishSwpMove();
+        } else {
+          finalizeEmbeddedMove('empty-click');
+        }
+        // Do not change mode automatically; simply clear selection if any
+        clearSelection();
+        redraw();
+        e.preventDefault();
+        return;
+      }
+    }
     
     // If endpoint stretch is active, any left-click confirms and ends it
     if (endpointStretchState && endpointStretchState.dragging && e.button === 0) {
@@ -5320,6 +5450,8 @@ import {
       }
       
       if (mode === 'move' && e.button === 0 && !onComp && !onWire && !onJunction && !onEndpoint) {
+        // Explicitly finalize any collapsed SWP before changing mode
+        ensureFinishSwpMove();
         clearSelection();
         setMode('select');
         renderInspector(); redraw();
@@ -8320,6 +8452,31 @@ import {
       const t = e.target as Node;
       if (t && !wireColorMenu.contains(t) && t !== wireColorBtn) closeWireMenu();
     });
+    // Global finalize guard: if user clicks anywhere outside the main SVG while in Move,
+    // finalize any collapsed SWP to restore gaps.
+    document.addEventListener('pointerdown', (e) => {
+      if (mode === 'move' && moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
+        const target = e.target as Element;
+        const insideSvg = target === svg || svg.contains(target);
+        // Allow clicks on components/wires to be handled by SVG; otherwise finalize.
+        if (!insideSvg) {
+          dbg('swp:finalize-on-document-click');
+          ensureFinishSwpMove();
+          // Do not alter mode; selection may be cleared by specific handlers
+          requestAnimationFrame(() => redraw());
+        }
+      }
+    });
+    // Also finalize embedded slide moves when clicking outside the SVG
+    document.addEventListener('pointerdown', (e) => {
+      if (mode === 'move' && (!moveCollapseCtx || moveCollapseCtx.kind !== 'swp')) {
+        const target = e.target as Element;
+        const insideSvg = target === svg || svg.contains(target);
+        if (!insideSvg) {
+          finalizeEmbeddedMove('document-click');
+        }
+      }
+    });
     window.addEventListener('resize', closeWireMenu);
   }
 
@@ -10089,13 +10246,36 @@ import {
   }
   function ensureFinishSwpMove() {
     if (!moveCollapseCtx || moveCollapseCtx.kind !== 'swp') return;
-    if (!lastMoveCompId) return;
-    const c = components.find(x => x.id === lastMoveCompId);
-    if (c) {
-      finishSwpMove(c);
-      moveCollapseCtx = null;
-      lastMoveCompId = null;
+    dbg('swp:ensure-finish-start');
+    let comp: Component | undefined;
+    if (lastMoveCompId) {
+      comp = components.find(x => x.id === lastMoveCompId);
     }
+    // Fallback: resolve component by SWP id if lastMoveCompId is not set
+    if (!comp && moveCollapseCtx && (moveCollapseCtx as any).sid) {
+      const sid = (moveCollapseCtx as any).sid as string;
+      // Try direct mapping
+      const compId = (() => {
+        for (const [cid, csid] of topology.compToSwp.entries()) {
+          if (csid === sid) return cid;
+        }
+        return null;
+      })();
+      if (compId) comp = components.find(x => x.id === compId) as Component | undefined;
+      // As a final fallback, locate any component whose swpId matches
+      if (!comp) {
+        for (const c of components) {
+          const csid = swpIdForComponent(c);
+          if (csid === sid) { comp = c; break; }
+        }
+      }
+    }
+    if (!comp) { dbg('swp:ensure-finish-no-comp'); return; }
+    dbg('swp:ensure-finish-apply', { compId: comp.id });
+    finishSwpMove(comp);
+    moveCollapseCtx = null;
+    lastMoveCompId = null;
+    dbg('swp:ensure-finish-done');
   }
 
   function ensureCollapseForSelection() {
