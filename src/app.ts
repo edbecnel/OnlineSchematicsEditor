@@ -3159,10 +3159,7 @@ import {
     if (breakWiresForComponent(comp)) {
       deleteBridgeBetweenPins(comp);
     }
-    // Clear embedded flags to avoid repeated finalization
-    (comp as any).embeddedInWireId = undefined;
-    (comp as any).embeddedAxis = undefined;
-    (comp as any).embeddedFixed = undefined;
+    // Do not clear embedded flags here; they persist to support connect/disconnect logic
     normalizeAllWires();
     unifyInlineWires();
     rebuildTopology();
