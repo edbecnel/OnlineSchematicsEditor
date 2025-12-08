@@ -77,6 +77,43 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     let trackingMode = (localStorage.getItem('tracking.mode') !== 'false');
     // Default resistor style for project: 'ansi' (US zigzag) or 'iec' (rectangle) - persisted
     let defaultResistorStyle = localStorage.getItem('defaultResistorStyle') || 'ansi';
+    // Constraints: treat on-grid pin coincidence as non-overlap (no Shift required)
+    const PIN_CONNECT_EPS = 1; // px tolerance for pin-to-pin connection recognition
+    function isOnGrid(pt) {
+        const gx = Math.round(pt.x / GRID) * GRID;
+        const gy = Math.round(pt.y / GRID) * GRID;
+        return Math.abs(gx - pt.x) <= 0.25 && Math.abs(gy - pt.y) <= 0.25;
+    }
+    function temporarilyAllowOnGridConnectionsForComponent(comp) {
+        if (!USE_CONSTRAINTS || !constraintSolver)
+            return;
+        try {
+            const pins = Components.compPinPositions(comp);
+            // If any pin of comp will coincidentally connect (on-grid) to any other component pin, 
+            // temporarily disable min-distance constraints for that pair in this solve.
+            const graph = constraintSolver.getGraph();
+            const allComps = components.filter(c => c.id !== comp.id);
+            for (const other of allComps) {
+                const otherPins = Components.compPinPositions(other);
+                for (const pa of pins) {
+                    for (const pb of otherPins) {
+                        if (isOnGrid(pa) && isOnGrid(pb) && Math.hypot(pa.x - pb.x, pa.y - pb.y) <= PIN_CONNECT_EPS) {
+                            graph.getAllConstraints()
+                                .filter(k => k.type === 'min-distance')
+                                .forEach(k => {
+                                // Fallback: disable all min-distance constraints temporarily; they have metadata.temporary
+                                // This is a conservative approach until the graph exposes pair info.
+                                if (k.metadata?.temporary) {
+                                    k.enabled = false;
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        catch (_) { }
+    }
     // UI button ref (may be used before DOM-ready in some cases; guard accordingly)
     let gridToggleBtnEl = null;
     // Track Shift key state globally so we can enforce orthogonal preview even
@@ -1743,6 +1780,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
                             .forEach(c => c.enabled = false);
                     }
+                    // Also allow on-grid pin connections without requiring Shift
+                    temporarilyAllowOnGridConnectionsForComponent(c);
                     const result = constraintSolver.solve(c.id, { x: candX, y: candY });
                     // Re-enable min-distance constraints
                     if (shiftHeld) {
@@ -1962,6 +2001,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                                 .filter(c => c.type === 'min-distance' && c.metadata?.temporary)
                                 .forEach(c => c.enabled = false);
                         }
+                        // Allow on-grid pin connections without Shift for slide-on-wire
+                        temporarilyAllowOnGridConnectionsForComponent(c);
                         const result = constraintSolver.solve(c.id, { x: candX, y: candY });
                         // Re-enable min-distance constraints
                         if (shiftHeld) {
@@ -8007,8 +8048,24 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // Calculate proposed position
         const proposedX = snap(c.x + dx);
         const proposedY = snap(c.y + dy);
+        // Temporarily disable min-distance constraints if Shift is held (mouse or keyboard)
+        const temporarilyDisabled = [];
+        if (globalShiftDown) {
+            const all = constraintSolver.getGraph().getAllConstraints();
+            for (const cons of all) {
+                if (cons.type === 'min-distance') {
+                    temporarilyDisabled.push(cons);
+                    cons.enabled = false;
+                }
+            }
+        }
         // Use constraint solver
         const result = constraintSolver.solve(c.id, { x: proposedX, y: proposedY });
+        // Re-enable any temporarily disabled constraints
+        if (temporarilyDisabled.length > 0) {
+            for (const cons of temporarilyDisabled)
+                cons.enabled = true;
+        }
         if (result.allowed) {
             // Move the component
             c.x = result.finalPosition.x;
@@ -8026,8 +8083,16 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             renderInspector();
         }
         else {
+            // If the move would result in pin coincidence (valid connection), allow it
+            if (pinsCoincideAnyAt(c, proposedX, proposedY)) {
+                c.x = proposedX;
+                c.y = proposedY;
+                rebuildTopology();
+                redraw();
+                renderInspector();
+                return;
+            }
             // Movement blocked - do NOT move the component
-            console.log('Movement blocked by constraints:', result.violatedConstraints.map(v => v.reason).join(', '));
             // Component stays at current position
         }
     }
