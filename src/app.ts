@@ -1124,7 +1124,8 @@ import {
       // Leaving Move mode finalizes any collapsed SWP back into segments.
       ensureFinishSwpMove();
     }
-    redraw(); // refresh wire/comp hit gating for the new mode
+    // Note: redraw() removed - it was destroying components during drag initialization
+    // Components/wires update their pointer-events based on mode automatically
   }
 
   // Wire up Grid toggle button and shortcut (G)
@@ -1675,8 +1676,11 @@ import {
     }
 
     // ---- Drag + selection (mouse) ----
-    let dragging = false, dragOff = { x: 0, y: 0 }, slideCtx = null, dragStart = null;
-    const componentInstanceId = Math.random(); // Track if component is recreated
+    let dragging = false;
+    let dragOff = { x: 0, y: 0 };
+    let slideCtx: any = null;
+    let dragStart: any = null;
+    
     g.addEventListener('pointerdown', (e) => {
       if (mode === 'delete') { removeComponent(c.id); return; }
       // If no action is active, automatically activate Select mode when
@@ -1713,33 +1717,128 @@ import {
       }
       const pt = svgPoint(e);
       // Move only when Move mode is active; in Select mode: select only.
-      if (mode !== 'move') { return; }
+      if (mode !== 'move') return;
       dragging = true;
       draggedComponentId = c.id;
       updateEndpointCircles(); // Hide this component's circles
-      dragOff.x = c.x - pt.x; dragOff.y = c.y - pt.y;
+      dragOff = { x: c.x - pt.x, y: c.y - pt.y };
       // Clear any previous drag state from prior sessions
       componentDragState = null;
-      // Prepare SWP-aware context (collapse SWP to a single straight run)
-      slideCtx = null; // fallback only if no SWP detected
-      rebuildTopology();
-      const swpCtx = beginSwpMove(c);
-      if (swpCtx) {
-        dragging = true;
-        slideCtx = null;       // ensure we use SWP move
-        g.classList.add('moving');
-        moveCollapseCtx = swpCtx;
-        lastMoveCompId = c.id;
-      } else {
-        // fallback to legacy slide along adjacent wires (if no SWP)
-        slideCtx = buildSlideContext(c);
-      }
+      
+      // Check if component is embedded on a wire (constrained sliding)
       const pins0 = Components.compPinPositions(c).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
+      // First, check if component pins are ON wires but wires haven't been broken yet
+      // This handles old components that were placed before the wire-breaking fix
+      const needsBreaking = breakWiresForComponent(c);
+      if (needsBreaking) {
+        deleteBridgeBetweenPins(c);
+        // Now the wires should be properly broken at the pin locations
+      }
+      
       const wsA = wiresEndingAt(pins0[0]);
       const wsB = wiresEndingAt(pins0[1] || pins0[0]);
+      const isEmbedded = (wsA.length === 1 && wsB.length === 1 && wsA[0] && wsB[0]);
+      
+      // If component is embedded on a wire, patch the wire by joining the two segments
+      // THEN build slide context from the mended wire
+      if (isEmbedded) {
+        moveCollapseCtx = null; // Don't use SWP for embedded components
+        
+        // Temporarily patch the wire where the component was by joining the two segments
+        const wA = wsA[0];
+        const wB = wsB[0];
+        const pinA = pins0[0];
+        const pinB = pins0[1] || pins0[0];
+        
+        // Find which endpoints of each wire connect to which pin
+        const wAEndAtA = wireEndsAt(wA, pinA);
+        const wBEndAtB = wireEndsAt(wB, pinB);
+        
+        if (wA.id !== wB.id && wAEndAtA !== null && wBEndAtB !== null) {
+          // Join the wires, removing the component bridge
+          // mendWireAtPoints merges the two wires and removes the originals
+          // After this, we need to find the newly created mended wire
+          const beforeWireCount = wires.length;
+          mendWireAtPoints(
+            { w: wA, endIndex: wAEndAtA },
+            { w: wB, endIndex: wBEndAtB }
+          );
+          // Don't call redrawCanvasOnly() here - it would destroy the component we're dragging!
+          
+          // After mending, find ALL wire points on the same axis at the same fixed coordinate
+          // mendWireAtPoints creates multiple single-segment wires, not one polyline
+          const axis = axisFromPins(pins0);
+          if (axis) {
+            const fixed = axis === 'x' ? pins0[0].y : pins0[0].x;
+            
+            // Find all wire segments on this axis at this fixed coordinate
+            const alignedWires = wires.filter(w => {
+              if (w.points.length !== 2) return false;
+              const p0 = w.points[0], p1 = w.points[1];
+              if (axis === 'x') {
+                return p0.y === fixed && p1.y === fixed;
+              } else {
+                return p0.x === fixed && p1.x === fixed;
+              }
+            });
+            
+            // Calculate min/max from all aligned wire segments
+            let min = Infinity, max = -Infinity;
+            for (const w of alignedWires) {
+              const p0 = w.points[0], p1 = w.points[1];
+              if (axis === 'x') {
+                min = Math.min(min, p0.x, p1.x);
+                max = Math.max(max, p0.x, p1.x);
+              } else {
+                min = Math.min(min, p0.y, p1.y);
+                max = Math.max(max, p0.y, p1.y);
+              }
+            }
+            
+            if (alignedWires.length > 0 && min !== Infinity && max !== -Infinity) {
+              // Adjust min/max to account for pin offset from component center
+              // The component center must stay within bounds so that pins don't extend past wire ends
+              const pinOffsetFromCenter = axis === 'x' 
+                ? Math.abs(pins0[0].x - c.x) 
+                : Math.abs(pins0[0].y - c.y);
+              
+              slideCtx = {
+                axis,
+                fixed,
+                min: min + pinOffsetFromCenter,
+                max: max - pinOffsetFromCenter,
+                wA: alignedWires[0],
+                wB: alignedWires[alignedWires.length - 1],
+                pinAStart: pins0[0],
+                pinBStart: pins0[1]
+              };
+            } else {
+              slideCtx = null;
+            }
+          } else {
+            slideCtx = null;
+          }
+        } else {
+          slideCtx = null;
+        }
+      } else {
+        slideCtx = null;
+        // For non-embedded components, prepare SWP-aware context (collapse SWP to a single straight run)
+        rebuildTopology();
+        const swpCtx = beginSwpMove(c);
+        if (swpCtx) {
+          dragging = true;
+          g.classList.add('moving');
+          moveCollapseCtx = swpCtx;
+          lastMoveCompId = c.id;
+        } else {
+          moveCollapseCtx = null;
+        }
+      }
+      
       dragStart = {
         x: c.x, y: c.y, pins: pins0,
-        embedded: (wsA.length === 1 && wsB.length === 1),
+        embedded: isEmbedded,
         wA: wsA[0] || null, wB: wsB[0] || null
       };
       e.preventDefault();
@@ -1749,9 +1848,7 @@ import {
       e.stopPropagation();
     });
     g.addEventListener('pointermove', (e) => {
-      if (!dragging) {
-        return;
-      }
+      if (!dragging || mode !== 'move') return;
       const p = svgPoint(e);
       const shiftHeld = (e as PointerEvent).shiftKey; // Detect Shift key for temporary constraint bypass
       
@@ -1759,7 +1856,7 @@ import {
       // Show stretched SWP wire through component and rubber-band perpendicular wires
       if (moveCollapseCtx && moveCollapseCtx.kind === 'swp') {
         const mc = moveCollapseCtx;
-        const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
+        const cand = { x: snap(p.x + dragOff.x), y: snap(p.y + dragOff.y) };
         
         // Allow free movement in both directions
         let candX = cand.x;
@@ -1900,7 +1997,7 @@ import {
       
       // Free drag mode - drag entire wires laterally with component (legacy path for non-SWP components)
       if (componentDragState && componentDragState.wires.length > 0) {
-        const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
+        const cand = { x: snap(p.x + dragOff.x), y: snap(p.y + dragOff.y) };
         let candX = cand.x;
         let candY = cand.y;
         
@@ -2094,7 +2191,7 @@ import {
         }
       } else {
         // Regular free drag (no wire stretching)
-        const cand = snapPointPreferAnchor({ x: p.x + dragOff.x, y: p.y + dragOff.y });
+        const cand = { x: snap(p.x + dragOff.x), y: snap(p.y + dragOff.y) };
         let candX = cand.x;
         let candY = cand.y;
         
@@ -2272,6 +2369,21 @@ import {
           return;
         }
         
+        // For embedded components (slideCtx), always break wires at new position and redraw
+        if (slideCtx && dragStart.embedded) {
+          breakWiresForComponent(c);
+          deleteBridgeBetweenPins(c);
+          normalizeAllWires();
+          unifyInlineWires();
+          rebuildTopology();
+          redraw();
+          componentDragState = null;
+          dragStart = null;
+          draggedComponentId = null;
+          updateEndpointCircles();
+          return;
+        }
+        
         // When constraints are enabled, skip legacy overlap check (constraints already validated during drag)
         if (!USE_CONSTRAINTS && overlapsAnyOther(c)) {
           c.x = dragStart.x; c.y = dragStart.y;
@@ -2284,16 +2396,30 @@ import {
         } else {
           // Component moved successfully
           if (!dragStart.embedded) {
+            // Component was NOT embedded - check if it landed on wires and break them
             const didBreak = breakWiresForComponent(c);
             if (didBreak) { deleteBridgeBetweenPins(c); redraw(); }
             else { updateComponentDOM(c); }
           } else {
-            const didBreak = breakWiresForComponent(c);
-            if (didBreak) { 
-              deleteBridgeBetweenPins(c); 
-              redraw(); 
-            } else { 
-              updateComponentDOM(c); 
+            // Component WAS embedded - check if it's still embedded at the new position
+            const finalPins = Components.compPinPositions(c).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
+            const finalWsA = wiresEndingAt(finalPins[0]);
+            const finalWsB = wiresEndingAt(finalPins[1] || finalPins[0]);
+            const stillEmbedded = (finalWsA.length === 1 && finalWsB.length === 1 && finalWsA[0] && finalWsB[0]);
+            
+            if (stillEmbedded) {
+              // Still on wire - break wire at new position
+              const didBreak = breakWiresForComponent(c);
+              if (didBreak) { 
+                deleteBridgeBetweenPins(c); 
+                redraw(); 
+              } else { 
+                updateComponentDOM(c); 
+              }
+            } else {
+              // Component was moved OFF the wire - don't break wires, just update component
+              // The mended wire should remain intact
+              redraw(); // Redraw to show the wire without gaps
             }
           }
         }
@@ -4129,15 +4255,21 @@ import {
   function wiresEndingAt(pt) {
     return wires.filter(w => {
       const a = w.points[0], b = w.points[w.points.length - 1];
-      return eqPt(a, pt) || eqPt(b, pt);
+      return Geometry.eqPtEps(a, pt, 1) || Geometry.eqPtEps(b, pt, 1);
     });
+  }
+  // Returns which endpoint index (0 or last) of wire w ends at point pt, or null if neither
+  function wireEndsAt(w: Wire, pt: Point): number | null {
+    if (Geometry.eqPtEps(w.points[0], pt, 1)) return 0;
+    if (Geometry.eqPtEps(w.points[w.points.length - 1], pt, 1)) return w.points.length - 1;
+    return null;
   }
   function adjacentOther(w, endPt) {
     // return the vertex adjacent to the endpoint that equals endPt
     const n = w.points.length;
     if (n < 2) return null;
-    if (eqPt(w.points[0], endPt)) return w.points[1];
-    if (eqPt(w.points[n - 1], endPt)) return w.points[n - 2];
+    if (Geometry.eqPtEps(w.points[0], endPt, 1)) return w.points[1];
+    if (Geometry.eqPtEps(w.points[n - 1], endPt, 1)) return w.points[n - 2];
     return null;
   }
 
@@ -4159,11 +4291,10 @@ import {
 
   function adjustWireEnd(w, oldEnd, newEnd) {
     if (!w) return;
-    const ctx = createMoveContext();
     // Find and update the matching endpoint
-    if (ctx.eqPt(w.points[0], oldEnd)) {
+    if (Geometry.eqPtEps(w.points[0], oldEnd, 1)) {
       w.points[0] = { x: newEnd.x, y: newEnd.y };
-    } else if (ctx.eqPt(w.points[w.points.length - 1], oldEnd)) {
+    } else if (Geometry.eqPtEps(w.points[w.points.length - 1], oldEnd, 1)) {
       w.points[w.points.length - 1] = { x: newEnd.x, y: newEnd.y };
     }
   }
