@@ -136,6 +136,17 @@ export function createDefaultValidators() {
             if (!constraint || !constraint.params) {
                 return { valid: true };
             }
+            const paramsAll = constraint.params;
+            // If scoped to a specific pair and this move matches, allow relaxation
+            const between = paramsAll.betweenIds;
+            if (between && between.length === 2) {
+                const [a, b] = between;
+                const isPair = (entity.id === a && constraint.entities.includes(b)) ||
+                    (entity.id === b && constraint.entities.includes(a));
+                if (isPair && constraint.metadata?.temporary === true) {
+                    return { valid: true };
+                }
+            }
             // Find the other entity in the constraint
             const otherEntityId = constraint.entities.find(id => id !== entity.id);
             if (!otherEntityId) {
@@ -156,10 +167,11 @@ export function createDefaultValidators() {
             // Get bounding box parameters from constraint params
             // bodyExtent/bodyWidth are for entities[0], bodyExtent2/bodyWidth2 are for entities[1]
             const params = constraint.params;
-            const bodyExtent_forEntity0 = params.bodyExtent || 50;
-            const bodyWidth_forEntity0 = params.bodyWidth || 12;
-            const bodyExtent_forEntity1 = params.bodyExtent2 || params.bodyExtent || 50;
-            const bodyWidth_forEntity1 = params.bodyWidth2 || params.bodyWidth || 12;
+            const clearanceOverride = params.clearanceOverridePx;
+            const bodyExtent_forEntity0 = (params.bodyExtent ?? 50);
+            const bodyWidth_forEntity0 = (params.bodyWidth ?? 12);
+            const bodyExtent_forEntity1 = (params.bodyExtent2 ?? params.bodyExtent ?? 50);
+            const bodyWidth_forEntity1 = (params.bodyWidth2 ?? params.bodyWidth ?? 12);
             // Determine which entity is the moving one and which is the other
             const isEntity1MovingEntity = constraint.entities[0] === entity.id;
             const movingEntityExtent = isEntity1MovingEntity ? bodyExtent_forEntity0 : bodyExtent_forEntity1;
@@ -208,15 +220,72 @@ export function createDefaultValidators() {
                 bbox1.minX >= bbox2.maxX ||
                 bbox1.maxY <= bbox2.minY ||
                 bbox1.minY >= bbox2.maxY);
-            console.log(`🔍 Bounding box check: ${entity.id} -> (${proposedPosition.x}, ${proposedPosition.y})`);
-            console.log(`   BBox1: [${bbox1.minX.toFixed(1)}, ${bbox1.minY.toFixed(1)}] to [${bbox1.maxX.toFixed(1)}, ${bbox1.maxY.toFixed(1)}]`);
-            console.log(`   BBox2: [${bbox2.minX.toFixed(1)}, ${bbox2.minY.toFixed(1)}] to [${bbox2.maxX.toFixed(1)}, ${bbox2.maxY.toFixed(1)}]`);
-            console.log(`   Overlap: ${overlaps}`);
+            // Optional clearance override: if provided, expand boxes before checking
+            if (!overlaps && typeof clearanceOverride === 'number' && clearanceOverride > 0) {
+                const c = clearanceOverride;
+                const expanded1 = { minX: bbox1.minX - c, maxX: bbox1.maxX + c, minY: bbox1.minY - c, maxY: bbox1.maxY + c };
+                const expanded2 = { minX: bbox2.minX - c, maxX: bbox2.maxX + c, minY: bbox2.minY - c, maxY: bbox2.maxY + c };
+                const violatesClearance = !(expanded1.maxX <= expanded2.minX ||
+                    expanded1.minX >= expanded2.maxX ||
+                    expanded1.maxY <= expanded2.minY ||
+                    expanded1.minY >= expanded2.maxY);
+                if (violatesClearance) {
+                    return {
+                        valid: false,
+                        reason: `Minimum clearance not satisfied with ${otherEntityId}`
+                    };
+                }
+            }
             if (overlaps) {
                 return {
                     valid: false,
                     reason: `Bounding box overlap with ${otherEntityId}`
                 };
+            }
+            return { valid: true };
+        }
+    });
+    // Pin Touch Validator: ensure a specific component pin coincides with target
+    validators.set('pin-touch', {
+        validate: (entity, proposedPosition, affectedEntities, context, constraint) => {
+            if (!constraint || !constraint.params) {
+                return { valid: true };
+            }
+            const params = constraint.params;
+            const epsilon = typeof params.epsilon === 'number' ? params.epsilon : 0.1;
+            const gridOnly = !!params.gridOnly;
+            const pinIndex = typeof params.pinIndex === 'number' ? params.pinIndex : 0;
+            const targetId = params.targetEntityId;
+            const targetPinIndex = typeof params.targetPinIndex === 'number' ? params.targetPinIndex : undefined;
+            const target = context.allEntities.get(targetId);
+            if (!target) {
+                return { valid: true };
+            }
+            // If gridOnly, snap proposed to grid for evaluation
+            const basePos = gridOnly ? { x: context.snapToGrid(proposedPosition.x), y: context.snapToGrid(proposedPosition.y) } : proposedPosition;
+            // Compute moving pin position using metadata pinOffsets if available
+            const pinOffsets = entity.metadata?.pinOffsets;
+            const movingPinPos = pinOffsets && pinOffsets[pinIndex]
+                ? { x: basePos.x + pinOffsets[pinIndex].x, y: basePos.y + pinOffsets[pinIndex].y }
+                : basePos;
+            // Compute target pin/point position
+            const targetPinOffsets = target.metadata?.pinOffsets;
+            const targetPos = (typeof targetPinIndex === 'number' && targetPinOffsets && targetPinOffsets[targetPinIndex])
+                ? { x: target.position.x + targetPinOffsets[targetPinIndex].x, y: target.position.y + targetPinOffsets[targetPinIndex].y }
+                : target.position;
+            const dx = Math.abs(movingPinPos.x - targetPos.x);
+            const dy = Math.abs(movingPinPos.y - targetPos.y);
+            const touches = dx <= epsilon && dy <= epsilon;
+            if (!touches) {
+                // Suggest snapping to target when close
+                if (dx <= epsilon * 2 && dy <= epsilon * 2) {
+                    // Suggest adjusted base position that would align moving pin to target
+                    const suggested = pinOffsets && pinOffsets[pinIndex]
+                        ? { x: targetPos.x - pinOffsets[pinIndex].x, y: targetPos.y - pinOffsets[pinIndex].y }
+                        : targetPos;
+                    return { valid: true, adjustedPosition: suggested };
+                }
+                return { valid: false, reason: `Pin not coincident with target ${targetId}` };
             }
             return { valid: true };
         }
@@ -250,6 +319,7 @@ export function createDefaultValidators() {
     const placeholderTypes = [
         'coincident',
         'connected',
+        'pin-touch',
         'no-overlap',
         'rubber-band',
         'align',

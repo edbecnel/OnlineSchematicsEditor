@@ -119,6 +119,12 @@ export interface Component {
   // Symbol library metadata (for imported components)
   libraryId?: string;        // reference to symbol library
   symbolName?: string;       // original symbol name from library
+
+  // Relationships for embedded movement and chains
+  embeddedInWireId?: string | null;   // wire.id this component is embedded in (persistent until explicitly cleared)
+  embeddedAxis?: 'x' | 'y' | null;    // axis of the wire segment it is embedded on
+  embeddedFixed?: number | null;      // fixed coordinate along the embedded axis (y if axis='x', x if axis='y')
+  connectedTo?: string[];             // list of other component ids this component is directly connected to (pin coincidence)
 }
 
 // ====== Text Label Types ======

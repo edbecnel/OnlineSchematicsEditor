@@ -186,7 +186,7 @@ export class ConstraintSolver {
     rebuild() {
         // This would be implemented to recreate constraints from current state
         // For now, placeholder
-        console.log('Rebuild called - constraints would be regenerated');
+        // Placeholder: rebuild logging removed
     }
     // ====== Debugging ======
     /**

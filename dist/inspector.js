@@ -116,6 +116,34 @@ export function dimNumberPx(pxVal, onCommit, pxToNm, nmToPx, formatDimForDisplay
 // Main function to render the inspector panel
 export function renderInspector(ctx, inspector, inspectorNone) {
     inspector.replaceChildren();
+    // Global settings when nothing is selected
+    if (!ctx.selection.items || ctx.selection.items.length === 0) {
+        inspectorNone.style.display = 'none';
+        const wrap = document.createElement('div');
+        // Section header
+        const header = document.createElement('div');
+        header.className = 'row';
+        const h = document.createElement('label');
+        h.textContent = 'Constraints';
+        h.style.width = 'auto';
+        h.style.fontWeight = '600';
+        header.appendChild(h);
+        wrap.appendChild(header);
+        // Component Clearance control (displayed in current units; stored in px)
+        const currPx = (() => {
+            const v = localStorage.getItem('constraints.componentClearancePx');
+            const n = v ? parseFloat(v) : NaN;
+            return isNaN(n) ? 0 : n;
+        })();
+        const clearanceInput = dimNumberPx(currPx, (px) => {
+            localStorage.setItem('constraints.componentClearancePx', String(Math.max(0, px | 0)));
+            // Defer resync to app layer; it will pick up the new value on next sync
+        }, ctx.pxToNm, ctx.nmToPx, ctx.formatDimForDisplay, ctx.parseDimInput, ctx.globalUnits);
+        clearanceInput.title = 'Minimum spacing enforced between component bodies. Pins may still touch.';
+        wrap.appendChild(rowPair('Component Clearance', clearanceInput));
+        inspector.appendChild(wrap);
+        return;
+    }
     // COMPONENT INSPECTOR
     const firstSel = ctx.selection.items[0];
     if (firstSel && firstSel.kind === 'component') {

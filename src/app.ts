@@ -138,24 +138,44 @@ import {
   function temporarilyAllowOnGridConnectionsForComponent(comp: Component) {
     if (!USE_CONSTRAINTS || !constraintSolver) return;
     try {
-      const pins = Components.compPinPositions(comp);
-      // If any pin of comp will coincidentally connect (on-grid) to any other component pin, 
-      // temporarily disable min-distance constraints for that pair in this solve.
       const graph = constraintSolver.getGraph();
+      // 1) Clear any previous pair-scoped relaxations for constraints involving this component
+      const constraintsForComp = graph.getConstraintsForEntity(comp.id);
+      for (const con of constraintsForComp) {
+        if (con.type === 'min-distance' && con.params && (con.params as any).betweenIds) {
+          // Remove the betweenIds marker so normal min-distance applies by default
+          (con.params as any).betweenIds = undefined;
+        }
+        // Ensure constraints are enabled (they might have been disabled by Shift logic elsewhere)
+        if (con.type === 'min-distance' && con.metadata?.temporary) {
+          con.enabled = true;
+        }
+      }
+
+      // 2) If any pin of comp coincides on-grid with any other component pin,
+      // mark the pair’s min-distance constraint as pair-scoped relaxed via betweenIds
+      const pins = Components.compPinPositions(comp);
       const allComps = components.filter(c => c.id !== comp.id);
       for (const other of allComps) {
         const otherPins = Components.compPinPositions(other);
+        let shouldRelaxPair = false;
         for (const pa of pins) {
           for (const pb of otherPins) {
             if (isOnGrid(pa) && isOnGrid(pb) && Math.hypot(pa.x - pb.x, pa.y - pb.y) <= PIN_CONNECT_EPS) {
-              graph.getAllConstraints()
-                .filter(k => k.type === 'min-distance')
-                .forEach(k => {
-                  // Fallback: disable all min-distance constraints temporarily; they have metadata.temporary
-                  // This is a conservative approach until the graph exposes pair info.
-                  if (k.metadata?.temporary) { k.enabled = false; }
-                });
+              shouldRelaxPair = true;
+              break;
             }
+          }
+          if (shouldRelaxPair) break;
+        }
+        if (shouldRelaxPair) {
+          // Find the specific min-distance constraint between comp and other
+          const pairConstraint = graph.getAllConstraints()
+            .find(k => k.type === 'min-distance' && k.entities.includes(comp.id) && k.entities.includes(other.id));
+          if (pairConstraint && pairConstraint.params) {
+            (pairConstraint.params as any).betweenIds = [comp.id, other.id];
+            if (pairConstraint.metadata) pairConstraint.metadata.temporary = true;
+            pairConstraint.enabled = true;
           }
         }
       }
@@ -274,9 +294,17 @@ import {
   }
   
   // ====== Constraint System ======
-  let USE_CONSTRAINTS = false; // Feature flag for constraint-based movement
-  let USE_MANHATTAN_ROUTING = false; // Feature flag for KiCad-style Manhattan path routing
+  let USE_CONSTRAINTS = true; // Feature flag for constraint-based movement
+  let USE_MANHATTAN_ROUTING = true; // Feature flag for KiCad-style Manhattan path routing
   let constraintSolver: ConstraintSolver | null = null;
+  const DEBUG_MOVES = true;
+  function dbg(tag: string, data?: any) {
+    if (!DEBUG_MOVES) return;
+    try {
+      if (data !== undefined) console.debug(`[moves] ${tag}`, data);
+      else console.debug(`[moves] ${tag}`);
+    } catch (_) { }
+  }
   // Marquee selection (click+drag rectangle) state
   let marquee: {
     active: boolean;
@@ -341,6 +369,240 @@ import {
     }>;
     ghostWires: Array<{ from: Point; to: Point }>;
   } | null = null;
+
+  // ---- Movement helpers: overlap and axis checks ----
+  const AXIS_EPS = 0.5; // px tolerance for axis/fixed comparisons
+  function pinOffsetsFor(c: Component): Point[] {
+    const pinsNow = Components.compPinPositions(c);
+    return pinsNow.map(p => ({ x: p.x - c.x, y: p.y - c.y }));
+  }
+  function pinsAt(c: Component, x: number, y: number, cachedOffsets?: Point[]): Point[] {
+    const offs = cachedOffsets || pinOffsetsFor(c);
+    return offs.map(o => ({ x: x + o.x, y: y + o.y }));
+    }
+  function intervalAlongAxis(pts: Point[], axis: 'x' | 'y'): { min: number, max: number } {
+    if (axis === 'x') {
+      let mn = Infinity, mx = -Infinity;
+      for (const p of pts) { if (p.x < mn) mn = p.x; if (p.x > mx) mx = p.x; }
+      return { min: mn, max: mx };
+    } else {
+      let mn = Infinity, mx = -Infinity;
+      for (const p of pts) { if (p.y < mn) mn = p.y; if (p.y > mx) mx = p.y; }
+      return { min: mn, max: mx };
+    }
+  }
+  function intervalsTrulyOverlap(a: { min: number, max: number }, b: { min: number, max: number }): boolean {
+    // Overlap length > 0 means true interpenetration. Exactly touching (0) is allowed.
+    const overlap = Math.min(a.max, b.max) - Math.max(a.min, b.min);
+    return overlap > 0; // do not include equality, so touching at a point is ok
+  }
+  function isAlignedToFixed(pts: Point[], axis: 'x' | 'y', fixed: number): boolean {
+    if (axis === 'x') return pts.every(p => Math.abs(p.y - fixed) <= AXIS_EPS);
+    else return pts.every(p => Math.abs(p.x - fixed) <= AXIS_EPS);
+  }
+  function wouldOverlapOnAxis(c: Component, candX: number, candY: number, axis: 'x' | 'y', fixed: number): boolean {
+    const candPins = pinsAt(c, candX, candY);
+    if (!isAlignedToFixed(candPins, axis, fixed)) return false; // not on that axis; off-axis check handles elsewhere
+    const candInt = intervalAlongAxis(candPins, axis);
+    for (const other of components) {
+      if (other.id === c.id) continue;
+      const otherPins = Components.compPinPositions(other);
+      // Must be same axis and same fixed within tolerance
+      if (!isAlignedToFixed(otherPins, axis, fixed)) continue;
+      const otherInt = intervalAlongAxis(otherPins, axis);
+      if (intervalsTrulyOverlap(candInt, otherInt)) return true; // only block true penetration; touching is ok
+    }
+    return false;
+  }
+
+  // ---- Bridging helpers for mending gaps when separating components on a wire ----
+  function eqCoord(a: number, b: number, eps = 1e-3) { return Math.abs(a - b) <= eps; }
+  function eqPoint(a: Point, b: Point, eps = 1e-3) { return Math.hypot(a.x - b.x, a.y - b.y) <= eps; }
+  function segmentExistsBetween(a: Point, b: Point): boolean {
+    for (const w of wires) {
+      if (w.points.length !== 2) continue;
+      const p0 = w.points[0], p1 = w.points[1];
+      if ((eqPoint(p0, a) && eqPoint(p1, b)) || (eqPoint(p0, b) && eqPoint(p1, a))) return true;
+    }
+    return false;
+  }
+  function collectCollinearNeighbors(axis: 'x' | 'y', fixed: number, excludeCompId?: string): Point[] {
+    const pts: Point[] = [];
+    // Wire endpoints
+    for (const w of wires) {
+      if (w.points.length !== 2) continue;
+      const a = w.points[0], b = w.points[1];
+      if (axis === 'x') {
+        if (eqCoord(a.y, fixed)) pts.push({ x: a.x, y: a.y });
+        if (eqCoord(b.y, fixed)) pts.push({ x: b.x, y: b.y });
+      } else {
+        if (eqCoord(a.x, fixed)) pts.push({ x: a.x, y: a.y });
+        if (eqCoord(b.x, fixed)) pts.push({ x: b.x, y: b.y });
+      }
+    }
+    // Junction dots
+    for (const j of junctions) {
+      if (axis === 'x') { if (eqCoord(j.at.y, fixed)) pts.push({ x: j.at.x, y: j.at.y }); }
+      else { if (eqCoord(j.at.x, fixed)) pts.push({ x: j.at.x, y: j.at.y }); }
+    }
+    // Component pins (exclude pins from the component we're bridging for)
+    for (const comp of components) {
+      if (excludeCompId && comp.id === excludeCompId) continue;
+      const pins = Components.compPinPositions(comp);
+      for (const p of pins) {
+        if (axis === 'x') { if (eqCoord(p.y, fixed)) pts.push({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }); }
+        else { if (eqCoord(p.x, fixed)) pts.push({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }); }
+      }
+    }
+    return pts;
+  }
+  function nearestNeighborOnAxis(from: Point, axis: 'x' | 'y', fixed: number, dir: -1 | 1, excludeCompId?: string): Point | null {
+    const pts = collectCollinearNeighbors(axis, fixed, excludeCompId);
+    let best: Point | null = null;
+    let bestD = Infinity;
+    for (const p of pts) {
+      if (eqPoint(p, from)) continue;
+      const d = axis === 'x' ? (p.x - from.x) : (p.y - from.y);
+      if (dir === -1 && d >= 0) continue;
+      if (dir === 1 && d <= 0) continue;
+      const ad = Math.abs(d);
+      if (ad < bestD) { bestD = ad; best = p; }
+    }
+    return best;
+  }
+  // Check if a pin already has an outward collinear segment in the given direction
+  function hasOutwardSegmentFromPin(pin: Point, axis: 'x' | 'y', dir: -1 | 1): boolean {
+    const EPS = 1e-3;
+    for (const w of wires) {
+      if (w.points.length !== 2) continue;
+      const a = { x: snapToBaseScalar(w.points[0].x), y: snapToBaseScalar(w.points[0].y) };
+      const b = { x: snapToBaseScalar(w.points[1].x), y: snapToBaseScalar(w.points[1].y) };
+      let other: Point | null = null;
+      if (eqPoint(a, pin, EPS)) other = b; else if (eqPoint(b, pin, EPS)) other = a;
+      if (!other) continue;
+      // Must be collinear on the same fixed axis
+      if (axis === 'x') {
+        if (Math.abs(other.y - pin.y) > EPS) continue;
+        const d = other.x - pin.x;
+        if ((dir === 1 && d > EPS) || (dir === -1 && d < -EPS)) return true;
+      } else {
+        if (Math.abs(other.x - pin.x) > EPS) continue;
+        const d = other.y - pin.y;
+        if ((dir === 1 && d > EPS) || (dir === -1 && d < -EPS)) return true;
+      }
+    }
+    return false;
+  }
+  function addWireSegment(a: Point, b: Point, color?: string) {
+    const p0 = { x: snapToBaseScalar(a.x), y: snapToBaseScalar(a.y) };
+    const p1 = { x: snapToBaseScalar(b.x), y: snapToBaseScalar(b.y) };
+    // Skip zero-length segments
+    if (Math.hypot(p1.x - p0.x, p1.y - p0.y) < 1e-6) return;
+    // Skip if exact segment already exists
+    if (segmentExistsBetween(p0, p1)) return;
+    // Skip if this segment is fully covered by an existing collinear 2-point segment
+    const horiz = Math.abs(p0.y - p1.y) < 1e-6;
+    const vert = Math.abs(p0.x - p1.x) < 1e-6;
+    if (horiz || vert) {
+      for (const w of wires) {
+        if (w.points.length !== 2) continue;
+        const a0 = w.points[0], b0 = w.points[1];
+        if (horiz && Math.abs(a0.y - p0.y) < 1e-6 && Math.abs(b0.y - p0.y) < 1e-6) {
+          const minX = Math.min(a0.x, b0.x), maxX = Math.max(a0.x, b0.x);
+          const sMin = Math.min(p0.x, p1.x), sMax = Math.max(p0.x, p1.x);
+          if (sMin >= minX - 1e-6 && sMax <= maxX + 1e-6) return;
+        }
+        if (vert && Math.abs(a0.x - p0.x) < 1e-6 && Math.abs(b0.x - p0.x) < 1e-6) {
+          const minY = Math.min(a0.y, b0.y), maxY = Math.max(a0.y, b0.y);
+          const sMin = Math.min(p0.y, p1.y), sMax = Math.max(p0.y, p1.y);
+          if (sMin >= minY - 1e-6 && sMax <= maxY + 1e-6) return;
+        }
+      }
+    }
+    wires.push({ id: State.uid('wire'), points: [p0, p1], color: color || defaultWireColor, stroke: undefined } as Wire);
+  }
+
+  // Bridge only between facing pins of nearest neighbor components on the same axis
+  function ensureFacingBridgesFor(comp: Component) {
+    const pins = Components.compPinPositions(comp).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
+    if (pins.length < 1) return;
+    const axis: 'x' | 'y' = (pins.length >= 2 && Math.abs(pins[0].x - pins[1].x) < 0.1) ? 'y' : 'x';
+    const fixed = axis === 'x' ? pins[0].y : pins[0].x;
+    const sortedPins = pins.slice().sort((a,b) => axis==='x' ? a.x - b.x : a.y - b.y);
+    const leftPin = sortedPins[0];
+    const rightPin = sortedPins[sortedPins.length - 1];
+    // find nearest neighbor component to the right (same axis/fixed)
+    let rightNeighborPin: Point | null = null;
+    let bestRightD = Infinity;
+    let leftNeighborPin: Point | null = null;
+    let bestLeftD = Infinity;
+    for (const other of components) {
+      if (other.id === comp.id) continue;
+      const opins = Components.compPinPositions(other).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
+      if (opins.length < 1) continue;
+      // must be same fixed on axis
+      const sameFixed = axis === 'x' ? opins.every(p => Math.abs(p.y - fixed) <= AXIS_EPS) : opins.every(p => Math.abs(p.x - fixed) <= AXIS_EPS);
+      if (!sameFixed) continue;
+      const oSorted = opins.slice().sort((a,b) => axis==='x' ? a.x - b.x : a.y - b.y);
+      const oLeft = oSorted[0];
+      const oRight = oSorted[oSorted.length - 1];
+      if (axis === 'x') {
+        const dR = oLeft.x - rightPin.x; // neighbor to right
+        if (dR > 0 && dR < bestRightD) { bestRightD = dR; rightNeighborPin = oLeft; }
+        const dL = leftPin.x - oRight.x; // neighbor to left
+        if (dL > 0 && dL < bestLeftD) { bestLeftD = dL; leftNeighborPin = oRight; }
+      } else {
+        const dR = oLeft.y - rightPin.y;
+        if (dR > 0 && dR < bestRightD) { bestRightD = dR; rightNeighborPin = oLeft; }
+        const dL = leftPin.y - oRight.y;
+        if (dL > 0 && dL < bestLeftD) { bestLeftD = dL; leftNeighborPin = oRight; }
+      }
+    }
+    // Add bridge segments only if there is a positive gap and the segment doesn't already exist
+    if (rightNeighborPin) {
+      // Only bridge to the right if there isn't already an outward segment from this pin to the right
+      if (!hasOutwardSegmentFromPin(rightPin, axis, 1)) {
+        addWireSegment(rightPin, rightNeighborPin);
+        dbg('bridge:facing-right', { id: comp.id, from: rightPin, to: rightNeighborPin });
+      } else {
+        dbg('bridge:skip-right-existing', { id: comp.id, pin: rightPin });
+      }
+    }
+    if (leftNeighborPin) {
+      // Only bridge to the left if there isn't already an outward segment from this pin to the left
+      if (!hasOutwardSegmentFromPin(leftPin, axis, -1)) {
+        addWireSegment(leftPin, leftNeighborPin);
+        dbg('bridge:facing-left', { id: comp.id, from: leftPin, to: leftNeighborPin });
+      } else {
+        dbg('bridge:skip-left-existing', { id: comp.id, pin: leftPin });
+      }
+    }
+  }
+  function ensureBridgingSegmentsForComponent(comp: Component) {
+    // Determine axis from component pins
+    const pins = Components.compPinPositions(comp).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
+    if (pins.length < 1) return;
+    const axis: 'x' | 'y' = (pins.length >= 2 && Math.abs(pins[0].x - pins[1].x) < 0.1) ? 'y' : 'x';
+    const fixed = axis === 'x' ? pins[0].y : pins[0].x;
+
+    // For left and right pin independently, connect to nearest neighbor on that side
+    const sortedPins = pins.slice().sort((a,b) => axis==='x' ? a.x - b.x : a.y - b.y);
+    const leftPin = sortedPins[0];
+    const rightPin = sortedPins[sortedPins.length - 1];
+
+    // Left side neighbor (dir -1)
+    const leftNeighbor = nearestNeighborOnAxis(leftPin, axis, fixed, -1, comp.id);
+    if (leftNeighbor && !eqPoint(leftNeighbor, rightPin)) {
+      addWireSegment(leftPin, leftNeighbor);
+      dbg('bridge:add', { id: comp.id, from: leftPin, to: leftNeighbor });
+    }
+    // Right side neighbor (dir +1)
+    const rightNeighbor = nearestNeighborOnAxis(rightPin, axis, fixed, 1, comp.id);
+    if (rightNeighbor && !eqPoint(rightNeighbor, leftPin)) {
+      addWireSegment(rightPin, rightNeighbor);
+      dbg('bridge:add', { id: comp.id, from: rightPin, to: rightNeighbor });
+    }
+  }
 
   // Suppress the next contextmenu after right-click finishing a wire
   let suppressNextContextMenu = false;
@@ -1769,6 +2031,7 @@ import {
       componentDragState = null;
       
       // Check if component is embedded on a wire (constrained sliding)
+      dbg('pd:start', { id: c.id, x: c.x, y: c.y });
       const pins0 = Components.compPinPositions(c).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
       // First, check if component pins are ON wires but wires haven't been broken yet
       // This handles old components that were placed before the wire-breaking fix
@@ -1778,13 +2041,28 @@ import {
         // Now the wires should be properly broken at the pin locations
       }
       
-      const wsA = wiresEndingAt(pins0[0]);
-      const wsB = wiresEndingAt(pins0[1] || pins0[0]);
-      const isEmbedded = (wsA.length === 1 && wsB.length === 1 && wsA[0] && wsB[0]);
+      let wsA = wiresEndingAt(pins0[0]);
+      let wsB = wiresEndingAt(pins0[1] || pins0[0]);
+      let hitAForFallback: { w: Wire; endIndex: number } | null = null;
+      let hitBForFallback: { w: Wire; endIndex: number } | null = null;
+      let embeddedFlag = !!(wsA.length === 1 && wsB.length === 1 && wsA[0] && wsB[0]);
+      if (!embeddedFlag) {
+        // Fallback: treat as embedded if wire endpoints are near the pins (tolerant)
+        const hitAfb = findWireEndpointNear(pins0[0], 1.5);
+        const hitBfb = findWireEndpointNear(pins0[1] || pins0[0], 1.5);
+        if (hitAfb && hitBfb) {
+          embeddedFlag = true;
+          wsA = [hitAfb.w];
+          wsB = [hitBfb.w];
+          hitAForFallback = hitAfb as any;
+          hitBForFallback = hitBfb as any;
+          dbg('embedded:fallback', { id: c.id, wireA: hitAfb.w.id, wireB: hitBfb.w.id });
+        }
+      }
       
       // If component is embedded on a wire, patch the wire by joining the two segments
       // THEN build slide context from the mended wire
-      if (isEmbedded) {
+      if (embeddedFlag) {
         moveCollapseCtx = null; // Don't use SWP for embedded components
         
         // Temporarily patch the wire where the component was by joining the two segments
@@ -1794,8 +2072,8 @@ import {
         const pinB = pins0[1] || pins0[0];
         
         // Find which endpoints of each wire connect to which pin
-        const wAEndAtA = wireEndsAt(wA, pinA);
-        const wBEndAtB = wireEndsAt(wB, pinB);
+        const wAEndAtA = hitAForFallback ? hitAForFallback.endIndex : wireEndsAt(wA, pinA);
+        const wBEndAtB = hitBForFallback ? hitBForFallback.endIndex : wireEndsAt(wB, pinB);
         
         if (wA.id !== wB.id && wAEndAtA !== null && wBEndAtB !== null) {
           // BEFORE mending, find all components on these aligned wires
@@ -1833,6 +2111,7 @@ import {
             { w: wA, endIndex: wAEndAtA },
             { w: wB, endIndex: wBEndAtB }
           );
+          dbg('mend:initial', { id: c.id, wireCountBefore: beforeWireCount, after: wires.length });
           // Don't call redrawCanvasOnly() here - it would destroy the component we're dragging!
           
           // After mending, find ALL wire points on the same axis at the same fixed coordinate
@@ -1882,6 +2161,13 @@ import {
                 pinBStart: pins0[1],
                 otherComponents: otherComponentsOnWire // Store components that need gaps restored
               };
+
+              // Persist embedded relationship on the component
+              c.embeddedInWireId = alignedWires[0].id;
+              c.embeddedAxis = axis;
+              c.embeddedFixed = fixed;
+              if (!c.connectedTo) c.connectedTo = [];
+              dbg('slideCtx:set', { id: c.id, axis, fixed, min: slideCtx.min, max: slideCtx.max, wireA: slideCtx.wA.id, wireB: slideCtx.wB.id, others: otherComponentsOnWire.map(o=>o.id) });
             } else {
               slideCtx = null;
             }
@@ -1911,6 +2197,7 @@ import {
         embedded: isEmbedded,
         wA: wsA[0] || null, wB: wsB[0] || null
       };
+      dbg('pd:end', { id: c.id, embedded: !!slideCtx });
       e.preventDefault();
       if (typeof g.setPointerCapture === 'function' && e.isPrimary) {
         try { g.setPointerCapture(e.pointerId); } catch (_) { }
@@ -1955,10 +2242,7 @@ import {
               .forEach(c => c.enabled = true);
           }
           
-          console.log(`🔍 Constraint check: ${c.label} to (${candX}, ${candY}) - Allowed: ${result.allowed}${shiftHeld ? ' (Shift: bbox disabled)' : ''}`);
-          if (!result.allowed) {
-            console.log(`   Violations:`, result.violatedConstraints.map(v => v.reason));
-          }
+          // Debug logs removed
           if (result.allowed) {
             moveAllowed = true;
             candX = result.finalPosition.x;
@@ -2072,6 +2356,10 @@ import {
         const cand = { x: snap(p.x + dragOff.x), y: snap(p.y + dragOff.y) };
         let candX = cand.x;
         let candY = cand.y;
+        const chain = isEmbeddedChain(c);
+        if (chain) {
+          if (chain.axis === 'x') candY = chain.fixed; else candX = chain.fixed;
+        }
         
         // Check constraints if enabled (skip bounding box constraint if Shift is held)
         if (USE_CONSTRAINTS && constraintSolver) {
@@ -2096,6 +2384,7 @@ import {
           if (!result.allowed) return; // Movement blocked
           candX = result.finalPosition.x;
           candY = result.finalPosition.y;
+          if (chain) { if (chain.axis === 'x') candY = chain.fixed; else candX = chain.fixed; }
         }
         
         // Move component freely
@@ -2211,14 +2500,24 @@ import {
                 .forEach(c => c.enabled = true);
             }
             
-            if (!result.allowed) return; // Movement blocked
+            if (!result.allowed) { dbg('move:block', { id: c.id, reason: 'constraints' }); return; }
+            // Enforce slide axis to prevent drifting off the wire
             candX = result.finalPosition.x;
-            candY = result.finalPosition.y;
+            candY = slideCtx.fixed; // lock to wire centerline
+            // Clamp within slide bounds and snap to grid
+            candX = Math.max(Math.min(slideCtx.max, snap(candX)), slideCtx.min);
           } else if (overlapsAnyOtherAt(c, candX, candY) || pinsCoincideAnyAt(c, candX, candY)) {
+            dbg('move:block', { id: c.id, reason: 'legacy-overlap' }); return;
+          }
+
+          // Hard block if candidate would overlap other embedded components along this axis
+          if (wouldOverlapOnAxis(c, candX, candY, slideCtx.axis, slideCtx.fixed)) {
+            dbg('move:block', { id: c.id, reason: 'axis-overlap-x' });
             return;
           }
           
           c.x = candX; c.y = candY;
+          dbg('move:slide', { id: c.id, x: c.x, y: c.y });
           updateComponentDOM(c);
           updateCoordinateDisplay(c.x, c.y);
           updateCoordinateInputs(c.x, c.y);
@@ -2248,16 +2547,26 @@ import {
                 .forEach(c => c.enabled = true);
             }
             
-            if (!result.allowed) return; // Movement blocked
-            candX = result.finalPosition.x;
+            if (!result.allowed) { dbg('move:block', { id: c.id, reason: 'constraints' }); return; }
+            // Enforce slide axis to prevent drifting off the wire
+            candX = slideCtx.fixed; // lock to wire centerline
             candY = result.finalPosition.y;
+            // Clamp within slide bounds and snap to grid
+            candY = Math.max(Math.min(slideCtx.max, snap(candY)), slideCtx.min);
           } else if (!overlapsAnyOtherAt(c, candX, candY) && !pinsCoincideAnyAt(c, candX, candY)) {
             // Legacy check passed
           } else {
+            dbg('move:block', { id: c.id, reason: 'legacy-overlap' }); return;
+          }
+
+          // Hard block if candidate would overlap other embedded components along this axis
+          if (wouldOverlapOnAxis(c, candX, candY, slideCtx.axis, slideCtx.fixed)) {
+            dbg('move:block', { id: c.id, reason: 'axis-overlap-y' });
             return;
           }
           
           c.y = candY; c.x = candX;
+          dbg('move:slide', { id: c.id, x: c.x, y: c.y });
           updateComponentDOM(c);
           updateCoordinateDisplay(c.x, c.y);
           updateCoordinateInputs(c.x, c.y);
@@ -2268,6 +2577,23 @@ import {
         const cand = { x: snap(p.x + dragOff.x), y: snap(p.y + dragOff.y) };
         let candX = cand.x;
         let candY = cand.y;
+
+        // Determine if this component is embedded or part of an embedded chain
+        const chainInfo = isEmbeddedChain(c);
+        const axisForLock: 'x' | 'y' | null = (c.embeddedAxis as any) || (chainInfo ? chainInfo.axis : null);
+        const fixedForLock: number | null = (c.embeddedFixed as any) ?? (chainInfo ? chainInfo.fixed : null);
+
+        // If component has a persistent embedded relationship or chain, lock movement to axis
+        if (axisForLock && fixedForLock !== null && fixedForLock !== undefined) {
+          const offAxisDelta = axisForLock === 'x' ? Math.abs(candY - fixedForLock) : Math.abs(candX - fixedForLock);
+          if (offAxisDelta > AXIS_EPS) {
+            // Hard block lateral move off the wire/chain
+            dbg('axis-lock:block-off-axis', { id: c.id, axis: axisForLock, fixed: fixedForLock, offAxisDelta });
+            return;
+          }
+          if (axisForLock === 'x') candY = fixedForLock; else candX = fixedForLock;
+          dbg('axis-lock:free', { id: c.id, axis: axisForLock, fixed: fixedForLock });
+        }
         
         // Check constraints if enabled (skip bounding box constraint if Shift is held)
         if (USE_CONSTRAINTS && constraintSolver) {
@@ -2289,16 +2615,30 @@ import {
               .forEach(c => c.enabled = true);
           }
           
-          if (!result.allowed) return; // Movement blocked
+          if (!result.allowed) { dbg('move:block', { id: c.id, reason: 'constraints' }); return; }
           candX = result.finalPosition.x;
           candY = result.finalPosition.y;
+          // Re-enforce axis lock after constraints
+          if (axisForLock && fixedForLock !== null && fixedForLock !== undefined) {
+            if (axisForLock === 'x') candY = fixedForLock; else candX = fixedForLock;
+            dbg('axis-lock:reapply', { id: c.id, axis: axisForLock, fixed: fixedForLock });
+          }
         } else if (!overlapsAnyOtherAt(c, candX, candY)) {
           // Legacy check passed
         } else {
-          return;
+          dbg('move:block', { id: c.id, reason: 'legacy-overlap' }); return;
+        }
+
+        // If axis-locked, also block overlaps along that axis at the candidate position
+        if (axisForLock && fixedForLock !== null && fixedForLock !== undefined) {
+          if (wouldOverlapOnAxis(c, candX, candY, axisForLock as 'x' | 'y', fixedForLock as number)) {
+            dbg('move:block', { id: c.id, reason: 'axis-overlap-free' });
+            return;
+          }
         }
         
         c.x = candX; c.y = candY;
+        dbg('move:free', { id: c.id, x: c.x, y: c.y });
         updateComponentDOM(c);
         updateCoordinateDisplay(c.x, c.y);
         updateCoordinateInputs(c.x, c.y);
@@ -2322,6 +2662,7 @@ import {
           dragStart = null;
           draggedComponentId = null;
           renderDrawing(); // Clear ghost wires
+          dbg('pu:finish-swp', { id: c.id });
           return;
         }
         
@@ -2434,7 +2775,14 @@ import {
           // Rebuild topology and redraw
           rebuildTopology();
           redraw();
+          // After lateral finalize, ensure gaps near moved component are bridged
+          ensureBridgingSegmentsForComponent(c);
+          normalizeAllWires();
+          unifyInlineWires();
+          rebuildTopology();
+          redraw();
           renderDrawing(); // Clear ghost wires from drawing layer
+          dbg('pu:finalize-lateral', { id: c.id });
           
           componentDragState = null;
           dragStart = null;
@@ -2449,19 +2797,32 @@ import {
           if ((slideCtx as any).otherComponents) {
             componentsToBreakFor.push(...(slideCtx as any).otherComponents);
           }
-          let anyBroke = false;
           for (const embComp of componentsToBreakFor) {
-            if (breakWiresForComponent(embComp)) anyBroke = true;
+            breakWiresForComponent(embComp);
             deleteBridgeBetweenPins(embComp);
+            const removed = removeThroughBodySegmentsForComponent(embComp);
+            if (removed) dbg('cleanup:through-body-removed', { id: embComp.id, removed });
           }
-          if (anyBroke) {
-            normalizeAllWires();
-            unifyInlineWires();
-            rebuildTopology();
-            redraw();
-          } else {
-            updateComponentDOM(c);
+
+          // Ensure we mend across the component's original position to close any residual gap
+          if (dragStart.pins && dragStart.pins.length >= 1) {
+            const pinA0 = dragStart.pins[0];
+            const pinB0 = dragStart.pins[1] || dragStart.pins[0];
+            const hitA0 = findWireEndpointNear(pinA0, 1.1);
+            const hitB0 = findWireEndpointNear(pinB0, 1.1);
+            if (hitA0 && hitB0 && hitA0.w && hitB0.w && hitA0.w.id !== hitB0.w.id) {
+              mendWireAtPoints(hitA0, hitB0);
+              dbg('mend:original-gap', { id: c.id });
+            }
           }
+
+          normalizeAllWires();
+          unifyInlineWires();
+          rebuildTopology();
+          redraw();
+          // Do NOT auto-bridge when still embedded; connection already continuous
+          dbg('pu:embedded-finish', { id: c.id });
+
           componentDragState = null;
           dragStart = null;
           draggedComponentId = null;
@@ -2491,8 +2852,9 @@ import {
             const finalWsA = wiresEndingAt(finalPins[0]);
             const finalWsB = wiresEndingAt(finalPins[1] || finalPins[0]);
             const stillEmbedded = (finalWsA.length === 1 && finalWsB.length === 1 && finalWsA[0] && finalWsB[0]);
+            const chainFinal = isEmbeddedChain(c);
             
-            if (stillEmbedded) {
+            if (stillEmbedded || chainFinal || (c.embeddedInWireId)) {
               // Still on wire - break wire for this component AND restore gaps for other components
               const componentsToBreakFor = [c];
               if (slideCtx && slideCtx.otherComponents) {
@@ -2508,6 +2870,8 @@ import {
               // Delete bridges for all components
               for (const embComp of componentsToBreakFor) {
                 deleteBridgeBetweenPins(embComp);
+                const removed = removeThroughBodySegmentsForComponent(embComp);
+                if (removed) dbg('cleanup:through-body-removed', { id: embComp.id, removed });
               }
               
               if (anyBroke) {
@@ -2515,10 +2879,36 @@ import {
               } else {
                 updateComponentDOM(c);
               }
+              // Bridge only the gap between nearest neighbor components along the same axis
+              ensureFacingBridgesFor(c);
+              normalizeAllWires();
+              unifyInlineWires();
+              rebuildTopology();
+              redraw();
+              dbg('pu:still-embedded', { id: c.id, anyBroke });
             } else {
-              // Component was moved OFF the wire - don't break wires, just update component
-              // The mended wire should remain intact
-              redraw(); // Redraw to show the wire without gaps
+              // Component was moved OFF the wire – close the gap left at original position
+              if (dragStart.pins && dragStart.pins.length >= 1) {
+                const pinA0 = dragStart.pins[0];
+                const pinB0 = dragStart.pins[1] || dragStart.pins[0];
+                const hitA0 = findWireEndpointNear(pinA0, 1.1);
+                const hitB0 = findWireEndpointNear(pinB0, 1.1);
+                if (hitA0 && hitB0 && hitA0.w && hitB0.w && hitA0.w.id !== hitB0.w.id) {
+                  mendWireAtPoints(hitA0, hitB0);
+                  normalizeAllWires();
+                  unifyInlineWires();
+                  rebuildTopology();
+                  dbg('mend:off-wire-gap', { id: c.id });
+                }
+              }
+              // If this move truly goes off-wire, block and restore original axis (disallow lateral move)
+              if (c.embeddedAxis && c.embeddedFixed !== null && c.embeddedFixed !== undefined) {
+                // Snap back to fixed axis
+                if (c.embeddedAxis === 'x') c.y = c.embeddedFixed as number; else c.x = c.embeddedFixed as number;
+                updateComponentDOM(c);
+                dbg('axis-lock:snapback', { id: c.id, axis: c.embeddedAxis, fixed: c.embeddedFixed });
+              }
+              redraw(); // Ensure canvas reflects mended wire
             }
           }
         }
@@ -2817,7 +3207,7 @@ import {
                 return { wire, isStart, originalPoint };
               });
               
-              console.log(`connectedAtStart: ${connectedAtStart.length} wires:`, connectedAtStart.map(c => `${c.wire.id}`));
+              // Debug log removed
               
               // Find wires connected at end point
               // If a junction (manual or automatic) exists at p1, do not treat wires as connected for stretching
@@ -3099,7 +3489,6 @@ import {
     // Remove existing endpoint circles
     try {
       const existing = $qa('[data-endpoint]', gOverlay);
-      console.log('Removing existing endpoint circles:', existing.length);
       existing.forEach(el => el.remove());
     } catch (_) { }
     // Redraw them (respecting draggedComponentId filter)
@@ -3758,6 +4147,46 @@ import {
     }
     return broke;
   }
+  // Remove any collinear wire segments that lie inside a 2-pin component body
+  // Cases handled:
+  //  - segment fully between the two pins (strict interior)
+  //  - short stub from a pin into the interior (one end equals pin, other strictly inside)
+  function removeThroughBodySegmentsForComponent(c: Component) {
+    const pins = Components.compPinPositions(c);
+    if (pins.length !== 2) return 0;
+    const a = { x: snapToBaseScalar(pins[0].x), y: snapToBaseScalar(pins[0].y) };
+    const b = { x: snapToBaseScalar(pins[1].x), y: snapToBaseScalar(pins[1].y) };
+    const axis: 'x'|'y' = Math.abs(a.x - b.x) < 0.1 ? 'y' : 'x';
+    const fixed = axis === 'x' ? a.y : a.x;
+    const lo = axis === 'x' ? Math.min(a.x, b.x) : Math.min(a.y, b.y);
+    const hi = axis === 'x' ? Math.max(a.x, b.x) : Math.max(a.y, b.y);
+    const EPS = 1e-6;
+    let removed = 0;
+    const keep: Wire[] = [];
+    for (const w of wires) {
+      if (w.points.length !== 2) { keep.push(w); continue; }
+      const p0 = { x: snapToBaseScalar(w.points[0].x), y: snapToBaseScalar(w.points[0].y) };
+      const p1 = { x: snapToBaseScalar(w.points[1].x), y: snapToBaseScalar(w.points[1].y) };
+      let collinear = false;
+      let u0 = 0, u1 = 0; // coordinates along axis
+      if (axis === 'x' && Math.abs(p0.y - fixed) < EPS && Math.abs(p1.y - fixed) < EPS) {
+        collinear = true; u0 = p0.x; u1 = p1.x;
+      } else if (axis === 'y' && Math.abs(p0.x - fixed) < EPS && Math.abs(p1.x - fixed) < EPS) {
+        collinear = true; u0 = p0.y; u1 = p1.y;
+      }
+      if (!collinear) { keep.push(w); continue; }
+      const e0AtPin = (Math.abs(u0 - lo) < EPS) || (Math.abs(u0 - hi) < EPS);
+      const e1AtPin = (Math.abs(u1 - lo) < EPS) || (Math.abs(u1 - hi) < EPS);
+      const e0Inside = (u0 > lo + EPS) && (u0 < hi - EPS);
+      const e1Inside = (u1 > lo + EPS) && (u1 < hi - EPS);
+      // remove if fully inside, or if one end is pin and the other inside
+      const remove = (e0Inside && e1Inside) || ((e0AtPin && e1Inside) || (e1AtPin && e0Inside));
+      if (remove) { removed++; continue; }
+      keep.push(w);
+    }
+    if (removed) wires = keep;
+    return removed;
+  }
   function breakNearestWireAtPin(pin) {
     // Break ALL wire segments that should be split at this pin location
     // Collect segments that need breaking to avoid modifying array during iteration
@@ -3985,7 +4414,7 @@ import {
   // ====== Constraint System Initialization ======
   function initConstraintSystem() {
     constraintSolver = new ConstraintSolver(snap, snapToBaseScalar);
-    console.log('✅ Constraint system initialized');
+    // Info log removed
     
     // Expose to window for console access
     (window as any).constraintSolver = constraintSolver;
@@ -3995,7 +4424,7 @@ import {
       get() { return USE_CONSTRAINTS; },
       set(value: boolean) { 
         USE_CONSTRAINTS = value; 
-        console.log(`Constraint system ${value ? 'ENABLED' : 'DISABLED'}`);
+        // Toggle log removed
         if (value) {
           syncConstraints(); // Sync when enabling
         }
@@ -4007,7 +4436,7 @@ import {
       get() { return USE_MANHATTAN_ROUTING; },
       set(value: boolean) { 
         USE_MANHATTAN_ROUTING = value; 
-        console.log(`Manhattan routing ${value ? 'ENABLED' : 'DISABLED'}`);
+        // Toggle log removed
         if (drawing.active) {
           renderDrawing(); // Update preview if wire drawing is active
         }
@@ -4030,6 +4459,58 @@ import {
       maxDist = Math.max(maxDist, dist);
     }
     return maxDist;
+  }
+  // Determine if a component is part of an embedded chain constrained to a single wire
+  function isEmbeddedChain(c: Component): { axis: 'x' | 'y'; fixed: number } | null {
+    const pins = Components.compPinPositions(c).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
+    if (pins.length < 2) return null;
+    const axis: 'x' | 'y' = Math.abs(pins[0].x - pins[1].x) < 0.1 ? 'y' : 'x';
+    const fixed = axis === 'x' ? pins[0].y : pins[0].x;
+
+    const endHasWire = (pt: Point) => {
+      const ws = wiresEndingAt(pt);
+      if (ws.length > 0) return true;
+      const hit = findWireEndpointNear(pt, 1.5);
+      return !!hit;
+    };
+
+    const pinCoincidesWithOtherCompPin = (pt: Point) => {
+      for (const other of components) {
+        if (other.id === c.id) continue;
+        const opins = Components.compPinPositions(other).map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));
+        for (const op of opins) {
+          if (Geometry.eqPtEps(op, pt, 1)) return { other, opins };
+        }
+      }
+      return null;
+    };
+
+    const leftConnectsWire = endHasWire(pins[0]);
+    const rightConnectsWire = endHasWire(pins[1]);
+    const rightCoinc = pinCoincidesWithOtherCompPin(pins[1]);
+    const rightChainToWire = (() => {
+      if (!rightCoinc) return false;
+      const otherPins = rightCoinc.opins;
+      if (otherPins.length < 2) return false;
+      const otherPin = Math.abs(otherPins[0].x - pins[1].x) < 0.1 && Math.abs(otherPins[0].y - pins[1].y) < 0.1 ? otherPins[1] : otherPins[0];
+      return endHasWire(otherPin);
+    })();
+
+    if (leftConnectsWire && (rightConnectsWire || rightChainToWire)) {
+      return { axis, fixed };
+    }
+    const leftCoinc = pinCoincidesWithOtherCompPin(pins[0]);
+    const leftChainToWire = (() => {
+      if (!leftCoinc) return false;
+      const otherPins = leftCoinc.opins;
+      if (otherPins.length < 2) return false;
+      const otherPin = Math.abs(otherPins[0].x - pins[0].x) < 0.1 && Math.abs(otherPins[0].y - pins[0].y) < 0.1 ? otherPins[1] : otherPins[0];
+      return endHasWire(otherPin);
+    })();
+    if (rightConnectsWire && leftChainToWire) {
+      return { axis, fixed };
+    }
+    return null;
   }
 
   /**
@@ -4115,21 +4596,27 @@ import {
   function syncConstraints() {
     if (!constraintSolver || !USE_CONSTRAINTS) return;
     
-    console.log(`🔄 Syncing constraints for ${components.length} components:`, components.map(c => `${c.id}(${c.label})`).join(', '));
+    // Sync debug log removed
     
     // Clear temporary constraints from previous sync
     const clearedCount = constraintSolver.clearTemporaryConstraints();
-    console.log(`   Cleared ${clearedCount} temporary constraints`);
     
     // Add all components as entities with constraints
     for (const c of components) {
       // Create entity for this component
+      // Compute pin offsets relative to component origin for constraint math
+      let pinOffsets: { x: number, y: number }[] = [];
+      try {
+        const pinsAbs = Components.compPinPositions(c);
+        pinOffsets = pinsAbs.map(p => ({ x: p.x - c.x, y: p.y - c.y }));
+      } catch (_) { /* ignore */ }
+
       const entity: Entity = {
         id: c.id,
         type: 'component' as const,
         position: { x: c.x, y: c.y },
         constraints: new Set<string>(),
-        metadata: { type: c.type, label: c.label, rot: c.rot }
+        metadata: { type: c.type, label: c.label, rot: c.rot, pinOffsets }
       };
       
       // Add or update entity in graph
@@ -4139,7 +4626,7 @@ import {
       } else {
         // Update position and metadata
         existing.position = { x: c.x, y: c.y };
-        existing.metadata = { type: c.type, label: c.label, rot: c.rot };
+        existing.metadata = { type: c.type, label: c.label, rot: c.rot, pinOffsets };
       }
       
       // Add grid snap constraint based on current snap mode
@@ -4187,15 +4674,20 @@ import {
             if (isPerpendicular) {
               // Perpendicular: Allow T-connections, minimal clearance
               minDistance = 10;
-              console.log(`🔍 Min-distance (perpendicular): ${c.label} <-> ${other.label}, Min: ${minDistance}`);
+              // Debug log removed
             } else {
               // Use bounding box collision - pass geometry parameters
               minDistance = 0; // Not used for bbox collision, but required by interface
-              console.log(`🔍 Bounding box constraint: ${c.label} <-> ${other.label}`);
-              console.log(`   ${c.label}: extent=${bbox1.extent}, width=${bbox1.width}`);
-              console.log(`   ${other.label}: extent=${bbox2.extent}, width=${bbox2.width}`);
+              // Debug logs removed
             }
             
+        // Global component clearance override (optional)
+        const clearanceOverridePx = (() => {
+          const v = localStorage.getItem('constraints.componentClearancePx');
+          const n = v ? parseFloat(v) : NaN;
+          return isNaN(n) ? undefined : n;
+        })();
+
         constraintSolver.addConstraint({
           id: `no_overlap_${c.id}_${other.id}`,
           type: 'min-distance',
@@ -4207,15 +4699,39 @@ import {
             bodyExtent: bbox1.extent,
             bodyWidth: bbox1.width,
             bodyExtent2: bbox2.extent,
-            bodyWidth2: bbox2.width
+            bodyWidth2: bbox2.width,
+            ...(clearanceOverridePx !== undefined ? { clearanceOverridePx } : {})
           },
           enabled: true,
           metadata: { temporary: true }
         });
+
+        // Add pin-touch guidance when pins are near and on-grid
+        try {
+          const pinsA = Components.compPinPositions(c);
+          const pinsB = Components.compPinPositions(other);
+          const nearOnGrid = (pa: Point, pb: Point) => isOnGrid(pa) && isOnGrid(pb) && Math.hypot(pa.x - pb.x, pa.y - pb.y) <= PIN_CONNECT_EPS;
+          for (let ia = 0; ia < pinsA.length; ia++) {
+            for (let ib = 0; ib < pinsB.length; ib++) {
+              const pa = pinsA[ia];
+              const pb = pinsB[ib];
+              if (!nearOnGrid(pa, pb)) continue;
+              constraintSolver.addConstraint({
+                id: `pin_touch_${c.id}_${ia}__${other.id}_${ib}`,
+                type: 'pin-touch',
+                priority: 150,
+                entities: [c.id, other.id],
+                params: { pinIndex: ia, targetEntityId: other.id, targetPinIndex: ib, epsilon: PIN_CONNECT_EPS, gridOnly: true },
+                enabled: true,
+                metadata: { temporary: true, reason: 'on-grid pin coincidence' }
+              });
+            }
+          }
+        } catch (_) { /* non-fatal */ }
       }
     }
     
-    console.log(`Synced ${components.length} components with constraint system`);
+    // Sync summary log removed
   }
 
   // Collect anchor points: component pins and wire endpoints (snapped to base grid)
@@ -4905,7 +5421,7 @@ import {
       } else if (USE_CONSTRAINTS && constraintSolver && shiftHeld) {
         // Shift held - allow overlapping placement
         syncConstraints(); // Still need to sync the new component
-        console.log(`🔑 Shift: Placed ${comp.label} at (${comp.x}, ${comp.y}) (collision check bypassed)`);
+        // Debug log removed
       }
       
       // Break wires at pins and remove inner bridge segment for 2-pin parts
@@ -7954,14 +8470,16 @@ import {
     return inp;
   }
 
-  // Forward declaration for junction size UI update
+  // Forward declarations for UI updates on unit change
   let updateJunctionSizeUI: (() => void) | null = null;
+  let updateComponentClearanceUI: (() => void) | null = null;
 
   // Update UI after unit changes
   function setGlobalUnits(u: 'mm' | 'in' | 'mils') {
     globalUnits = u; saveGlobalUnits();
     // Update junction size label and input
     if (updateJunctionSizeUI) updateJunctionSizeUI();
+    if (updateComponentClearanceUI) updateComponentClearanceUI();
     // Refresh inspector UI and any open popovers
     renderInspector(); // safe to call repeatedly
   }
@@ -8008,6 +8526,52 @@ import {
       updateCapacitorSubtypeButtons();
       // Note: Don't redraw canvas - only affects newly placed resistors
     });
+
+    // Component Clearance (Constraints) in Project Settings
+    try {
+      const constraintsSection = document.querySelector('[data-section-content="constraints"]');
+      const settingsSectionFallback = document.querySelector('[data-section-content="settings"]');
+      const injectionTarget = constraintsSection || settingsSectionFallback;
+      if (injectionTarget) {
+        // Row: label
+        const rowLbl = document.createElement('div');
+        rowLbl.className = 'row';
+        const lbl = document.createElement('label');
+        lbl.textContent = 'Component Clearance';
+        rowLbl.appendChild(lbl);
+        injectionTarget.appendChild(rowLbl);
+
+        // Row: input (unit-aware, stored in px)
+        const rowInp = document.createElement('div');
+        rowInp.className = 'row';
+
+        const getPx = (): number => {
+          const v = localStorage.getItem('constraints.componentClearancePx');
+          const n = v ? parseFloat(v) : NaN;
+          return isNaN(n) ? 0 : Math.max(0, n);
+        };
+
+        const inp = dimNumberPx(getPx(), (px: number) => {
+          const clamped = Math.max(0, Math.round(px));
+          localStorage.setItem('constraints.componentClearancePx', String(clamped));
+          // Apply immediately by re-syncing constraints
+          if (USE_CONSTRAINTS && constraintSolver) {
+            syncConstraints();
+          }
+        });
+        inp.title = 'Minimum spacing enforced between component bodies. Pins may still touch.';
+        inp.id = 'componentClearanceInput';
+        rowInp.appendChild(inp);
+        injectionTarget.appendChild(rowInp);
+
+        // Keep value display in sync with units
+        updateComponentClearanceUI = () => {
+          const currPx = getPx();
+          const nm = pxToNm(currPx);
+          inp.value = formatDimForDisplay(nm, globalUnits);
+        };
+      }
+    } catch {}
 
     // Junction dot size selector (custom button-based selector)
     const updateJunctionSizeSelection = (size: 'smallest' | 'small' | 'default' | 'large' | 'largest') => {
@@ -8407,7 +8971,6 @@ import {
       for (const update of result.affectedEntities) {
         if (update.id !== c.id) {
           // Handle other entity updates (wires, junctions, etc.)
-          console.log('Constraint update:', update);
         }
       }
       
@@ -9354,6 +9917,8 @@ import {
       // Gather all wires touching this node
       const wireIds = new Set();
       let hasMidSegment = false;
+      // Track axes of connected edges at this node to detect non-collinear joins
+      const axesAtNode = new Set<'x'|'y'>();
       for (const eid of node.edges) {
         const edge = edges.find(e => e.id === eid);
         if (edge && edge.wireId) {
@@ -9364,15 +9929,30 @@ import {
             const isStart = (Math.round(w.points[0].x) === node.x && Math.round(w.points[0].y) === node.y);
             const isEnd = (Math.round(w.points[w.points.length - 1].x) === node.x && Math.round(w.points[w.points.length - 1].y) === node.y);
             if (!isStart && !isEnd) hasMidSegment = true;
+
+            // Determine axis of the edge relative to this node (for non-collinearity check)
+            let ax: 'x'|'y'|null = null;
+            const n = w.points.length;
+            if (n >= 2) {
+              let other: {x:number,y:number} | null = null;
+              if (isStart) other = w.points[1];
+              else if (isEnd) other = w.points[n-2];
+              else if (n === 2) other = w.points[1];
+              if (other) {
+                if (Math.round(other.y) === node.y) ax = 'x';
+                else if (Math.round(other.x) === node.x) ax = 'y';
+              }
+            }
+            if (ax) axesAtNode.add(ax);
           }
         }
       }
-      // Add a junction for wire-to-wire connections:
-      // - At least 3 wires meet (multiple endpoints at same point), OR
-      // - At least 2 wires meet AND at least one wire passes through (T-junction), OR
-      // - At least 2 wires meet at a component pin
+      // Add a junction for wire-to-wire connections (never for purely collinear joins):
+      // - At least 3 wires meet AND there is a perpendicular mix, OR
+      // - At least 2 wires meet AND at least one wire passes through (true T) AND there is a perpendicular mix
       const isComponentPin = pinKeys.has(k);
-      const shouldCreateJunction = (wireIds.size >= 3) || (wireIds.size >= 2 && (hasMidSegment || isComponentPin));
+      const hasPerpendicularMix = axesAtNode.size >= 2; // ensures not all wires are collinear at this node
+      const shouldCreateJunction = (wireIds.size >= 3 && hasPerpendicularMix) || (wireIds.size >= 2 && hasMidSegment && hasPerpendicularMix);
       
       if (shouldCreateJunction) {
         // Check if this location already has a manual junction (including suppressed ones)

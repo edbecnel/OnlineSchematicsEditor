@@ -32,6 +32,7 @@ export type ConstraintType =
   | 'fixed-axis'         // Movement restricted to one axis (e.g., SWP movement)
   | 'coincident'         // Multiple points must stay together (e.g., wire connections)
   | 'connected'          // Maintain connection (e.g., component pin to wire)
+  | 'pin-touch'          // Explicit: component pin coincident with target (wire/junction)
   | 'orthogonal'         // Wire segment must stay horizontal or vertical
   | 'min-distance'       // Minimum separation between entities
   | 'no-overlap'         // Entities cannot overlap
@@ -60,6 +61,7 @@ export type ConstraintParams =
   | FixedAxisParams
   | CoincidentParams
   | ConnectedParams
+  | PinTouchParams
   | OrthogonalParams
   | MinDistanceParams
   | NoOverlapParams
@@ -92,6 +94,14 @@ export interface ConnectedParams {
   pinIndex?: number;             // For component connections
 }
 
+export interface PinTouchParams {
+  pinIndex: number;              // The component pin index to touch
+  targetEntityId: string;        // The entity (wire/junction) the pin must touch
+  targetPinIndex?: number;       // Target component's pin index (if component)
+  epsilon?: number;              // Touch tolerance in world units
+  gridOnly?: boolean;            // If true, only valid when on-grid
+}
+
 export interface OrthogonalParams {
   axis?: 'x' | 'y';             // If specified, must be this axis
 }
@@ -103,6 +113,8 @@ export interface MinDistanceParams {
   bodyWidth?: number;            // Half-width of component body for AABB collision (entity 1)
   bodyExtent2?: number;          // Half-length for entity 2
   bodyWidth2?: number;           // Half-width for entity 2
+  betweenIds?: [string, string]; // Optional: scope this min-distance to a specific pair
+  clearanceOverridePx?: number;  // Optional: per-constraint clearance override
 }
 
 export interface NoOverlapParams {
