@@ -2665,8 +2665,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                     // Rebuild topology and redraw
                     rebuildTopology();
                     redraw();
-                    // After lateral finalize, ensure gaps near moved component are bridged
-                    ensureBridgingSegmentsForComponent(c);
+                    // Do not auto-bridge near the moved component; avoid creating through-body wires
                     normalizeAllWires();
                     unifyInlineWires();
                     rebuildTopology();
@@ -2774,8 +2773,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             else {
                                 updateComponentDOM(c);
                             }
-                            // Bridge only the gap between nearest neighbor components along the same axis
-                            ensureFacingBridgesFor(c);
+                            // Do not auto-bridge when component is embedded; avoid creating through-body wires
                             normalizeAllWires();
                             unifyInlineWires();
                             rebuildTopology();
