@@ -91,6 +91,30 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     const polarInputGroup = $q('#polarInputGroup');
     const coordInputLength = $q('#coordInputLength');
     const coordInputAngle = $q('#coordInputAngle');
+    const INSPECTOR_TAB_STORAGE_KEY = 'inspector.panel.tab';
+    let inspectorTab = 'selection';
+    const storedInspectorTab = localStorage.getItem(INSPECTOR_TAB_STORAGE_KEY);
+    if (storedInspectorTab === 'libraries') {
+        inspectorTab = 'libraries';
+    }
+    function setInspectorTab(tab) {
+        if (tab === inspectorTab)
+            return;
+        inspectorTab = tab;
+        localStorage.setItem(INSPECTOR_TAB_STORAGE_KEY, tab);
+        renderInspector();
+    }
+    function removeSymbolLibrary(libraryName) {
+        if (!libraryName)
+            return;
+        if (!Object.prototype.hasOwnProperty.call(projectSettings.symbolLibraries, libraryName))
+            return;
+        Inspector.clearLibraryCollapseState(libraryName);
+        const nextIndex = { ...projectSettings.symbolLibraries };
+        delete nextIndex[libraryName];
+        projectSettings = updateProjectSettings({ symbolLibraries: nextIndex });
+        renderInspector();
+    }
     let gridMode = localStorage.getItem('grid.mode') || 'line';
     // Junction dots visibility toggle state (persisted)
     let showJunctionDots = (localStorage.getItem('junctionDots.visible') !== 'false');
@@ -8939,6 +8963,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             renderNetList,
             renderInspector: () => renderInspector(),
             uid: (prefix) => State.uid(prefix),
+            setInspectorTab,
+            inspectorTab,
+            symbolLibraries: projectSettings.symbolLibraries,
+            removeLibrary: (libraryName) => removeSymbolLibrary(libraryName),
             compPinPositions: Components.compPinPositions,
             snap: (val) => snap(val),
             snapToBaseScalar: (val) => snapToBaseScalar(val),
@@ -9527,6 +9555,19 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         } };
         reader.readAsText(f);
     });
+    const importBtn = document.getElementById('importBtn');
+    const importFileInput = document.getElementById('importFileInput');
+    if (importBtn && importFileInput) {
+        importBtn.addEventListener('click', () => importFileInput.click());
+        importFileInput.addEventListener('change', (e) => {
+            const input = e.target;
+            const file = input.files?.[0];
+            if (!file)
+                return;
+            handleKicadSymbolImport(file);
+            input.value = '';
+        });
+    }
     function saveJSON() {
         FileIO.saveJSON({
             components,
@@ -9581,6 +9622,114 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             breakWiresForComponent,
             deleteBridgeBetweenPins
         }, text);
+    }
+    function handleKicadSymbolImport(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (typeof reader.result !== 'string') {
+                console.error('[KiCad Import] Unable to read text content for', file.name);
+                return;
+            }
+            const rawNames = extractTopLevelKiCadSymbols(reader.result);
+            if (rawNames.length === 0) {
+                console.warn('[KiCad Import] No symbols found in', file.name);
+                return;
+            }
+            const simpleNames = rawNames.map(name => {
+                const trimmed = name.trim();
+                const idx = trimmed.lastIndexOf(':');
+                return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
+            });
+            const deduped = Array.from(new Set(simpleNames.filter(Boolean)));
+            deduped.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+            const libraryKey = deriveLibraryKey(file.name);
+            if (!libraryKey) {
+                console.error('[KiCad Import] Unable to derive library key for', file.name);
+                return;
+            }
+            const nextIndex = { ...projectSettings.symbolLibraries, [libraryKey]: deduped };
+            projectSettings = updateProjectSettings({ symbolLibraries: nextIndex });
+            renderInspector();
+        };
+        reader.onerror = () => {
+            console.error('[KiCad Import] Failed to read file', file.name, reader.error || 'Unknown error');
+        };
+        reader.readAsText(file);
+    }
+    function deriveLibraryKey(fileName) {
+        const trimmed = (fileName || '').trim();
+        if (!trimmed)
+            return '';
+        const lastSlash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+        const base = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
+        const lastDot = base.lastIndexOf('.');
+        return lastDot > 0 ? base.slice(0, lastDot) : base;
+    }
+    function extractTopLevelKiCadSymbols(content) {
+        const names = [];
+        let depth = 0;
+        const len = content.length;
+        for (let i = 0; i < len;) {
+            const ch = content[i];
+            if (ch === '"') {
+                i++;
+                while (i < len) {
+                    const next = content[i];
+                    if (next === '\\') {
+                        i += 2;
+                        continue;
+                    }
+                    if (next === '"') {
+                        i++;
+                        break;
+                    }
+                    i++;
+                }
+                continue;
+            }
+            if (ch === '(') {
+                depth++;
+                i++;
+                let j = i;
+                while (j < len && /\s/.test(content[j]))
+                    j++;
+                if (depth === 2 && content.startsWith('symbol', j)) {
+                    j += 'symbol'.length;
+                    while (j < len && /\s/.test(content[j]))
+                        j++;
+                    if (content[j] === '"') {
+                        j++;
+                        let name = '';
+                        while (j < len) {
+                            const c = content[j];
+                            if (c === '\\' && j + 1 < len) {
+                                name += content[j + 1];
+                                j += 2;
+                                continue;
+                            }
+                            if (c === '"') {
+                                j++;
+                                break;
+                            }
+                            name += c;
+                            j++;
+                        }
+                        if (name) {
+                            names.push(name);
+                        }
+                    }
+                }
+                i = j;
+                continue;
+            }
+            if (ch === ')') {
+                depth = Math.max(0, depth - 1);
+                i++;
+                continue;
+            }
+            i++;
+        }
+        return names;
     }
     // ====== Topology: nodes, edges, SWPs ======
     function rebuildTopology() {

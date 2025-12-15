@@ -19,7 +19,8 @@ export function getDefaultSymbolTheme() {
 }
 const DEFAULT_SETTINGS = {
     componentClearancePx: 0,
-    theme: DEFAULT_THEME
+    theme: DEFAULT_THEME,
+    symbolLibraries: {}
 };
 function clamp01(n) {
     if (!Number.isFinite(n))
@@ -49,10 +50,18 @@ function cloneTheme(theme) {
         symbol: cloneSymbolTheme(theme.symbol)
     };
 }
+function cloneSymbolLibraries(index) {
+    const out = {};
+    for (const [key, symbols] of Object.entries(index)) {
+        out[key] = Array.isArray(symbols) ? symbols.slice() : [];
+    }
+    return out;
+}
 function cloneSettings(settings) {
     return {
         componentClearancePx: settings.componentClearancePx,
-        theme: cloneTheme(settings.theme)
+        theme: cloneTheme(settings.theme),
+        symbolLibraries: cloneSymbolLibraries(settings.symbolLibraries)
     };
 }
 function normalizeRgba(input, fallback) {
@@ -94,6 +103,33 @@ function normalizeTheme(input, fallback) {
         symbol: normalizeSymbolTheme(candidate.symbol, fallback.symbol)
     };
 }
+function normalizeSymbolLibraries(input, fallback) {
+    const base = cloneSymbolLibraries(fallback);
+    if (!input || typeof input !== 'object')
+        return base;
+    const candidate = input;
+    const result = cloneSymbolLibraries(base);
+    for (const [rawKey, rawValue] of Object.entries(candidate)) {
+        const key = String(rawKey);
+        if (!Array.isArray(rawValue)) {
+            result[key] = [];
+            continue;
+        }
+        const seen = new Set();
+        const items = [];
+        for (const entry of rawValue) {
+            if (typeof entry !== 'string')
+                continue;
+            const trimmed = entry.trim();
+            if (!trimmed || seen.has(trimmed))
+                continue;
+            seen.add(trimmed);
+            items.push(trimmed);
+        }
+        result[key] = items;
+    }
+    return result;
+}
 function normalizeSettings(input) {
     const fallback = DEFAULT_SETTINGS;
     if (!input || typeof input !== 'object')
@@ -104,7 +140,8 @@ function normalizeSettings(input) {
         componentClearancePx: typeof clearance === 'number' && Number.isFinite(clearance) && clearance >= 0
             ? Math.max(0, Math.round(clearance))
             : fallback.componentClearancePx,
-        theme: normalizeTheme(candidate.theme, fallback.theme)
+        theme: normalizeTheme(candidate.theme, fallback.theme),
+        symbolLibraries: normalizeSymbolLibraries(candidate.symbolLibraries, fallback.symbolLibraries)
     };
 }
 function readStorage(key) {
@@ -167,7 +204,8 @@ function applyPatch(base, patch) {
         return cloneSettings(base);
     const next = {
         componentClearancePx: base.componentClearancePx,
-        theme: cloneTheme(base.theme)
+        theme: cloneTheme(base.theme),
+        symbolLibraries: cloneSymbolLibraries(base.symbolLibraries)
     };
     if (patch.componentClearancePx !== undefined && Number.isFinite(patch.componentClearancePx)) {
         next.componentClearancePx = Math.max(0, Math.round(patch.componentClearancePx));
@@ -191,6 +229,10 @@ function applyPatch(base, patch) {
             if (symbol.powerSymbol !== undefined)
                 next.theme.symbol.powerSymbol = normalizeRgba(symbol.powerSymbol, next.theme.symbol.powerSymbol);
         }
+    }
+    if (patch.symbolLibraries) {
+        const normalized = normalizeSymbolLibraries(patch.symbolLibraries, {});
+        next.symbolLibraries = cloneSymbolLibraries(normalized);
     }
     return next;
 }

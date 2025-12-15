@@ -1,4 +1,4 @@
-import type { ProjectSettings, RGBA01, SchematicTheme, SymbolTheme } from './types.js';
+import type { ProjectSettings, RGBA01, SchematicTheme, SymbolTheme, SymbolLibraryIndex } from './types.js';
 import { cssToRGBA01 } from './utils.js';
 
 const STORAGE_KEY = 'project.settings.v1';
@@ -26,7 +26,8 @@ export function getDefaultSymbolTheme(): SymbolTheme {
 
 const DEFAULT_SETTINGS: ProjectSettings = {
   componentClearancePx: 0,
-  theme: DEFAULT_THEME
+  theme: DEFAULT_THEME,
+  symbolLibraries: {}
 };
 
 function clamp01(n: number): number {
@@ -58,10 +59,19 @@ function cloneTheme(theme: SchematicTheme): SchematicTheme {
   };
 }
 
+function cloneSymbolLibraries(index: SymbolLibraryIndex): SymbolLibraryIndex {
+  const out: SymbolLibraryIndex = {};
+  for (const [key, symbols] of Object.entries(index)) {
+    out[key] = Array.isArray(symbols) ? symbols.slice() : [];
+  }
+  return out;
+}
+
 function cloneSettings(settings: ProjectSettings): ProjectSettings {
   return {
     componentClearancePx: settings.componentClearancePx,
-    theme: cloneTheme(settings.theme)
+    theme: cloneTheme(settings.theme),
+    symbolLibraries: cloneSymbolLibraries(settings.symbolLibraries)
   };
 }
 
@@ -104,6 +114,31 @@ function normalizeTheme(input: unknown, fallback: SchematicTheme): SchematicThem
   };
 }
 
+function normalizeSymbolLibraries(input: unknown, fallback: SymbolLibraryIndex): SymbolLibraryIndex {
+  const base = cloneSymbolLibraries(fallback);
+  if (!input || typeof input !== 'object') return base;
+  const candidate = input as Record<string, unknown>;
+  const result: SymbolLibraryIndex = cloneSymbolLibraries(base);
+  for (const [rawKey, rawValue] of Object.entries(candidate)) {
+    const key = String(rawKey);
+    if (!Array.isArray(rawValue)) {
+      result[key] = [];
+      continue;
+    }
+    const seen = new Set<string>();
+    const items: string[] = [];
+    for (const entry of rawValue) {
+      if (typeof entry !== 'string') continue;
+      const trimmed = entry.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      items.push(trimmed);
+    }
+    result[key] = items;
+  }
+  return result;
+}
+
 function normalizeSettings(input: unknown): ProjectSettings {
   const fallback = DEFAULT_SETTINGS;
   if (!input || typeof input !== 'object') return cloneSettings(fallback);
@@ -113,7 +148,8 @@ function normalizeSettings(input: unknown): ProjectSettings {
     componentClearancePx: typeof clearance === 'number' && Number.isFinite(clearance) && clearance >= 0
       ? Math.max(0, Math.round(clearance))
       : fallback.componentClearancePx,
-    theme: normalizeTheme(candidate.theme, fallback.theme)
+    theme: normalizeTheme(candidate.theme, fallback.theme),
+    symbolLibraries: normalizeSymbolLibraries(candidate.symbolLibraries, fallback.symbolLibraries)
   };
 }
 
@@ -176,6 +212,7 @@ export type ProjectSettingsPatch = {
     background?: string;
     symbol?: Partial<SymbolTheme>;
   };
+  symbolLibraries?: SymbolLibraryIndex;
 };
 
 function applyPatch(base: ProjectSettings, patch?: ProjectSettingsPatch): ProjectSettings {
@@ -183,7 +220,8 @@ function applyPatch(base: ProjectSettings, patch?: ProjectSettingsPatch): Projec
 
   const next: ProjectSettings = {
     componentClearancePx: base.componentClearancePx,
-    theme: cloneTheme(base.theme)
+    theme: cloneTheme(base.theme),
+    symbolLibraries: cloneSymbolLibraries(base.symbolLibraries)
   };
 
   if (patch.componentClearancePx !== undefined && Number.isFinite(patch.componentClearancePx)) {
@@ -203,6 +241,11 @@ function applyPatch(base: ProjectSettings, patch?: ProjectSettingsPatch): Projec
       if (symbol.valueText !== undefined) next.theme.symbol.valueText = normalizeRgba(symbol.valueText, next.theme.symbol.valueText);
       if (symbol.powerSymbol !== undefined) next.theme.symbol.powerSymbol = normalizeRgba(symbol.powerSymbol, next.theme.symbol.powerSymbol);
     }
+  }
+
+  if (patch.symbolLibraries) {
+    const normalized = normalizeSymbolLibraries(patch.symbolLibraries, {});
+    next.symbolLibraries = cloneSymbolLibraries(normalized);
   }
 
   return next;

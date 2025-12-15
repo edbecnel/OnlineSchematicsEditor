@@ -303,6 +303,160 @@
       display: block;
     }
 
+    .inspector-tab-bar {
+      display: flex;
+      gap: .25rem;
+      margin-bottom: .5rem;
+    }
+
+    .inspector-tab-btn {
+      flex: 1;
+      padding: .35rem .5rem;
+      font-size: .9rem;
+      border-radius: 6px;
+      background: #10141c;
+      border: 1px solid #273042;
+      color: var(--ink);
+    }
+
+    .inspector-tab-btn.active {
+      border-color: var(--accent);
+      background: rgba(14, 165, 233, 0.15);
+    }
+
+    [data-theme="light"] .inspector-tab-btn {
+      background: #f3f4f6;
+      border: 1px solid #d1d5db;
+    }
+
+    [data-theme="light"] .inspector-tab-btn.active {
+      background: rgba(14, 165, 233, 0.2);
+      border-color: #0ea5e9;
+    }
+
+    .inspector-libraries {
+      display: flex;
+      flex-direction: column;
+      gap: .75rem;
+    }
+
+    .library-search input[type="search"] {
+      width: 100%;
+      padding: .4rem .5rem;
+      border-radius: 6px;
+      border: 1px solid #273042;
+      background: #0e1219;
+      color: var(--ink);
+    }
+
+    [data-theme="light"] .library-search input[type="search"] {
+      background: #fff;
+      border: 1px solid #d1d5db;
+    }
+
+    .library-list {
+      display: flex;
+      flex-direction: column;
+      gap: .5rem;
+    }
+
+    .library-section {
+      border: 1px solid #1f2533;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #111622;
+    }
+
+    [data-theme="light"] .library-section {
+      border: 1px solid #d1d5db;
+      background: #f9fafb;
+    }
+
+    .library-header {
+      width: 100%;
+      text-align: left;
+      padding: .5rem .75rem;
+      border: none;
+      background: transparent;
+      color: var(--ink);
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+
+    .library-symbols {
+      list-style: none;
+      margin: 0;
+      padding: .25rem .75rem .75rem;
+      display: flex;
+      flex-direction: column;
+      gap: .25rem;
+      font-size: .9rem;
+    }
+
+    .library-symbols li {
+      padding: .25rem .35rem;
+      border-radius: 4px;
+      cursor: default;
+    }
+
+    .library-symbols li:hover {
+      background: rgba(14, 165, 233, 0.1);
+    }
+
+    .library-header::before {
+      content: '';
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid var(--ink);
+      transition: transform 0.15s ease;
+    }
+
+    .library-section.collapsed .library-header::before {
+      transform: rotate(-90deg);
+    }
+
+    .library-section.collapsed .library-symbols {
+      display: none;
+    }
+
+    .library-context-menu {
+      position: fixed;
+      display: none;
+      min-width: 160px;
+      background: #10141c;
+      border: 1px solid #273042;
+      border-radius: 6px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+      padding: .25rem 0;
+      z-index: 2000;
+    }
+
+    [data-theme="light"] .library-context-menu {
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.2);
+    }
+
+    .library-context-action {
+      width: 100%;
+      padding: .45rem .8rem;
+      border: none;
+      background: none;
+      color: var(--ink);
+      text-align: left;
+      font-size: .9rem;
+      cursor: pointer;
+    }
+
+    .library-context-action:hover {
+      background: rgba(14, 165, 233, 0.12);
+    }
+
     /* Resizable panels */
     .panel {
       background: var(--panel);
@@ -1085,6 +1239,10 @@
         <input id="fileInput" type="file" accept="application/json" style="display:none" />
       </div>
       <div class="group">
+        <button id="importBtn" title="Import KiCad Symbol">Import</button>
+        <input id="importFileInput" type="file" accept=".kicad_sym" style="display:none" />
+      </div>
+      <div class="group">
         <button id="helpBtn" title="Help & Documentation" onclick="window.open('help.html', '_blank')">Help</button>
       </div>
     </header>
@@ -1367,18 +1525,11 @@
     </div>
   </div>
 
-  <!-- NEW: works from file:// (classic) and http(s) (module) -->
   <script>
     (function () {
       var s = document.createElement('script');
-      if (location.protocol === 'file:') {
-        // Classic script works when opened directly from disk (avoids CORS on module scripts)
-        s.src = 'dist/app.js';
-      } else {
-        // Keep ESM when served over http(s)
-        s.type = 'module';
-        s.src = 'dist/app.js';
-      }
+      s.type = 'module';
+      s.src = 'dist/app.js';
       document.currentScript.replaceWith(s);
     })();
   </script>

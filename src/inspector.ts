@@ -3,48 +3,48 @@
 
 import type {
   Component, Wire, Selection, Point, Stroke, RGBA01, NetClass, Theme,
-  ResistorStyle, CapacitorSubtype, DiodeSubtype
+  ResistorStyle, CapacitorSubtype, DiodeSubtype, SymbolLibraryIndex, InspectorPanelTab
 } from './types.js';
 import type { SWP } from './topology.js';
 import { nmToUnit, unitToNm } from './conversions.js';
 
 // Helper to create a row with label and control
 export function rowPair(lbl: string, control: HTMLElement): HTMLDivElement {
-  const d1 = document.createElement('div');
-  d1.className = 'row';
-  const l = document.createElement('label');
-  l.textContent = lbl;
-  l.style.width = '90px';
-  d1.appendChild(l);
-  d1.appendChild(control);
-  return d1;
+  const row = document.createElement('div');
+  row.className = 'row';
+  const label = document.createElement('label');
+  label.textContent = lbl;
+  label.style.width = '90px';
+  row.appendChild(label);
+  row.appendChild(control);
+  return row;
 }
 
 // Helper to create a text input
 export function input(val: string, on: (v: string) => void): HTMLInputElement {
-  const i = document.createElement('input');
-  i.type = 'text';
-  i.value = val;
-  i.oninput = () => on(i.value);
-  return i;
+  const el = document.createElement('input');
+  el.type = 'text';
+  el.value = val;
+  el.oninput = () => on(el.value);
+  return el;
 }
 
 // Helper to create a number input
 export function number(val: number, on: (v: number) => void): HTMLInputElement {
-  const i = document.createElement('input');
-  i.type = 'number';
-  i.value = String(val);
-  i.oninput = () => on(parseFloat(i.value) || 0);
-  return i;
+  const el = document.createElement('input');
+  el.type = 'number';
+  el.value = String(val);
+  el.oninput = () => on(Number.parseFloat(el.value) || 0);
+  return el;
 }
 
 // Helper to create a read-only text input
 export function text(val: string, readonly: boolean = false): HTMLInputElement {
-  const i = document.createElement('input');
-  i.type = 'text';
-  i.value = val;
-  i.readOnly = readonly;
-  return i;
+  const el = document.createElement('input');
+  el.type = 'text';
+  el.value = val;
+  el.readOnly = readonly;
+  return el;
 }
 
 // Helper to create a unit selector (resistor, capacitor, inductor)
@@ -56,48 +56,75 @@ export function unitSelect(
   defaultUnit: (kind: 'resistor' | 'capacitor' | 'inductor') => string
 ): HTMLSelectElement {
   const sel = document.createElement('select');
-  (UNIT_OPTIONS[kind] || []).forEach(u => {
+  const options = UNIT_OPTIONS[kind] || [];
+
+  options.forEach((unit) => {
     const opt = document.createElement('option');
-    opt.value = u;
-    opt.textContent = u;
+    opt.value = unit;
+    opt.textContent = unit;
     sel.appendChild(opt);
   });
-  sel.value = current || defaultUnit(kind);
-  sel.onchange = () => onChange(sel.value);
+
+  let selected = current;
+  if (!options.includes(selected)) {
+    const fallback = defaultUnit(kind);
+    if (fallback && !options.includes(fallback)) {
+      const opt = document.createElement('option');
+      opt.value = fallback;
+      opt.textContent = fallback;
+      sel.appendChild(opt);
+    }
+    selected = fallback;
+  }
+
+  if (selected) sel.value = selected;
+
+  sel.addEventListener('change', () => onChange(sel.value));
+  sizeUnitSelectToContent(sel);
   return sel;
 }
 
 // Helper to fit inspector unit selects to their content
 export function fitInspectorUnitSelects(inspector: HTMLElement): void {
   const sels = inspector.querySelectorAll('.hstack select');
-  sels.forEach((s) => sizeUnitSelectToContent(s as HTMLSelectElement));
+  const selects = Array.from(sels) as HTMLSelectElement[];
+  selects.forEach(sizeUnitSelectToContent);
 }
 
 // Helper to size a unit select to its content
 export function sizeUnitSelectToContent(sel: HTMLSelectElement): void {
-  const row = sel.closest('.hstack');
-  if (!row) return;
-  const cs = getComputedStyle(sel);
-  const font = cs.font || `${cs.fontStyle} ${cs.fontVariant} ${cs.fontWeight} ${cs.fontSize}/${cs.lineHeight} ${cs.fontFamily}`;
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d')!;
-  ctx.font = font;
-  let maxText = 0;
-  Array.from(sel.options).forEach(o => {
-    const w = ctx.measureText(o.textContent || '').width;
-    if (w > maxText) maxText = w;
+  const options = Array.from(sel.options);
+  if (options.length === 0) return;
+
+  const computed = getComputedStyle(sel);
+  const measurer = document.createElement('span');
+  measurer.style.position = 'absolute';
+  measurer.style.visibility = 'hidden';
+  measurer.style.whiteSpace = 'nowrap';
+  measurer.style.font = computed.font || `${computed.fontStyle} ${computed.fontVariant} ${computed.fontWeight} ${computed.fontSize}/${computed.lineHeight} ${computed.fontFamily}`.trim();
+  document.body.appendChild(measurer);
+
+  let maxWidth = 0;
+  options.forEach((opt) => {
+    measurer.textContent = opt.textContent || opt.value;
+    const width = measurer.getBoundingClientRect().width;
+    if (width > maxWidth) maxWidth = width;
   });
-  const pad = 36;
-  const desired = Math.ceil(maxText + pad);
-  const rowW = (row as HTMLElement).getBoundingClientRect().width || 0;
-  const cap = Math.max(0, Math.floor(rowW * 0.5));
-  const finalW = Math.min(desired, cap);
-  sel.style.width = finalW > 0 ? `${finalW}px` : 'auto';
+
+  document.body.removeChild(measurer);
+
+  const paddingLeft = parseFloat(computed.paddingLeft || '0');
+  const paddingRight = parseFloat(computed.paddingRight || '0');
+  const borderLeft = parseFloat(computed.borderLeftWidth || '0');
+  const borderRight = parseFloat(computed.borderRightWidth || '0');
+  const arrowAllowance = 24;
+  const desiredWidth = Math.ceil(maxWidth + paddingLeft + paddingRight + borderLeft + borderRight + arrowAllowance);
+  sel.style.width = `${desiredWidth}px`;
 }
 
 // Helper to get default unit for component type
 export function defaultUnit(kind: 'resistor' | 'capacitor' | 'inductor'): string {
-  if (kind === 'resistor') return '\u03A9'; // Ω
+  if (kind === 'resistor') return '\u03A9';
   if (kind === 'capacitor') return 'F';
   if (kind === 'inductor') return 'H';
   return '';
@@ -115,31 +142,167 @@ export function dimNumberPx(
 ): HTMLInputElement {
   const inp = document.createElement('input');
   inp.type = 'text';
-  // display initial value converted to current units
   const nm = pxToNm(pxVal);
   inp.value = formatDimForDisplay(nm, globalUnits);
-  // commit on blur or Enter
+
   function commitFromStr(str: string) {
     const parsed = parseDimInput(str);
-    if (!parsed) return; // ignore invalid
+    if (!parsed) return;
     const px = Math.round(nmToPx(parsed.nm));
     onCommit(px);
-    // refresh displayed (normalize units & formatting)
     inp.value = formatDimForDisplay(parsed.nm, globalUnits);
   }
+
   inp.addEventListener('blur', () => commitFromStr(inp.value));
-  inp.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+  inp.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
       commitFromStr(inp.value);
       inp.blur();
     }
   });
+
   return inp;
 }
 
-// Context for inspector rendering - contains all dependencies
+let librarySearchValue = '';
+
+const LIBRARY_COLLAPSE_STORAGE_KEY = 'inspector.libraryCollapse.v1';
+let libraryCollapseState: Record<string, boolean> = loadLibraryCollapseState();
+
+type RemoveLibraryFn = (libraryName: string) => void;
+
+let libraryContextMenuEl: HTMLDivElement | null = null;
+let libraryContextMenuRemoveBtn: HTMLButtonElement | null = null;
+let libraryContextMenuVisible = false;
+let libraryContextMenuTarget: string | null = null;
+let libraryContextMenuRemoveFn: RemoveLibraryFn | null = null;
+let libraryContextMenuHandlersAttached = false;
+
+function getLocalStorageOrNull(): Storage | null {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function loadLibraryCollapseState(): Record<string, boolean> {
+  const storage = getLocalStorageOrNull();
+  if (!storage) return {};
+  try {
+    const raw = storage.getItem(LIBRARY_COLLAPSE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Record<string, boolean> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'boolean' && value) out[key] = true;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveLibraryCollapseState(): void {
+  const storage = getLocalStorageOrNull();
+  if (!storage) return;
+  try {
+    storage.setItem(LIBRARY_COLLAPSE_STORAGE_KEY, JSON.stringify(libraryCollapseState));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function isLibraryCollapsed(libraryName: string): boolean {
+  return !!libraryCollapseState[libraryName];
+}
+
+function setLibraryCollapsed(libraryName: string, collapsed: boolean): void {
+  if (!libraryName) return;
+  if (collapsed) {
+    libraryCollapseState[libraryName] = true;
+  } else if (libraryCollapseState[libraryName]) {
+    delete libraryCollapseState[libraryName];
+  }
+  saveLibraryCollapseState();
+}
+
+function ensureLibraryContextMenu(): HTMLDivElement {
+  if (!libraryContextMenuEl) {
+    libraryContextMenuEl = document.createElement('div');
+    libraryContextMenuEl.className = 'library-context-menu';
+    libraryContextMenuEl.style.display = 'none';
+
+    libraryContextMenuRemoveBtn = document.createElement('button');
+    libraryContextMenuRemoveBtn.type = 'button';
+    libraryContextMenuRemoveBtn.className = 'library-context-action';
+    libraryContextMenuRemoveBtn.textContent = 'Remove Library';
+    libraryContextMenuRemoveBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const target = libraryContextMenuTarget;
+      const removeFn = libraryContextMenuRemoveFn;
+      hideLibraryContextMenu();
+      if (!target || !removeFn) return;
+      const confirmed = window.confirm(`Remove library "${target}"?`);
+      if (confirmed) removeFn(target);
+    });
+
+    libraryContextMenuEl.appendChild(libraryContextMenuRemoveBtn);
+    libraryContextMenuEl.addEventListener('click', (event) => event.stopPropagation());
+    libraryContextMenuEl.addEventListener('contextmenu', (event) => event.preventDefault());
+    document.body.appendChild(libraryContextMenuEl);
+  }
+
+  if (!libraryContextMenuHandlersAttached) {
+    document.addEventListener('click', (event) => {
+      if (!libraryContextMenuVisible) return;
+      if (libraryContextMenuEl && libraryContextMenuEl.contains(event.target as Node)) return;
+      hideLibraryContextMenu();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (!libraryContextMenuVisible) return;
+      if (event.key === 'Escape') hideLibraryContextMenu();
+    });
+    libraryContextMenuHandlersAttached = true;
+  }
+
+  return libraryContextMenuEl;
+}
+
+function hideLibraryContextMenu(): void {
+  if (!libraryContextMenuEl) return;
+  libraryContextMenuEl.style.display = 'none';
+  libraryContextMenuVisible = false;
+  libraryContextMenuTarget = null;
+  libraryContextMenuRemoveFn = null;
+}
+
+function showLibraryContextMenu(x: number, y: number, libraryName: string, removeFn: RemoveLibraryFn): void {
+  const menu = ensureLibraryContextMenu();
+  libraryContextMenuTarget = libraryName;
+  libraryContextMenuRemoveFn = removeFn;
+
+  menu.style.display = 'block';
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  menu.style.visibility = 'hidden';
+
+  const rect = menu.getBoundingClientRect();
+  const maxLeft = Math.max(0, window.innerWidth - rect.width - 8);
+  const maxTop = Math.max(0, window.innerHeight - rect.height - 8);
+  const adjustedLeft = Math.min(Math.max(0, x), maxLeft);
+  const adjustedTop = Math.min(Math.max(0, y), maxTop);
+  menu.style.left = `${adjustedLeft}px`;
+  menu.style.top = `${adjustedTop}px`;
+  menu.style.visibility = 'visible';
+
+  libraryContextMenuVisible = true;
+}
+
 export interface InspectorContext {
-  // State
   components: Component[];
   wires: Wire[];
   junctions: any[];
@@ -155,8 +318,11 @@ export interface InspectorContext {
   THEME: Theme;
   NM_PER_MM: number;
   UNIT_OPTIONS: Record<string, string[]>;
+  symbolLibraries: SymbolLibraryIndex;
+  inspectorTab: InspectorPanelTab;
+  setInspectorTab: (tab: InspectorPanelTab) => void;
+  removeLibrary: (libraryName: string) => void;
 
-  // Functions - state mutation
   pushUndo: () => void;
   redrawCanvasOnly: () => void;
   redraw: () => void;
@@ -164,12 +330,10 @@ export interface InspectorContext {
   renderInspector: () => void;
   uid: (prefix: string) => string;
 
-  // Functions - component operations
   compPinPositions: (c: Component) => Point[];
   snap: (val: number) => number;
   snapToBaseScalar: (val: number) => number;
 
-  // Functions - wire operations
   swpForWireSegment: (wireId: string, segIndex: number) => SWP | null;
   ensureStroke: (w: Wire) => void;
   effectiveStroke: (w: Wire, nc: NetClass, th: Theme) => Stroke;
@@ -183,7 +347,6 @@ export interface InspectorContext {
   wiresEndingAt: (pt: Point) => Wire[];
   selecting: (kind: 'component' | 'wire' | null, id: string | null, segIndex: number | null) => void;
 
-  // Functions - conversion utilities
   pxToNm: (px: number) => number;
   nmToPx: (nm: number) => number;
   mmToPx: (mm: number) => number;
@@ -198,6 +361,188 @@ export interface InspectorContext {
 // Main function to render the inspector panel
 export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, inspectorNone: HTMLElement): void {
   inspector.replaceChildren();
+  hideLibraryContextMenu();
+
+  const tabBar = document.createElement('div');
+  tabBar.className = 'inspector-tab-bar';
+  const selectionTab = document.createElement('button');
+  selectionTab.type = 'button';
+  selectionTab.textContent = 'Selection';
+  const librariesTab = document.createElement('button');
+  librariesTab.type = 'button';
+  librariesTab.textContent = 'Libraries';
+  [selectionTab, librariesTab].forEach(btn => {
+    btn.className = 'inspector-tab-btn';
+    tabBar.appendChild(btn);
+  });
+  selectionTab.classList.toggle('active', ctx.inspectorTab === 'selection');
+  librariesTab.classList.toggle('active', ctx.inspectorTab === 'libraries');
+  selectionTab.onclick = () => ctx.setInspectorTab('selection');
+  librariesTab.onclick = () => ctx.setInspectorTab('libraries');
+  inspector.appendChild(tabBar);
+
+  if (ctx.inspectorTab === 'libraries') {
+    inspectorNone.style.display = 'none';
+    const libWrap = document.createElement('div');
+    libWrap.className = 'inspector-libraries';
+
+    if (Object.keys(ctx.symbolLibraries).length === 0) {
+      const emptyMsg = document.createElement('div');
+      emptyMsg.className = 'hint';
+      emptyMsg.textContent = 'No KiCad libraries imported yet. Use the Import button to add one.';
+      libWrap.appendChild(emptyMsg);
+    } else {
+      const currentLibraries = new Set(Object.keys(ctx.symbolLibraries));
+      let collapseStateChanged = false;
+      for (const name of Object.keys(libraryCollapseState)) {
+        if (!currentLibraries.has(name)) {
+          delete libraryCollapseState[name];
+          collapseStateChanged = true;
+        }
+      }
+      if (collapseStateChanged) saveLibraryCollapseState();
+
+      const searchWrap = document.createElement('div');
+      searchWrap.className = 'library-search';
+      const searchInput = document.createElement('input');
+      searchInput.type = 'search';
+      searchInput.placeholder = 'Search symbols…';
+      searchInput.value = librarySearchValue;
+      searchWrap.appendChild(searchInput);
+      libWrap.appendChild(searchWrap);
+
+      const list = document.createElement('div');
+      list.className = 'library-list';
+
+      type LibrarySectionData = {
+        section: HTMLElement;
+        body: HTMLUListElement;
+        libraryName: string;
+        libraryNameLc: string;
+        items: Array<{ element: HTMLLIElement; nameLc: string }>;
+      };
+      const sectionsData: LibrarySectionData[] = [];
+      let noResults: HTMLDivElement | null = null;
+
+      function applyCollapseStateToSection(data: LibrarySectionData, collapsed: boolean): void {
+        data.section.classList.toggle('collapsed', collapsed);
+        data.body.style.display = collapsed ? 'none' : '';
+      }
+
+      function applySearchFilter(): void {
+        const query = librarySearchValue.trim().toLowerCase();
+        const queryActive = query.length > 0;
+        let anyVisible = false;
+
+        sectionsData.forEach((data) => {
+          const libraryMatches = queryActive && data.libraryNameLc.includes(query);
+          let sectionHasMatch = !queryActive && data.items.length > 0;
+
+          data.items.forEach(({ element, nameLc }) => {
+            if (!queryActive) {
+              element.style.display = '';
+              return;
+            }
+            const symbolMatches = nameLc.includes(query);
+            const shouldShow = libraryMatches || symbolMatches;
+            element.style.display = shouldShow ? '' : 'none';
+            if (shouldShow) sectionHasMatch = true;
+          });
+
+          if (queryActive) {
+            data.section.style.display = sectionHasMatch ? '' : 'none';
+            if (sectionHasMatch) {
+              data.section.classList.remove('collapsed');
+              data.body.style.display = '';
+            } else {
+              data.body.style.display = 'none';
+            }
+          } else {
+            data.section.style.display = data.items.length > 0 ? '' : 'none';
+            const storedCollapsed = isLibraryCollapsed(data.libraryName);
+            applyCollapseStateToSection(data, storedCollapsed);
+          }
+
+          if (sectionHasMatch) anyVisible = true;
+        });
+
+        if (noResults) {
+          if (queryActive) {
+            noResults.style.display = anyVisible ? 'none' : '';
+          } else {
+            noResults.style.display = 'none';
+          }
+        }
+      }
+
+      for (const [libraryName, symbols] of Object.entries(ctx.symbolLibraries)) {
+        const libSection = document.createElement('section');
+        libSection.className = 'library-section';
+        const header = document.createElement('button');
+        header.type = 'button';
+        header.className = 'library-header';
+        header.textContent = libraryName;
+        header.addEventListener('contextmenu', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          showLibraryContextMenu(event.clientX, event.clientY, libraryName, ctx.removeLibrary);
+        });
+        const body = document.createElement('ul');
+        body.className = 'library-symbols';
+        const sectionData: LibrarySectionData = {
+          section: libSection,
+          body,
+          libraryName,
+          libraryNameLc: libraryName.toLowerCase(),
+          items: []
+        };
+
+        symbols.forEach(symbol => {
+          const li = document.createElement('li');
+          li.textContent = symbol;
+          body.appendChild(li);
+          sectionData.items.push({ element: li, nameLc: symbol.toLowerCase() });
+        });
+
+        libSection.appendChild(header);
+        libSection.appendChild(body);
+        list.appendChild(libSection);
+
+        const initiallyCollapsed = isLibraryCollapsed(libraryName);
+        applyCollapseStateToSection(sectionData, initiallyCollapsed);
+
+        header.addEventListener('click', (event) => {
+          event.preventDefault();
+          const nextCollapsed = !isLibraryCollapsed(libraryName);
+          setLibraryCollapsed(libraryName, nextCollapsed);
+          applyCollapseStateToSection(sectionData, nextCollapsed);
+          if (librarySearchValue.trim().length > 0) {
+            applySearchFilter();
+          }
+        });
+
+        sectionsData.push(sectionData);
+      }
+
+      libWrap.appendChild(list);
+
+      noResults = document.createElement('div');
+      noResults.className = 'hint';
+      noResults.textContent = 'No symbols match your search.';
+      noResults.style.display = 'none';
+      libWrap.appendChild(noResults);
+
+      searchInput.addEventListener('input', () => {
+        librarySearchValue = searchInput.value;
+        applySearchFilter();
+      });
+
+      applySearchFilter();
+    }
+
+    inspector.appendChild(libWrap);
+    return;
+  }
 
   // Global settings when nothing is selected
   if (!ctx.selection.items || ctx.selection.items.length === 0) {
@@ -949,6 +1294,14 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
 
   // nothing selected
   inspectorNone.style.display = 'block';
+}
+
+export function clearLibraryCollapseState(libraryName: string): void {
+  if (!libraryName) return;
+  if (libraryCollapseState[libraryName]) {
+    delete libraryCollapseState[libraryName];
+    saveLibraryCollapseState();
+  }
 }
 
 // Render wire inspector (extracted for clarity)

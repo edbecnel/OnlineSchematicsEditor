@@ -204,10 +204,15 @@ export interface SchematicTheme {
   symbol: SymbolTheme;    // symbol element colors
 }
 
+export type SymbolLibraryIndex = Record<string, string[]>;
+
 export interface ProjectSettings {
   componentClearancePx: number;   // minimum body-to-body clearance in px
   theme: SchematicTheme;          // schematic-wide color theme
+  symbolLibraries: SymbolLibraryIndex; // imported KiCad symbol hierarchy (file -> symbols)
 }
+
+export type InspectorPanelTab = 'selection' | 'libraries';
 
 export interface Net {
   id: string;        // editor-side
