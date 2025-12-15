@@ -26,12 +26,13 @@ import * as Input from './input.js';
 import type { ClientXYEvent } from './utils.js';
 import { ConstraintSolver } from './constraints/index.js';
 import type { Entity } from './constraints/types.js';
+import { initializeProjectSettings, updateProjectSettings, DEFAULT_THEME_BACKGROUND } from './projectSettings.js';
 
 import type {
   Point, Axis, Mode, PlaceType, CounterKey, Selection, SelectionItem, DiodeSubtype, ResistorStyle, CapacitorSubtype,
   Component, RGBA01, StrokeType, Stroke, Wire, WireColorMode,
   NetClass, Theme, Junction, SWPEdge, SWP, Topology,
-  MoveCollapseCtx, KWire
+  MoveCollapseCtx, KWire, ProjectSettings
 } from './types.js';
 
 import {
@@ -66,6 +67,12 @@ import {
 
   // Extend Mode to include custom junction dot modes
   type EditorMode = Mode | 'place-junction' | 'delete-junction';
+
+  let projectSettings: ProjectSettings = initializeProjectSettings();
+
+  function syncProjectSettingsBackground(color: string): void {
+    projectSettings = updateProjectSettings({ theme: { background: color } });
+  }
 
   // ================================================================================
   // ====== 2. CONSTANTS & CONFIGURATION ======
@@ -1896,11 +1903,13 @@ import {
     const colorPicker = document.getElementById('lightBgColorPicker') as HTMLInputElement | null;
     const swatchContainer = document.getElementById('lightBgColorSwatches') as HTMLDivElement | null;
     const deleteBtn = document.getElementById('deleteCustomColorBtn') as HTMLButtonElement | null;
-    
-    if (!colorPicker || !swatchContainer || !deleteBtn) return;
+    const resetBtn = document.getElementById('resetLightBgColorBtn') as HTMLButtonElement | null;
+
+    if (!colorPicker || !swatchContainer || !deleteBtn || !resetBtn) return;
 
     // Load saved color or use default
-    const savedColor = localStorage.getItem('lightBgColor') || '#e8e8e8';
+    const projectBackground = (projectSettings?.theme?.background ?? '').trim();
+    const savedColor = localStorage.getItem('lightBgColor') || projectBackground || DEFAULT_THEME_BACKGROUND;
     
     // Load custom colors from localStorage
     let customColors: string[] = [];
@@ -1930,6 +1939,7 @@ import {
     function applyLightBgColor(color: string, updatePicker: boolean = true) {
       document.documentElement.style.setProperty('--light-bg', color);
       localStorage.setItem('lightBgColor', color);
+      syncProjectSettingsBackground(color);
       if (updatePicker) {
         colorPicker.value = color;
       }
@@ -1999,7 +2009,7 @@ import {
     
     // Delete button
     deleteBtn.addEventListener('click', () => {
-      const currentColor = localStorage.getItem('lightBgColor') || '#e8e8e8';
+      const currentColor = localStorage.getItem('lightBgColor') || DEFAULT_THEME_BACKGROUND;
       const swatches = Array.from(swatchContainer.querySelectorAll('.color-swatch')) as HTMLElement[];
       const selectedSwatch = swatches.find(s => 
         s.getAttribute('data-color')?.toLowerCase() === currentColor.toLowerCase()
@@ -2014,8 +2024,12 @@ import {
         selectedSwatch.remove();
         
         // Switch to default color
-        applyLightBgColor('#e8e8e8');
+        applyLightBgColor(DEFAULT_THEME_BACKGROUND);
       }
+    });
+
+    resetBtn.addEventListener('click', () => {
+      applyLightBgColor(DEFAULT_THEME_BACKGROUND);
     });
   })();  // ====== Component Drawing ======
 

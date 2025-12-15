@@ -190,6 +190,25 @@ export interface Theme {
   junction: { size: number; color: RGBA01 };
 }
 
+export interface SymbolTheme {
+  body: RGBA01;           // symbol outlines and general graphics
+  pin: RGBA01;            // pin graphics
+  pinText: RGBA01;        // pin numbers/names
+  referenceText: RGBA01;  // reference designators (REF*)
+  valueText: RGBA01;      // value text (e.g. 10k, 5V)
+  powerSymbol: RGBA01;    // power symbols and related graphics
+}
+
+export interface SchematicTheme {
+  background: string;     // canvas background color (CSS string)
+  symbol: SymbolTheme;    // symbol element colors
+}
+
+export interface ProjectSettings {
+  componentClearancePx: number;   // minimum body-to-body clearance in px
+  theme: SchematicTheme;          // schematic-wide color theme
+}
+
 export interface Net {
   id: string;        // editor-side
   name?: string;     // KiCad label (if any)
