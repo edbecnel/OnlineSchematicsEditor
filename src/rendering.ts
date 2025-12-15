@@ -1,8 +1,10 @@
 // rendering.ts - SVG rendering and drawing
 // Handles component symbols, wire visualization, junction dots, endpoint circles, selection outline
 
-import { Point, Component, Wire, Junction, Stroke, RGBA01, Theme, NetClass, DiodeSubtype, ResistorStyle, CapacitorSubtype, Selection, SymbolTheme } from './types.js';
-import { formatValue } from './components.js';
+import { Point, Component, Wire, Junction, Stroke, RGBA01, Theme, NetClass, DiodeSubtype, ResistorStyle, CapacitorSubtype, Selection, SymbolTheme, GraphicElement } from './types.js';
+import { formatValue, getComponentBounds } from './components.js';
+import { scaleForComponent } from './symbolScale.js';
+import { mmToPx } from './conversions.js';
 
 export type SymbolStrokeCategory = 'body' | 'pin' | 'powerSymbol' | 'pinText';
 export type SymbolFillCategory = 'pinText' | 'referenceText' | 'valueText';
@@ -32,6 +34,10 @@ const SYMBOL_THEME_FILL_KEYS: Record<SymbolFillCategory, keyof SymbolTheme> = {
   referenceText: 'referenceText',
   valueText: 'valueText'
 };
+
+const FIFTY_MILS_PX = mmToPx(1.27);
+const HUNDRED_MILS_PX = mmToPx(2.54);
+const TEXT_FONT_SIZE = 12;
 
 let currentSymbolTheme: SymbolTheme | null = null;
 let currentThemeMode: 'light' | 'dark' = 'dark';
@@ -185,10 +191,18 @@ export function buildSymbolGroup(
   GRID: number,
   defaultResistorStyle: ResistorStyle
 ): SVGGElement {
-  const gg = document.createElementNS(SVG_NS, 'g');
+  const gg = document.createElementNS(SVG_NS, 'g') as SVGGElement;
   gg.setAttribute('transform', `rotate(${c.rot} ${c.x} ${c.y})`);
 
-  const add = (el: SVGElement) => { gg.appendChild(el); return el; };
+  const hasCustomGraphics = Array.isArray(c.graphics) && c.graphics.length > 0;
+  const scale = scaleForComponent(hasCustomGraphics);
+  const bodyGroup = document.createElementNS(SVG_NS, 'g') as SVGGElement;
+  if (scale !== 1) {
+    bodyGroup.setAttribute('transform', `translate(${c.x} ${c.y}) scale(${scale}) translate(${-c.x} ${-c.y})`);
+  }
+  gg.appendChild(bodyGroup);
+
+  const add = (el: SVGElement) => { bodyGroup.appendChild(el); return el; };
   const line = (x1: number, y1: number, x2: number, y2: number, strokeCategory: SymbolStrokeCategory = 'body') => {
     const ln = document.createElementNS(SVG_NS, 'line');
     setAttrs(ln, { x1, y1, x2, y2, 'stroke-width': '2' });
@@ -202,117 +216,323 @@ export function buildSymbolGroup(
     return add(p);
   };
   const y = c.y, x = c.x;
-  const ax = c.x - 50, bx = c.x + 50; // Pin positions at ±50 (2*GRID)
+  const ax = c.x - 50, bx = c.x + 50; // Pin positions at ±50 (2*GRID) prior to scaling
 
-  switch (c.type) {
-    case 'resistor':
-      drawResistor(gg, c, x, y, ax, bx, defaultResistorStyle, line, path, add);
-      break;
-    case 'capacitor':
-      drawCapacitor(gg, c, x, y, ax, bx, defaultResistorStyle, line, path, add);
-      break;
-    case 'inductor':
-      drawInductor(x, y, ax, bx, line, path);
-      break;
-    case 'diode':
-      drawDiodeInto(gg, c, (c.props?.subtype as DiodeSubtype) || 'generic');
-      break;
-    case 'battery':
-      drawBattery(c, x, y, GRID, line, add);
-      break;
-    case 'ac':
-      drawACSource(x, y, ax, bx, line, add, path);
-      break;
-    case 'npn':
-    case 'pnp':
-      drawTransistor(c, x, y, line, add);
-      break;
-    case 'ground':
-      drawGround(x, y, line);
-      break;
+  const drawCustomGraphic = (gfx: GraphicElement) => {
+    const baseX = c.x;
+    const baseY = c.y;
+    switch (gfx.type) {
+      case 'line': {
+        const ln = document.createElementNS(SVG_NS, 'line');
+        const strokeWidth = (gfx.strokeWidth ?? 2) * 2;
+        setAttrs(ln, {
+          x1: baseX + gfx.x1,
+          y1: baseY + gfx.y1,
+          x2: baseX + gfx.x2,
+          y2: baseY + gfx.y2,
+          'stroke-width': String(strokeWidth)
+        });
+        if (gfx.stroke) ln.setAttribute('stroke', normalizeSymbolColorForTheme(gfx.stroke));
+        else applySymbolStroke(ln, 'body');
+        add(ln);
+        break;
+      }
+      case 'polyline': {
+        const poly = document.createElementNS(SVG_NS, 'polyline');
+        const points = gfx.points.map(pt => `${baseX + pt.x},${baseY + pt.y}`).join(' ');
+        const strokeWidth = (gfx.strokeWidth ?? 2) * 2;
+        setAttrs(poly, {
+          points,
+          'stroke-width': String(strokeWidth)
+        });
+        if (gfx.stroke) poly.setAttribute('stroke', normalizeSymbolColorForTheme(gfx.stroke));
+        else applySymbolStroke(poly, 'body');
+        poly.setAttribute('fill', gfx.fill ? normalizeSymbolColorForTheme(gfx.fill) : 'none');
+        add(poly);
+        break;
+      }
+      case 'polygon': {
+        const poly = document.createElementNS(SVG_NS, 'polygon');
+        const points = gfx.points.map(pt => `${baseX + pt.x},${baseY + pt.y}`).join(' ');
+        const strokeWidth = (gfx.strokeWidth ?? 2) * 2;
+        setAttrs(poly, {
+          points,
+          'stroke-width': String(strokeWidth)
+        });
+        if (gfx.stroke) poly.setAttribute('stroke', normalizeSymbolColorForTheme(gfx.stroke));
+        else applySymbolStroke(poly, 'body');
+        poly.setAttribute('fill', gfx.fill ? normalizeSymbolColorForTheme(gfx.fill) : 'none');
+        add(poly);
+        break;
+      }
+      case 'rectangle': {
+        const rect = document.createElementNS(SVG_NS, 'rect');
+        const strokeWidth = (gfx.strokeWidth ?? 2) * 2;
+        setAttrs(rect, {
+          x: baseX + gfx.x,
+          y: baseY + gfx.y,
+          width: gfx.width,
+          height: gfx.height,
+          'stroke-width': String(strokeWidth)
+        });
+        if (gfx.stroke) rect.setAttribute('stroke', normalizeSymbolColorForTheme(gfx.stroke));
+        else applySymbolStroke(rect, 'body');
+        rect.setAttribute('fill', gfx.fill ? normalizeSymbolColorForTheme(gfx.fill) : 'none');
+        add(rect);
+        break;
+      }
+      case 'circle': {
+        const circle = document.createElementNS(SVG_NS, 'circle');
+        const strokeWidth = (gfx.strokeWidth ?? 2) * 2;
+        setAttrs(circle, {
+          cx: baseX + gfx.cx,
+          cy: baseY + gfx.cy,
+          r: gfx.r,
+          'stroke-width': String(strokeWidth)
+        });
+        if (gfx.stroke) circle.setAttribute('stroke', normalizeSymbolColorForTheme(gfx.stroke));
+        else applySymbolStroke(circle, 'body');
+        circle.setAttribute('fill', gfx.fill ? normalizeSymbolColorForTheme(gfx.fill) : 'none');
+        add(circle);
+        break;
+      }
+      case 'path': {
+        const pathEl = document.createElementNS(SVG_NS, 'path');
+        const strokeWidth = (gfx.strokeWidth ?? 2) * 2;
+        setAttrs(pathEl, {
+          d: gfx.d,
+          'stroke-width': String(strokeWidth)
+        });
+        if (gfx.stroke) pathEl.setAttribute('stroke', normalizeSymbolColorForTheme(gfx.stroke));
+        else applySymbolStroke(pathEl, 'body');
+        pathEl.setAttribute('fill', gfx.fill ? normalizeSymbolColorForTheme(gfx.fill) : 'none');
+        add(pathEl);
+        break;
+      }
+      case 'text': {
+        const txt = document.createElementNS(SVG_NS, 'text');
+        const fontSize = gfx.fontSize ?? 12;
+        const textX = baseX + gfx.x;
+        const textY = baseY + gfx.y;
+        setAttrs(txt, {
+          x: textX,
+          y: textY,
+          'font-size': String(fontSize),
+          'text-anchor': gfx.anchor ?? 'start',
+          transform: `rotate(${-c.rot} ${textX} ${textY})`,
+          'pointer-events': 'none'
+        });
+        applySymbolFill(txt, 'referenceText');
+        txt.textContent = gfx.text;
+        add(txt);
+        break;
+      }
+      case 'arc':
+      default:
+        // Unsupported primitives are ignored for now
+        break;
+    }
+  };
+
+  const drawCustomPins = () => {
+    if (!c.pins || c.pins.length === 0) return;
+    for (const pin of c.pins) {
+      const originX = c.x + pin.x;
+      const originY = c.y + pin.y;
+      const length = pin.length ?? GRID * 2;
+      const rad = (pin.rotation * Math.PI) / 180;
+      const dx = Math.cos(rad);
+      const dy = -Math.sin(rad);
+      const endX = originX + dx * length;
+      const endY = originY + dy * length;
+
+      const pinLine = document.createElementNS(SVG_NS, 'line');
+      setAttrs(pinLine, {
+        x1: originX,
+        y1: originY,
+        x2: endX,
+        y2: endY,
+        'stroke-width': '2',
+        'stroke-linecap': 'round'
+      });
+      applySymbolStroke(pinLine, 'pin');
+      add(pinLine);
+
+      if (pin.visible === false) continue;
+
+      const showNumber = pin.showNumber !== false;
+      const showName = !!pin.name && pin.showName !== false;
+      if (!showNumber && !showName) continue;
+
+      const normalX = -dy;
+      const normalY = dx;
+
+      if (showNumber) {
+        const numberOffset = 6;
+        const numberX = originX + normalX * numberOffset;
+        const numberY = originY + normalY * numberOffset;
+        const numberText = document.createElementNS(SVG_NS, 'text');
+        setAttrs(numberText, {
+          x: numberX,
+          y: numberY,
+          'font-size': '10',
+          'text-anchor': 'middle',
+          'dominant-baseline': 'middle',
+          transform: `rotate(${-c.rot} ${numberX} ${numberY})`,
+          'pointer-events': 'none'
+        });
+        applySymbolFill(numberText, 'pinText');
+        numberText.textContent = pin.id ?? '';
+        add(numberText);
+      }
+
+      if (showName) {
+        const nameOffset = 12;
+        const nameX = endX + normalX * nameOffset;
+        const nameY = endY + normalY * nameOffset;
+        const nameText = document.createElementNS(SVG_NS, 'text');
+        setAttrs(nameText, {
+          x: nameX,
+          y: nameY,
+          'font-size': '10',
+          'text-anchor': 'start',
+          'dominant-baseline': 'middle',
+          transform: `rotate(${-c.rot} ${nameX} ${nameY})`,
+          'pointer-events': 'none'
+        });
+        applySymbolFill(nameText, 'pinText');
+        nameText.textContent = pin.name!;
+        add(nameText);
+      }
+    }
+  };
+
+  if (hasCustomGraphics) {
+    c.graphics!.forEach(drawCustomGraphic);
+  } else {
+    switch (c.type) {
+      case 'resistor':
+        drawResistor(gg, c, x, y, ax, bx, defaultResistorStyle, line, path, add);
+        break;
+      case 'capacitor':
+        drawCapacitor(gg, c, x, y, ax, bx, defaultResistorStyle, line, path, add);
+        break;
+      case 'inductor':
+        drawInductor(x, y, ax, bx, line, path);
+        break;
+      case 'diode':
+        drawDiodeInto(bodyGroup, c, (c.props?.subtype as DiodeSubtype) || 'generic');
+        break;
+      case 'battery':
+        drawBattery(c, x, y, GRID, line, add);
+        break;
+      case 'ac':
+        drawACSource(x, y, ax, bx, line, add, path);
+        break;
+      case 'npn':
+      case 'pnp':
+        drawTransistor(c, x, y, line, add);
+        break;
+      case 'ground':
+        drawGround(x, y, line);
+        break;
+    }
   }
 
-  // Label text (with optional offset for independent positioning)
-  const label = document.createElementNS(SVG_NS, 'text');
-  label.setAttribute('data-label-for', c.id); // Mark as label text for hit detection
+  if (c.pins && c.pins.length > 0) {
+    drawCustomPins();
+  }
+
+  // Label and value text placement (always upright)
+  const bounds = getComponentBounds(c);
   const rot = ((c.rot % 360) + 360) % 360;
-  
-  // Calculate default label position based on component type
-  let labelX = c.x;
-  let labelY = c.y + 46;
-  let labelAnchor: 'start' | 'middle' | 'end' = 'middle';
-  
-  // For transistors, position label to the right (in local rotated space)
-  if (c.type === 'npn' || c.type === 'pnp') {
-    labelX = c.x + 60;
-    labelY = c.y;
+  const isHorizontal = rot === 0 || rot === 180;
+  const isVertical = rot === 90 || rot === 270;
+
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  const topY = Math.min(bounds.minY, bounds.maxY);
+  const rightX = Math.max(bounds.minX, bounds.maxX);
+
+  let labelX: number;
+  let labelY: number;
+  let valueX: number;
+  let valueY: number;
+  let labelAnchor: 'start' | 'middle' | 'end';
+  let valueAnchor: 'start' | 'middle' | 'end';
+
+  if (isVertical) {
+    const textX = rightX + FIFTY_MILS_PX;
+    const valueBaseline = centerY + TEXT_FONT_SIZE / 2;
+    const labelBaseline = valueBaseline - (TEXT_FONT_SIZE + FIFTY_MILS_PX);
+    labelX = textX;
+    valueX = textX;
+    labelY = labelBaseline;
+    valueY = valueBaseline;
     labelAnchor = 'start';
+    valueAnchor = 'start';
+  } else {
+    const valueBaseline = topY - HUNDRED_MILS_PX;
+    const labelBaseline = valueBaseline - (TEXT_FONT_SIZE + FIFTY_MILS_PX);
+    labelX = centerX;
+    valueX = centerX;
+    labelY = labelBaseline;
+    valueY = valueBaseline;
+    labelAnchor = 'middle';
+    valueAnchor = 'middle';
   }
-  
-  // Apply user-defined offsets if present
+
   if (c.labelOffsetX !== undefined) labelX += c.labelOffsetX;
   if (c.labelOffsetY !== undefined) labelY += c.labelOffsetY;
-  
-  setAttrs(label, { 
-    x: labelX, 
-    y: labelY, 
+  if (c.valueOffsetX !== undefined) valueX += c.valueOffsetX;
+  if (c.valueOffsetY !== undefined) valueY += c.valueOffsetY;
+
+  const label = document.createElementNS(SVG_NS, 'text');
+  label.setAttribute('data-label-for', c.id);
+  setAttrs(label, {
+    x: labelX,
+    y: labelY,
     'text-anchor': labelAnchor,
-    'dominant-baseline': c.type === 'npn' || c.type === 'pnp' ? 'middle' : 'auto',
-    'font-size': '12', 
-    transform: `rotate(${-c.rot} ${labelX} ${labelY})`,
+    'dominant-baseline': 'alphabetic',
+    'font-size': String(TEXT_FONT_SIZE),
+    transform: `rotate(${-rot} ${labelX} ${labelY})`,
     'pointer-events': 'all',
     'cursor': 'move',
     'user-select': 'none'
   });
   applySymbolFill(label, 'referenceText');
-  
   label.textContent = c.label;
   gg.appendChild(label);
-  
-  // Value text (separate from label, also with optional offset)
+
   const valText = formatValue(c);
   if (valText) {
     const value = document.createElementNS(SVG_NS, 'text');
-    value.setAttribute('data-value-for', c.id); // Mark as value text for hit detection
-    
-    // Calculate value default position independent of label
-    let valueX = c.x;
-    let valueY = c.y + 62;
-    
-    // For transistors, position value to the right (like label)
-    if (c.type === 'npn' || c.type === 'pnp') {
-      valueX = c.x + 60;
-      valueY = c.y + 16;
-    }
-    
-    // Apply user-defined offsets if present
-    if (c.valueOffsetX !== undefined) valueX += c.valueOffsetX;
-    if (c.valueOffsetY !== undefined) valueY += c.valueOffsetY;
-    
+    value.setAttribute('data-value-for', c.id);
     setAttrs(value, {
       x: valueX,
       y: valueY,
-      'text-anchor': labelAnchor,
-      'font-size': '12',
-      transform: `rotate(${-c.rot} ${valueX} ${valueY})`,
+      'text-anchor': valueAnchor,
+      'dominant-baseline': 'alphabetic',
+      'font-size': String(TEXT_FONT_SIZE),
+      transform: `rotate(${-rot} ${valueX} ${valueY})`,
       'pointer-events': 'all',
       'cursor': 'move',
       'user-select': 'none'
     });
     applySymbolFill(value, 'valueText');
-    
     value.textContent = valText;
     gg.appendChild(value);
   }
 
   if (c.type === 'battery' || c.type === 'ac') {
+    const extraY = valueY + TEXT_FONT_SIZE + FIFTY_MILS_PX;
     const vtxt = document.createElementNS(SVG_NS, 'text');
-    setAttrs(vtxt, { 
-      x: c.x, 
-      y: c.y + 62, 
-      'text-anchor': 'middle', 
-      'font-size': '12', 
-      transform: `rotate(${-c.rot} ${c.x} ${c.y + 62})`
+    setAttrs(vtxt, {
+      x: valueX,
+      y: extraY,
+      'text-anchor': valueAnchor,
+      'font-size': String(TEXT_FONT_SIZE),
+      transform: `rotate(${-rot} ${valueX} ${extraY})`
     });
     applySymbolFill(vtxt, 'valueText');
     const v = (c.props?.voltage ?? '') !== '' ? `${c.props!.voltage} V` : '';
@@ -434,9 +654,9 @@ function drawInductor(
   line(coilEnd, y, bx, y, 'pin');
 }
 
-function drawDiodeInto(gg: SVGGElement, c: Component, subtype: DiodeSubtype) {
+function drawDiodeInto(group: SVGGElement, c: Component, subtype: DiodeSubtype) {
   const sw = 2;
-  const add = (el: SVGElement) => { gg.appendChild(el); return el; };
+  const add = (el: SVGElement) => { group.appendChild(el); return el; };
   const mk = (tag: string) => document.createElementNS(SVG_NS, tag);
   const lineEl = (x1: number, y1: number, x2: number, y2: number, w = sw, strokeCategory: SymbolStrokeCategory = 'body') => {
     const ln = mk('line');

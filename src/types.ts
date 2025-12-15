@@ -75,6 +75,16 @@ export interface Pin {
   electricalType: PinElectricalType; // KiCad-compatible electrical type
   name?: string;                 // optional human-readable name ("VCC", "GND", "OUT", etc.)
   visible?: boolean;             // whether pin number/name is visible on schematic (default true)
+  showNumber?: boolean;          // whether to draw the pin number annotation (defaults to true)
+  showName?: boolean;            // whether to draw the pin name annotation (defaults to true when name present)
+  length?: number;               // optional lead length (used for custom graphics / KiCad import)
+}
+
+export interface ComponentBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
 }
 
 /**

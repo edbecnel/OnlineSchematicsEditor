@@ -211,6 +211,138 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         const globals = window.OSEditor || (window.OSEditor = {});
         globals.clearSymbolLibraryCache = (libraryName) => clearSymbolLibraryCache(libraryName);
     }
+    function clearLibraryPlacementState() {
+        pendingLibrarySelection = null;
+        pendingLibrarySymbol = null;
+    }
+    function inferPlaceType(libraryName, symbolName) {
+        const libLc = libraryName.toLowerCase();
+        const nameLc = symbolName.toLowerCase();
+        const combined = `${libLc} ${nameLc}`;
+        if (combined.includes('diode') || combined.includes('rectifier') || combined.includes('tvs'))
+            return 'diode';
+        if (combined.includes('capacitor'))
+            return 'capacitor';
+        if (combined.includes('inductor') || combined.includes('coil'))
+            return 'inductor';
+        if (combined.includes('ground') || combined.includes('earth'))
+            return 'ground';
+        if (combined.includes('battery') || combined.includes('cell'))
+            return 'battery';
+        if (combined.includes('ac') || combined.includes('sine'))
+            return 'ac';
+        if (combined.includes('transistor') || combined.includes('bjt') || combined.includes('npn'))
+            return 'npn';
+        if (combined.includes('pnp'))
+            return 'pnp';
+        return 'resistor';
+    }
+    function clonePin(pin) {
+        return {
+            id: pin.id,
+            x: pin.x,
+            y: pin.y,
+            rotation: pin.rotation,
+            electricalType: pin.electricalType,
+            name: pin.name,
+            visible: pin.visible,
+            showNumber: pin.showNumber,
+            showName: pin.showName,
+            length: pin.length
+        };
+    }
+    function cloneGraphicElement(el) {
+        switch (el.type) {
+            case 'polyline':
+            case 'polygon':
+                return {
+                    ...el,
+                    points: el.points.map(pt => ({ x: pt.x, y: pt.y }))
+                };
+            case 'line':
+            case 'rectangle':
+            case 'circle':
+            case 'arc':
+            case 'path':
+            case 'text':
+                return { ...el };
+            default:
+                return { ...el };
+        }
+    }
+    function clonePropertyData(prop) {
+        return {
+            value: prop.value,
+            position: prop.position ? { ...prop.position } : undefined,
+            anchor: prop.anchor
+        };
+    }
+    function clonePropertyMap(source) {
+        const result = {};
+        for (const key of Object.keys(source)) {
+            result[key] = clonePropertyData(source[key]);
+        }
+        return result;
+    }
+    function getPendingSymbolFor(type) {
+        if (pendingLibrarySymbol && pendingLibrarySymbol.placeType === type) {
+            return pendingLibrarySymbol;
+        }
+        return null;
+    }
+    function shouldTreatAsTwoPin(type) {
+        const pending = getPendingSymbolFor(type);
+        if (pending) {
+            return pending.pins.length === 2;
+        }
+        return Components.isTwoPinType(type);
+    }
+    function buildComponentForPlacement(type, position, rot) {
+        const id = State.uid(type);
+        const counterValue = (State.counters[type] ?? 1) - 1;
+        const labelCounter = counterValue > 0 ? counterValue : 1;
+        const comp = {
+            id,
+            type,
+            x: position.x,
+            y: position.y,
+            rot,
+            label: Components.getDefaultLabel(type, labelCounter),
+            value: '',
+            props: {}
+        };
+        if (type === 'diode') {
+            comp.props.subtype = diodeSubtype;
+        }
+        if (type === 'resistor') {
+            comp.props.resistorStyle = defaultResistorStyle;
+        }
+        if (type === 'capacitor') {
+            comp.props.capacitorSubtype = capacitorSubtype;
+            if (capacitorSubtype === 'polarized') {
+                comp.props.capacitorStyle = defaultResistorStyle;
+            }
+        }
+        const pending = getPendingSymbolFor(type);
+        if (pending) {
+            comp.pins = pending.pins.map(clonePin);
+            comp.graphics = pending.graphics.map(cloneGraphicElement);
+            comp.libraryId = pending.library;
+            comp.symbolName = pending.symbol;
+            const refProperty = pending.properties?.Reference;
+            const valueProperty = pending.properties?.Value;
+            if (refProperty) {
+                const refPrefix = refProperty.value.trim();
+                if (refPrefix) {
+                    comp.label = `${refPrefix}${labelCounter}`;
+                }
+            }
+            if (valueProperty) {
+                comp.value = valueProperty.value;
+            }
+        }
+        return comp;
+    }
     function setInspectorTab(tab) {
         if (tab === inspectorTab)
             return;
@@ -235,11 +367,22 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         pendingLibrarySelection = { library: libraryName, symbol: symbolName };
         const parsed = parseLibrarySymbol(libraryName, symbolName);
         if (parsed) {
-            pendingLibrarySymbol = { library: libraryName, symbol: symbolName, ...parsed };
+            const inferredType = inferPlaceType(libraryName, symbolName);
+            pendingLibrarySymbol = {
+                library: libraryName,
+                symbol: symbolName,
+                placeType: inferredType,
+                pins: parsed.pins,
+                graphics: parsed.graphics,
+                properties: clonePropertyMap(parsed.properties)
+            };
+            placeType = inferredType;
+            setMode('place');
             console.log('[Library] Parsed symbol ready for placement', pendingLibrarySymbol);
         }
         else {
             pendingLibrarySymbol = null;
+            showToast(`Unable to prepare "${symbolName}" for placement. Re-import the library and try again.`);
         }
     }
     let gridMode = localStorage.getItem('grid.mode') || 'line';
@@ -3797,33 +3940,23 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                         else if (mode === 'place' && placeType) {
                             const at = { x: ep.x, y: ep.y };
                             let rot = 0;
-                            if (isTwoPinType(placeType)) {
+                            const alignTwoPin = shouldTreatAsTwoPin(placeType);
+                            if (alignTwoPin) {
                                 const hit = nearestSegmentAtPoint(at, 18);
                                 if (hit) {
                                     rot = normDeg(hit.angle);
                                 }
                             }
-                            const id = State.uid(placeType);
-                            const labelPrefix = { resistor: 'R', capacitor: 'C', inductor: 'L', diode: 'D', npn: 'Q', pnp: 'Q', ground: 'GND', battery: 'BT', ac: 'AC' }[placeType] || 'X';
-                            const comp = { id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType] - 1}`, value: '', props: {} };
-                            if (placeType === 'diode')
-                                comp.props.subtype = diodeSubtype;
-                            if (placeType === 'resistor')
-                                comp.props.resistorStyle = defaultResistorStyle;
-                            if (placeType === 'capacitor') {
-                                comp.props.capacitorSubtype = capacitorSubtype;
-                                if (capacitorSubtype === 'polarized') {
-                                    comp.props.capacitorStyle = defaultResistorStyle;
-                                }
-                            }
+                            const comp = buildComponentForPlacement(placeType, at, rot);
                             pushUndo();
                             components.push(comp);
                             breakWiresForComponent(comp);
-                            if (isTwoPinType(placeType))
+                            if (alignTwoPin)
                                 deleteBridgeBetweenPins(comp);
                             setMode('select');
                             placeType = null;
-                            selectSingle('component', id, null);
+                            clearLibraryPlacementState();
+                            selectSingle('component', comp.id, null);
                             redraw();
                         }
                     });
@@ -3898,33 +4031,23 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                         else if (mode === 'place' && placeType) {
                             const at = { x: ep.x, y: ep.y };
                             let rot = 0;
-                            if (isTwoPinType(placeType)) {
+                            const alignTwoPin = shouldTreatAsTwoPin(placeType);
+                            if (alignTwoPin) {
                                 const hit = nearestSegmentAtPoint(at, 18);
                                 if (hit) {
                                     rot = normDeg(hit.angle);
                                 }
                             }
-                            const id = State.uid(placeType);
-                            const labelPrefix = { resistor: 'R', capacitor: 'C', inductor: 'L', diode: 'D', npn: 'Q', pnp: 'Q', ground: 'GND', battery: 'BT', ac: 'AC' }[placeType] || 'X';
-                            const comp = { id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${counters[placeType] - 1}`, value: '', props: {} };
-                            if (placeType === 'diode')
-                                comp.props.subtype = diodeSubtype;
-                            if (placeType === 'resistor')
-                                comp.props.resistorStyle = defaultResistorStyle;
-                            if (placeType === 'capacitor') {
-                                comp.props.capacitorSubtype = capacitorSubtype;
-                                if (capacitorSubtype === 'polarized') {
-                                    comp.props.capacitorStyle = defaultResistorStyle;
-                                }
-                            }
+                            const comp = buildComponentForPlacement(placeType, at, rot);
                             pushUndo();
                             components.push(comp);
                             breakWiresForComponent(comp);
-                            if (isTwoPinType(placeType))
+                            if (alignTwoPin)
                                 deleteBridgeBetweenPins(comp);
                             setMode('select');
                             placeType = null;
-                            selectSingle('component', id, null);
+                            clearLibraryPlacementState();
+                            selectSingle('component', comp.id, null);
                             redraw();
                         }
                     });
@@ -4172,8 +4295,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         }
         return v;
     }
-    // Angles / nearest segment helpers
-    const isTwoPinType = (t) => ['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'].includes(t);
     // nearestSegmentAtPoint - local app-specific version that searches wires array
     // For T-junction snapping, a segment is "near" if the point is close to the segment in the perpendicular direction
     function nearestSegmentAtPoint(p, maxDist = 18) {
@@ -5624,36 +5745,16 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             return;
         }
         if (mode === 'place' && placeType) {
-            const id = State.uid(placeType);
-            const labelPrefix = { resistor: 'R', capacitor: 'C', inductor: 'L', diode: 'D', npn: 'Q', pnp: 'Q', ground: 'GND', battery: 'BT', ac: 'AC' }[placeType] || 'X';
-            // If a 2-pin part is dropped near a segment, project to it and align rotation
+            const alignTwoPin = shouldTreatAsTwoPin(placeType);
             let at = { x, y }, rot = 0;
-            if (isTwoPinType(placeType)) {
+            if (alignTwoPin) {
                 const hit = nearestSegmentAtPoint(p, 18);
                 if (hit) {
-                    // Snap the projection point to the grid to ensure component pins align with wire endpoints
                     at = { x: snap(hit.q.x), y: snap(hit.q.y) };
                     rot = normDeg(hit.angle);
                 }
             }
-            // Extract numeric suffix from ID for label (e.g., resistor1 -> R1)
-            const idNumber = id.match(/\d+$/)?.[0] || '0';
-            const comp = {
-                id, type: placeType, x: at.x, y: at.y, rot, label: `${labelPrefix}${idNumber}`, value: '',
-                props: {}
-            };
-            if (placeType === 'diode') {
-                comp.props.subtype = diodeSubtype;
-            }
-            if (placeType === 'resistor') {
-                comp.props.resistorStyle = defaultResistorStyle;
-            }
-            if (placeType === 'capacitor') {
-                comp.props.capacitorSubtype = capacitorSubtype;
-                if (capacitorSubtype === 'polarized') {
-                    comp.props.capacitorStyle = defaultResistorStyle;
-                }
-            }
+            const comp = buildComponentForPlacement(placeType, at, rot);
             components.push(comp);
             // Check constraints if enabled (unless Shift key is held to bypass collision)
             const shiftHeld = e.shiftKey;
@@ -5677,10 +5778,12 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             }
             // Break wires at pins and remove inner bridge segment for 2-pin parts
             breakWiresForComponent(comp);
-            deleteBridgeBetweenPins(comp);
+            if (alignTwoPin)
+                deleteBridgeBetweenPins(comp);
             setMode('select');
             placeType = null;
-            selectSingle('component', id, null);
+            clearLibraryPlacementState();
+            selectSingle('component', comp.id, null);
             redraw();
             return;
         }
@@ -7619,32 +7722,18 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         }
         else if (mode === 'place' && placeType) {
             // Place component at typed coordinate
-            const id = State.uid(placeType);
-            const labelPrefix = { resistor: 'R', capacitor: 'C', inductor: 'L', diode: 'D', npn: 'Q', pnp: 'Q', ground: 'GND', battery: 'BT', ac: 'AC' }[placeType] || 'X';
-            const comp = {
-                id, type: placeType, x: snapPt.x, y: snapPt.y, rot: 0, label: `${labelPrefix}${counters[placeType] - 1}`, value: '',
-                props: {}
-            };
-            if (placeType === 'diode') {
-                comp.props.subtype = diodeSubtype;
-            }
-            if (placeType === 'resistor') {
-                comp.props.resistorStyle = defaultResistorStyle;
-            }
-            if (placeType === 'capacitor') {
-                comp.props.capacitorSubtype = capacitorSubtype;
-                if (capacitorSubtype === 'polarized') {
-                    comp.props.capacitorStyle = defaultResistorStyle;
-                }
-            }
+            const comp = buildComponentForPlacement(placeType, snapPt, 0);
             components.push(comp);
             breakWiresForComponent(comp);
-            deleteBridgeBetweenPins(comp);
+            if (shouldTreatAsTwoPin(placeType))
+                deleteBridgeBetweenPins(comp);
             setMode('select');
             placeType = null;
+            clearLibraryPlacementState();
             pushUndo();
             rebuildTopology();
             redraw();
+            selectSingle('component', comp.id, null);
             updateCoordinateInputs(snapPt.x, snapPt.y);
         }
         else if (mode === 'place-junction') {
@@ -7766,15 +7855,42 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
     function renderGhostAt(pos, type) {
         clearGhost();
         let at = { x: pos.x, y: pos.y }, rot = 0;
-        if (isTwoPinType(type)) {
+        if (shouldTreatAsTwoPin(type)) {
             const hit = nearestSegmentAtPoint(pos, 18);
             if (hit) {
                 at = hit.q;
                 rot = normDeg(hit.angle);
             }
         }
-        const ghost = { id: '__ghost__', type, x: at.x, y: at.y, rot, label: '', value: '', props: {} };
-        if (type === 'diode') {
+        const labelCounter = State.counters[type] ?? 1;
+        const ghost = {
+            id: '__ghost__',
+            type,
+            x: at.x,
+            y: at.y,
+            rot,
+            label: Components.getDefaultLabel(type, labelCounter),
+            value: '',
+            props: {}
+        };
+        if (pendingLibrarySymbol && pendingLibrarySymbol.placeType === type) {
+            ghost.pins = pendingLibrarySymbol.pins.map(clonePin);
+            ghost.graphics = pendingLibrarySymbol.graphics.map(cloneGraphicElement);
+            ghost.libraryId = pendingLibrarySymbol.library;
+            ghost.symbolName = pendingLibrarySymbol.symbol;
+            const refProperty = pendingLibrarySymbol.properties?.Reference;
+            const valueProperty = pendingLibrarySymbol.properties?.Value;
+            if (refProperty) {
+                const refPrefix = refProperty.value.trim();
+                if (refPrefix) {
+                    ghost.label = `${refPrefix}?`;
+                }
+            }
+            if (valueProperty) {
+                ghost.value = valueProperty.value;
+            }
+        }
+        else if (type === 'diode') {
             ghost.props.subtype = diodeSubtype;
         }
         ghostEl = drawComponent(ghost);
@@ -9862,7 +9978,68 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         }
         return names;
     }
-    function parseLibrarySymbol(libraryName, symbolName) {
+    function parsePinVisibilityFlag(symbolBlock, key) {
+        const idx = symbolBlock.indexOf(`(${key}`);
+        if (idx === -1)
+            return null;
+        const captured = captureBalanced(symbolBlock, idx);
+        if (!captured)
+            return null;
+        const section = captured.block;
+        if (/\(hide\s+yes\)/i.test(section))
+            return false;
+        if (/\(hide\s+no\)/i.test(section))
+            return true;
+        if (/\(show\s+yes\)/i.test(section))
+            return true;
+        if (/\(show\s+no\)/i.test(section))
+            return false;
+        return null;
+    }
+    function parseKiCadProperties(symbolBlock) {
+        const props = {};
+        let searchIndex = 0;
+        while (true) {
+            const idx = symbolBlock.indexOf('(property', searchIndex);
+            if (idx === -1)
+                break;
+            const captured = captureBalanced(symbolBlock, idx);
+            if (!captured)
+                break;
+            searchIndex = captured.endIndex;
+            const block = captured.block;
+            const headerMatch = block.match(/\(property\s+"([^\"]+)"\s+"([^\"]*)"/);
+            if (!headerMatch)
+                continue;
+            const name = headerMatch[1];
+            const value = headerMatch[2];
+            const entry = { value };
+            const atMatch = block.match(/\(at\s+([-+\d.]+)\s+([-+\d.]+)(?:\s+([-+\d.]+))?/);
+            if (atMatch) {
+                const xMm = Number.parseFloat(atMatch[1]);
+                const yMm = Number.parseFloat(atMatch[2]);
+                const rotDeg = atMatch[3] !== undefined ? Number.parseFloat(atMatch[3]) : 0;
+                entry.position = {
+                    x: mmToPxExact(xMm),
+                    y: -mmToPxExact(yMm),
+                    rotation: Number.isFinite(rotDeg) ? rotDeg : 0
+                };
+            }
+            const justifyMatch = block.match(/\(justify\s+([^\)]+)\)/i);
+            if (justifyMatch) {
+                const tokens = justifyMatch[1].split(/\s+/);
+                if (tokens.includes('left'))
+                    entry.anchor = 'start';
+                else if (tokens.includes('right'))
+                    entry.anchor = 'end';
+                else if (tokens.includes('center'))
+                    entry.anchor = 'middle';
+            }
+            props[name] = entry;
+        }
+        return props;
+    }
+    function parseLibrarySymbol(libraryName, symbolName, visiting = new Set()) {
         let text = libraryTextCache.get(libraryName);
         if (!text) {
             text = readStoredLibraryText(libraryName);
@@ -9880,12 +10057,118 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             console.warn(`[KiCad Import] Unable to locate symbol "${symbolName}" in library "${libraryName}".`);
             return null;
         }
-        const pins = parseKiCadPins(symbolBlock);
-        const graphics = parseKiCadGraphics(symbolBlock);
-        if (pins.length === 0 && graphics.length === 0) {
-            console.warn(`[KiCad Import] Parsed symbol "${symbolName}" produced no geometry or pins.`);
+        const recursionKey = `${libraryName}::${symbolName}`;
+        if (visiting.has(recursionKey)) {
+            console.warn(`[KiCad Import] Detected circular extends chain while parsing "${symbolName}" in "${libraryName}".`);
+            return { pins: [], graphics: [], properties: {}, pinNumbersVisible: null, pinNamesVisible: null };
         }
-        return { pins, graphics };
+        visiting.add(recursionKey);
+        try {
+            const extendsRegex = /\(extends\s+"([^\"]+)"\)/g;
+            const basePins = [];
+            const baseGraphics = [];
+            const baseProperties = {};
+            let inheritedPinNumbers = null;
+            let inheritedPinNames = null;
+            let extendsMatch;
+            while ((extendsMatch = extendsRegex.exec(symbolBlock)) !== null) {
+                const target = extendsMatch[1];
+                let baseLibrary = libraryName;
+                let baseSymbol = target;
+                const colonIndex = target.indexOf(':');
+                if (colonIndex !== -1) {
+                    baseLibrary = target.slice(0, colonIndex);
+                    baseSymbol = target.slice(colonIndex + 1);
+                }
+                if (baseLibrary !== libraryName && !projectSettings.symbolLibraries[baseLibrary]) {
+                    console.warn(`[KiCad Import] Symbol "${symbolName}" extends "${target}" but library "${baseLibrary}" is not loaded.`);
+                    continue;
+                }
+                const baseResult = parseLibrarySymbol(baseLibrary, baseSymbol, visiting);
+                if (baseResult) {
+                    basePins.push(...baseResult.pins.map(clonePin));
+                    baseGraphics.push(...baseResult.graphics.map(cloneGraphicElement));
+                    for (const [name, prop] of Object.entries(baseResult.properties)) {
+                        baseProperties[name] = clonePropertyData(prop);
+                    }
+                    if (baseResult.pinNumbersVisible !== null) {
+                        inheritedPinNumbers = baseResult.pinNumbersVisible;
+                    }
+                    if (baseResult.pinNamesVisible !== null) {
+                        inheritedPinNames = baseResult.pinNamesVisible;
+                    }
+                }
+                else {
+                    console.warn(`[KiCad Import] Unable to resolve base symbol "${target}" while parsing "${symbolName}" from "${libraryName}".`);
+                }
+            }
+            const localPins = parseKiCadPins(symbolBlock);
+            const localGraphics = parseKiCadGraphics(symbolBlock);
+            const localProperties = parseKiCadProperties(symbolBlock);
+            const localPinNumbers = parsePinVisibilityFlag(symbolBlock, 'pin_numbers');
+            const localPinNames = parsePinVisibilityFlag(symbolBlock, 'pin_names');
+            const mergedProperties = {};
+            for (const [name, prop] of Object.entries(baseProperties)) {
+                mergedProperties[name] = clonePropertyData(prop);
+            }
+            for (const [name, prop] of Object.entries(localProperties)) {
+                mergedProperties[name] = clonePropertyData(prop);
+            }
+            const pinsByKey = new Map();
+            const pinKey = (pin, idx, prefix) => {
+                const trimmed = (pin.id || '').trim();
+                return trimmed ? trimmed : `${prefix}:${idx}`;
+            };
+            basePins.forEach((pin, idx) => {
+                pinsByKey.set(pinKey(pin, idx, 'base'), pin);
+            });
+            localPins.forEach((pin, idx) => {
+                const idKey = (pin.id || '').trim();
+                if (idKey && pinsByKey.has(idKey)) {
+                    pinsByKey.set(idKey, pin);
+                }
+                else {
+                    const key = idKey || pinKey(pin, idx, 'local');
+                    pinsByKey.set(key, pin);
+                }
+            });
+            let pins = Array.from(pinsByKey.values());
+            if (pins.length === 0) {
+                pins = localPins;
+            }
+            const finalPinNumbersVisible = localPinNumbers !== null ? localPinNumbers : inheritedPinNumbers;
+            const finalPinNamesVisible = localPinNames !== null ? localPinNames : inheritedPinNames;
+            if (finalPinNumbersVisible !== null) {
+                pins.forEach((pin) => {
+                    pin.showNumber = finalPinNumbersVisible;
+                });
+            }
+            if (finalPinNamesVisible !== null) {
+                pins.forEach((pin) => {
+                    pin.showName = finalPinNamesVisible;
+                });
+            }
+            let graphics;
+            if (baseGraphics.length > 0) {
+                graphics = [...baseGraphics, ...localGraphics];
+            }
+            else {
+                graphics = localGraphics;
+            }
+            if (pins.length === 0 && graphics.length === 0) {
+                console.warn(`[KiCad Import] Parsed symbol "${symbolName}" produced no geometry or pins.`);
+            }
+            return {
+                pins,
+                graphics,
+                properties: mergedProperties,
+                pinNumbersVisible: finalPinNumbersVisible,
+                pinNamesVisible: finalPinNamesVisible
+            };
+        }
+        finally {
+            visiting.delete(recursionKey);
+        }
     }
     function extractSymbolBlock(content, symbolName) {
         const escaped = symbolName.replace(/"/g, '\\"');
@@ -9942,11 +10225,13 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             const atMatch = block.match(/\(at\s+([-+\d.]+)\s+([-+\d.]+)(?:\s+([-+\d.]+))?/);
             const nameMatch = block.match(/\(name\s+"([^\"]*)"/);
             const numberMatch = block.match(/\(number\s+"([^\"]*)"/);
+            const lengthMatch = block.match(/\(length\s+([-+\d.]+)\)/);
             if (!atMatch || !numberMatch)
                 continue;
             const xMm = Number.parseFloat(atMatch[1]);
             const yMm = Number.parseFloat(atMatch[2]);
             const rotDeg = atMatch[3] !== undefined ? Number.parseFloat(atMatch[3]) : 0;
+            const lengthMm = lengthMatch ? Number.parseFloat(lengthMatch[1]) : NaN;
             const rawType = typeMatch ? typeMatch[1] : 'unspecified';
             const validTypes = ['input', 'output', 'bidirectional', 'power_in', 'power_out', 'passive', 'unspecified'];
             const normalizedType = validTypes.includes(rawType) ? rawType : 'unspecified';
@@ -9957,7 +10242,8 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 rotation: Number.isFinite(rotDeg) ? rotDeg : 0,
                 electricalType: normalizedType,
                 name: nameMatch ? nameMatch[1] : undefined,
-                visible: true
+                visible: true,
+                length: Number.isFinite(lengthMm) ? mmToPxExact(lengthMm) : undefined
             };
             pins.push(pin);
         }
@@ -10010,7 +10296,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 graphics.push({
                     type: 'polyline',
                     points,
-                    stroke: 'var(--component)',
                     strokeWidth: strokeWidthPx
                 });
             }
