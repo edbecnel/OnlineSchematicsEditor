@@ -454,48 +454,72 @@ export function buildSymbolGroup(
   const topY = Math.min(bounds.minY, bounds.maxY);
   const rightX = Math.max(bounds.minX, bounds.maxX);
 
-  let labelX: number;
-  let labelY: number;
-  let valueX: number;
-  let valueY: number;
+  const toLocalCoords = (worldX: number, worldY: number): { x: number; y: number } => {
+    if (rot === 0) {
+      return { x: worldX, y: worldY };
+    }
+    const radians = (-rot * Math.PI) / 180;
+    const cosR = Math.cos(radians);
+    const sinR = Math.sin(radians);
+    const dx = worldX - c.x;
+    const dy = worldY - c.y;
+    return {
+      x: c.x + dx * cosR - dy * sinR,
+      y: c.y + dx * sinR + dy * cosR
+    };
+  };
+
+  let labelLocalX: number;
+  let labelLocalY: number;
+  let valueLocalX: number;
+  let valueLocalY: number;
   let labelAnchor: 'start' | 'middle' | 'end';
   let valueAnchor: 'start' | 'middle' | 'end';
 
   if (isVertical) {
-    const textX = rightX + FIFTY_MILS_PX;
-    const valueBaseline = centerY + TEXT_FONT_SIZE / 2;
-    const labelBaseline = valueBaseline - (TEXT_FONT_SIZE + FIFTY_MILS_PX);
-    labelX = textX;
-    valueX = textX;
-    labelY = labelBaseline;
-    valueY = valueBaseline;
+    const textWorldX = rightX + FIFTY_MILS_PX;
+    const spacing = TEXT_FONT_SIZE + FIFTY_MILS_PX;
+    const offset = spacing / 2;
+    const shiftDown = FIFTY_MILS_PX;
+    const valueWorldY = centerY + offset + shiftDown;
+    const labelWorldY = centerY - offset + shiftDown;
+    const labelLocal = toLocalCoords(textWorldX, labelWorldY);
+    const valueLocal = toLocalCoords(textWorldX, valueWorldY);
+    labelLocalX = labelLocal.x;
+    labelLocalY = labelLocal.y;
+    valueLocalX = valueLocal.x;
+    valueLocalY = valueLocal.y;
     labelAnchor = 'start';
     valueAnchor = 'start';
   } else {
-    const valueBaseline = topY - HUNDRED_MILS_PX;
-    const labelBaseline = valueBaseline - (TEXT_FONT_SIZE + FIFTY_MILS_PX);
-    labelX = centerX;
-    valueX = centerX;
-    labelY = labelBaseline;
-    valueY = valueBaseline;
+    const valueWorldY = topY - HUNDRED_MILS_PX;
+    const labelWorldY = valueWorldY - (TEXT_FONT_SIZE + FIFTY_MILS_PX);
+    const labelWorldX = centerX;
+    const valueWorldX = centerX;
+    const labelLocal = toLocalCoords(labelWorldX, labelWorldY);
+    const valueLocal = toLocalCoords(valueWorldX, valueWorldY);
+    labelLocalX = labelLocal.x;
+    labelLocalY = labelLocal.y;
+    valueLocalX = valueLocal.x;
+    valueLocalY = valueLocal.y;
     labelAnchor = 'middle';
     valueAnchor = 'middle';
   }
 
-  if (c.labelOffsetX !== undefined) labelX += c.labelOffsetX;
-  if (c.labelOffsetY !== undefined) labelY += c.labelOffsetY;
-  if (c.valueOffsetX !== undefined) valueX += c.valueOffsetX;
-  if (c.valueOffsetY !== undefined) valueY += c.valueOffsetY;
+  if (c.labelOffsetX !== undefined) labelLocalX += c.labelOffsetX;
+  if (c.labelOffsetY !== undefined) labelLocalY += c.labelOffsetY;
+  if (c.valueOffsetX !== undefined) valueLocalX += c.valueOffsetX;
+  if (c.valueOffsetY !== undefined) valueLocalY += c.valueOffsetY;
 
   const label = document.createElementNS(SVG_NS, 'text');
   label.setAttribute('data-label-for', c.id);
   setAttrs(label, {
-    x: labelX,
-    y: labelY,
+    x: labelLocalX,
+    y: labelLocalY,
     'text-anchor': labelAnchor,
     'dominant-baseline': 'alphabetic',
     'font-size': String(TEXT_FONT_SIZE),
-    transform: `rotate(${-rot} ${labelX} ${labelY})`,
+    transform: `rotate(${-rot} ${labelLocalX} ${labelLocalY})`,
     'pointer-events': 'all',
     'cursor': 'move',
     'user-select': 'none'
@@ -509,12 +533,12 @@ export function buildSymbolGroup(
     const value = document.createElementNS(SVG_NS, 'text');
     value.setAttribute('data-value-for', c.id);
     setAttrs(value, {
-      x: valueX,
-      y: valueY,
+      x: valueLocalX,
+      y: valueLocalY,
       'text-anchor': valueAnchor,
       'dominant-baseline': 'alphabetic',
       'font-size': String(TEXT_FONT_SIZE),
-      transform: `rotate(${-rot} ${valueX} ${valueY})`,
+      transform: `rotate(${-rot} ${valueLocalX} ${valueLocalY})`,
       'pointer-events': 'all',
       'cursor': 'move',
       'user-select': 'none'
@@ -525,14 +549,14 @@ export function buildSymbolGroup(
   }
 
   if (c.type === 'battery' || c.type === 'ac') {
-    const extraY = valueY + TEXT_FONT_SIZE + FIFTY_MILS_PX;
+    const extraY = valueLocalY + TEXT_FONT_SIZE + FIFTY_MILS_PX;
     const vtxt = document.createElementNS(SVG_NS, 'text');
     setAttrs(vtxt, {
-      x: valueX,
+      x: valueLocalX,
       y: extraY,
       'text-anchor': valueAnchor,
       'font-size': String(TEXT_FONT_SIZE),
-      transform: `rotate(${-rot} ${valueX} ${extraY})`
+      transform: `rotate(${-rot} ${valueLocalX} ${extraY})`
     });
     applySymbolFill(vtxt, 'valueText');
     const v = (c.props?.voltage ?? '') !== '' ? `${c.props!.voltage} V` : '';
