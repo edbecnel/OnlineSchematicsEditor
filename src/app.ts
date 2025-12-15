@@ -32,7 +32,7 @@ import type {
   Point, Axis, Mode, PlaceType, CounterKey, Selection, SelectionItem, DiodeSubtype, ResistorStyle, CapacitorSubtype,
   Component, RGBA01, StrokeType, Stroke, Wire, WireColorMode,
   NetClass, Theme, Junction, SWPEdge, SWP, Topology,
-  MoveCollapseCtx, KWire, ProjectSettings
+  MoveCollapseCtx, KWire, ProjectSettings, SymbolTheme
 } from './types.js';
 
 import {
@@ -70,8 +70,16 @@ import {
 
   let projectSettings: ProjectSettings = initializeProjectSettings();
 
+  type SymbolColorKey = keyof SymbolTheme;
+
   function syncProjectSettingsBackground(color: string): void {
     projectSettings = updateProjectSettings({ theme: { background: color } });
+  }
+
+  function syncProjectSettingsSymbolColor(key: SymbolColorKey, cssColor: string): void {
+    const rgba = cssToRGBA01(cssColor);
+    const symbolPatch: Partial<SymbolTheme> = { [key]: rgba };
+    projectSettings = updateProjectSettings({ theme: { symbol: symbolPatch } });
   }
 
   // ================================================================================
@@ -2031,7 +2039,63 @@ import {
     resetBtn.addEventListener('click', () => {
       applyLightBgColor(DEFAULT_THEME_BACKGROUND);
     });
-  })();  // ====== Component Drawing ======
+  })();
+
+  (function attachSymbolThemeControls() {
+    const symbolContent = document.querySelector('[data-section-content="settings-symbols"]');
+    if (!symbolContent) return;
+
+    const symbolFields: Array<{ id: string; key: SymbolColorKey; valueId: string }> = [
+      { id: 'symbolColorBody', key: 'body', valueId: 'symbolColorBodyValue' },
+      { id: 'symbolColorPin', key: 'pin', valueId: 'symbolColorPinValue' },
+      { id: 'symbolColorPinText', key: 'pinText', valueId: 'symbolColorPinTextValue' },
+      { id: 'symbolColorReferenceText', key: 'referenceText', valueId: 'symbolColorReferenceTextValue' },
+      { id: 'symbolColorValueText', key: 'valueText', valueId: 'symbolColorValueTextValue' },
+      { id: 'symbolColorPowerSymbol', key: 'powerSymbol', valueId: 'symbolColorPowerSymbolValue' }
+    ];
+
+    function rgbaToHex(color: RGBA01 | undefined): string {
+      if (!color) return '#000000';
+      const toHex = (n: number) => Math.round(Math.min(Math.max(n, 0), 1) * 255).toString(16).padStart(2, '0').toUpperCase();
+      return `#${toHex(color.r)}${toHex(color.g)}${toHex(color.b)}`;
+    }
+
+    function themeColorToHex(theme: SymbolTheme, key: SymbolColorKey): string {
+      return rgbaToHex(theme[key]);
+    }
+
+    symbolFields.forEach(({ id, key, valueId }) => {
+      const input = document.getElementById(id) as HTMLInputElement | null;
+      const valueEl = document.getElementById(valueId) as HTMLElement | null;
+      if (!input) return;
+
+      const initialHex = themeColorToHex(projectSettings.theme.symbol, key);
+      input.value = initialHex.toLowerCase();
+      if (valueEl) valueEl.textContent = initialHex;
+
+      function applyHex(hex: string) {
+        const normalized = hex.startsWith('#') ? hex.toUpperCase() : colorToHex(hex).toUpperCase();
+        if (valueEl) valueEl.textContent = normalized;
+
+        const currentHex = themeColorToHex(projectSettings.theme.symbol, key);
+        if (currentHex === normalized) return;
+
+        syncProjectSettingsSymbolColor(key, normalized);
+      }
+
+      input.addEventListener('input', (event) => {
+        const hex = (event.target as HTMLInputElement).value;
+        applyHex(hex);
+      });
+
+      input.addEventListener('change', (event) => {
+        const hex = (event.target as HTMLInputElement).value;
+        applyHex(hex);
+      });
+    });
+  })();
+
+  // ====== Component Drawing ======
 
   function drawComponent(c) {
     if (!c.props) c.props = {};

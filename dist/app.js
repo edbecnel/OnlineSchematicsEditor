@@ -32,6 +32,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     function syncProjectSettingsBackground(color) {
         projectSettings = updateProjectSettings({ theme: { background: color } });
     }
+    function syncProjectSettingsSymbolColor(key, cssColor) {
+        const rgba = cssToRGBA01(cssColor);
+        const symbolPatch = { [key]: rgba };
+        projectSettings = updateProjectSettings({ theme: { symbol: symbolPatch } });
+    }
     // ================================================================================
     // ====== 2. CONSTANTS & CONFIGURATION ======
     // ================================================================================
@@ -1958,7 +1963,57 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         resetBtn.addEventListener('click', () => {
             applyLightBgColor(DEFAULT_THEME_BACKGROUND);
         });
-    })(); // ====== Component Drawing ======
+    })();
+    (function attachSymbolThemeControls() {
+        const symbolContent = document.querySelector('[data-section-content="settings-symbols"]');
+        if (!symbolContent)
+            return;
+        const symbolFields = [
+            { id: 'symbolColorBody', key: 'body', valueId: 'symbolColorBodyValue' },
+            { id: 'symbolColorPin', key: 'pin', valueId: 'symbolColorPinValue' },
+            { id: 'symbolColorPinText', key: 'pinText', valueId: 'symbolColorPinTextValue' },
+            { id: 'symbolColorReferenceText', key: 'referenceText', valueId: 'symbolColorReferenceTextValue' },
+            { id: 'symbolColorValueText', key: 'valueText', valueId: 'symbolColorValueTextValue' },
+            { id: 'symbolColorPowerSymbol', key: 'powerSymbol', valueId: 'symbolColorPowerSymbolValue' }
+        ];
+        function rgbaToHex(color) {
+            if (!color)
+                return '#000000';
+            const toHex = (n) => Math.round(Math.min(Math.max(n, 0), 1) * 255).toString(16).padStart(2, '0').toUpperCase();
+            return `#${toHex(color.r)}${toHex(color.g)}${toHex(color.b)}`;
+        }
+        function themeColorToHex(theme, key) {
+            return rgbaToHex(theme[key]);
+        }
+        symbolFields.forEach(({ id, key, valueId }) => {
+            const input = document.getElementById(id);
+            const valueEl = document.getElementById(valueId);
+            if (!input)
+                return;
+            const initialHex = themeColorToHex(projectSettings.theme.symbol, key);
+            input.value = initialHex.toLowerCase();
+            if (valueEl)
+                valueEl.textContent = initialHex;
+            function applyHex(hex) {
+                const normalized = hex.startsWith('#') ? hex.toUpperCase() : colorToHex(hex).toUpperCase();
+                if (valueEl)
+                    valueEl.textContent = normalized;
+                const currentHex = themeColorToHex(projectSettings.theme.symbol, key);
+                if (currentHex === normalized)
+                    return;
+                syncProjectSettingsSymbolColor(key, normalized);
+            }
+            input.addEventListener('input', (event) => {
+                const hex = event.target.value;
+                applyHex(hex);
+            });
+            input.addEventListener('change', (event) => {
+                const hex = event.target.value;
+                applyHex(hex);
+            });
+        });
+    })();
+    // ====== Component Drawing ======
     function drawComponent(c) {
         if (!c.props)
             c.props = {};

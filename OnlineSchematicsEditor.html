@@ -467,7 +467,8 @@
       margin: .25rem 0 .5rem;
     }
 
-    .section-header h2 {
+    .section-header h2,
+    .section-header h3 {
       margin: 0;
       flex: 1;
     }
@@ -1206,15 +1207,51 @@
             <span class="section-toggle">▼</span>
           </div>
           <div class="section-content" data-section-content="settings">
-          <div class="row"><label>Schematic Standard</label></div>
-          <div class="row">
-            <select id="defaultResistorStyleSelect">
-              <option value="ansi" selected>ANSI/IEEE (US)</option>
-              <option value="iec">IEC (International)</option>
-            </select>
-          </div>
-          <div class="row hint">Default for new components</div>
-          
+            <div class="row"><label>Schematic Standard</label></div>
+            <div class="row">
+              <select id="defaultResistorStyleSelect">
+                <option value="ansi" selected>ANSI/IEEE (US)</option>
+                <option value="iec">IEC (International)</option>
+              </select>
+            </div>
+            <div class="row hint">Default for new components</div>
+
+            <div class="section-header" data-section="settings-symbols" style="margin-top: 0.75rem;">
+              <h3>Symbols</h3>
+              <span class="section-toggle">▼</span>
+            </div>
+            <div class="section-content" data-section-content="settings-symbols">
+              <div class="row" style="align-items: center;">
+                <label for="symbolColorBody" style="flex: 1;">Body</label>
+                <input type="color" id="symbolColorBody" data-symbol-key="body" style="width: 40px; height: 32px; cursor: pointer;" title="Set body stroke color">
+                <span id="symbolColorBodyValue" style="font-family: monospace; font-size: 0.85rem; min-width: 6ch; text-align: right; color: var(--muted);">#202020</span>
+              </div>
+              <div class="row" style="align-items: center;">
+                <label for="symbolColorPin" style="flex: 1;">Pin</label>
+                <input type="color" id="symbolColorPin" data-symbol-key="pin" style="width: 40px; height: 32px; cursor: pointer;" title="Set pin color">
+                <span id="symbolColorPinValue" style="font-family: monospace; font-size: 0.85rem; min-width: 6ch; text-align: right; color: var(--muted);">#202020</span>
+              </div>
+              <div class="row" style="align-items: center;">
+                <label for="symbolColorPinText" style="flex: 1;">Pin Text</label>
+                <input type="color" id="symbolColorPinText" data-symbol-key="pinText" style="width: 40px; height: 32px; cursor: pointer;" title="Set pin text color">
+                <span id="symbolColorPinTextValue" style="font-family: monospace; font-size: 0.85rem; min-width: 6ch; text-align: right; color: var(--muted);">#202020</span>
+              </div>
+              <div class="row" style="align-items: center;">
+                <label for="symbolColorReferenceText" style="flex: 1;">Reference Text</label>
+                <input type="color" id="symbolColorReferenceText" data-symbol-key="referenceText" style="width: 40px; height: 32px; cursor: pointer;" title="Set reference text color">
+                <span id="symbolColorReferenceTextValue" style="font-family: monospace; font-size: 0.85rem; min-width: 6ch; text-align: right; color: var(--muted);">#202020</span>
+              </div>
+              <div class="row" style="align-items: center;">
+                <label for="symbolColorValueText" style="flex: 1;">Value Text</label>
+                <input type="color" id="symbolColorValueText" data-symbol-key="valueText" style="width: 40px; height: 32px; cursor: pointer;" title="Set value text color">
+                <span id="symbolColorValueTextValue" style="font-family: monospace; font-size: 0.85rem; min-width: 6ch; text-align: right; color: var(--muted);">#202020</span>
+              </div>
+              <div class="row" style="align-items: center;">
+                <label for="symbolColorPowerSymbol" style="flex: 1;">Power Symbol</label>
+                <input type="color" id="symbolColorPowerSymbol" data-symbol-key="powerSymbol" style="width: 40px; height: 32px; cursor: pointer;" title="Set power symbol color">
+                <span id="symbolColorPowerSymbolValue" style="font-family: monospace; font-size: 0.85rem; min-width: 6ch; text-align: right; color: var(--muted);">#202020</span>
+              </div>
+            </div>
           </div>
           <hr style="border-color:#22262f; margin:1rem 0" />
           <div class="section-header" data-section="nets">
