@@ -20,6 +20,7 @@ import * as FileIO from './fileio.js';
 import * as Move from './move.js';
 import * as Input from './input.js';
 import { ConstraintSolver } from './constraints/index.js';
+import { initializeProjectSettings, updateProjectSettings, DEFAULT_THEME_BACKGROUND } from './projectSettings.js';
 import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
 (function () {
     // --- Add UI for Place/Delete Junction Dot ---
@@ -27,6 +28,10 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     // ====== Module Imports (re-export for internal use) ======
     const { $q, $qa, setAttr, setAttrs, getClientXY, colorToHex, cssToRGBA01, rgba01ToCss, deg, normDeg, rotatePoint, eqPt, pointToSegmentDistance, projectPointToSegment, segmentAngle, rectFromPoints, inRect, segsIntersect, segmentIntersectsRect, clamp } = Utils;
     const { GRID, NM_PER_MM, NM_PER_IN, NM_PER_MIL, SNAP_MILS, SNAP_NM, BASE_W, BASE_H, HINT_SNAP_TOLERANCE_PX, HINT_UNLOCK_THRESHOLD_PX, UNIT_OPTIONS, WIRE_COLOR_OPTIONS } = Constants;
+    let projectSettings = initializeProjectSettings();
+    function syncProjectSettingsBackground(color) {
+        projectSettings = updateProjectSettings({ theme: { background: color } });
+    }
     // ================================================================================
     // ====== 2. CONSTANTS & CONFIGURATION ======
     // ================================================================================
@@ -1849,10 +1854,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const colorPicker = document.getElementById('lightBgColorPicker');
         const swatchContainer = document.getElementById('lightBgColorSwatches');
         const deleteBtn = document.getElementById('deleteCustomColorBtn');
-        if (!colorPicker || !swatchContainer || !deleteBtn)
+        const resetBtn = document.getElementById('resetLightBgColorBtn');
+        if (!colorPicker || !swatchContainer || !deleteBtn || !resetBtn)
             return;
         // Load saved color or use default
-        const savedColor = localStorage.getItem('lightBgColor') || '#e8e8e8';
+        const projectBackground = (projectSettings?.theme?.background ?? '').trim();
+        const savedColor = localStorage.getItem('lightBgColor') || projectBackground || DEFAULT_THEME_BACKGROUND;
         // Load custom colors from localStorage
         let customColors = [];
         try {
@@ -1879,6 +1886,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         function applyLightBgColor(color, updatePicker = true) {
             document.documentElement.style.setProperty('--light-bg', color);
             localStorage.setItem('lightBgColor', color);
+            syncProjectSettingsBackground(color);
             if (updatePicker) {
                 colorPicker.value = color;
             }
@@ -1934,7 +1942,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         });
         // Delete button
         deleteBtn.addEventListener('click', () => {
-            const currentColor = localStorage.getItem('lightBgColor') || '#e8e8e8';
+            const currentColor = localStorage.getItem('lightBgColor') || DEFAULT_THEME_BACKGROUND;
             const swatches = Array.from(swatchContainer.querySelectorAll('.color-swatch'));
             const selectedSwatch = swatches.find(s => s.getAttribute('data-color')?.toLowerCase() === currentColor.toLowerCase());
             if (selectedSwatch && selectedSwatch.getAttribute('data-permanent') !== 'true') {
@@ -1944,8 +1952,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 // Remove the swatch
                 selectedSwatch.remove();
                 // Switch to default color
-                applyLightBgColor('#e8e8e8');
+                applyLightBgColor(DEFAULT_THEME_BACKGROUND);
             }
+        });
+        resetBtn.addEventListener('click', () => {
+            applyLightBgColor(DEFAULT_THEME_BACKGROUND);
         });
     })(); // ====== Component Drawing ======
     function drawComponent(c) {
@@ -3066,10 +3077,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         if (breakWiresForComponent(comp)) {
             deleteBridgeBetweenPins(comp);
         }
-        // Clear embedded flags to avoid repeated finalization
-        comp.embeddedInWireId = undefined;
-        comp.embeddedAxis = undefined;
-        comp.embeddedFixed = undefined;
+        // Do not clear embedded flags here; they persist to support connect/disconnect logic
         normalizeAllWires();
         unifyInlineWires();
         rebuildTopology();
