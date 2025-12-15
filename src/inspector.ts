@@ -322,6 +322,7 @@ export interface InspectorContext {
   inspectorTab: InspectorPanelTab;
   setInspectorTab: (tab: InspectorPanelTab) => void;
   removeLibrary: (libraryName: string) => void;
+  onLibrarySymbolSelect: (libraryName: string, symbolName: string) => void;
 
   pushUndo: () => void;
   redrawCanvasOnly: () => void;
@@ -500,6 +501,26 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
         symbols.forEach(symbol => {
           const li = document.createElement('li');
           li.textContent = symbol;
+          li.className = 'library-symbol-item';
+          li.setAttribute('role', 'button');
+          li.tabIndex = 0;
+
+          const activate = (event: Event) => {
+            event.preventDefault();
+            hideLibraryContextMenu();
+            ctx.onLibrarySymbolSelect(libraryName, symbol);
+          };
+
+          li.addEventListener('click', (event) => {
+            activate(event);
+          });
+
+          li.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              activate(event);
+            }
+          });
+
           body.appendChild(li);
           sectionData.items.push({ element: li, nameLc: symbol.toLowerCase() });
         });

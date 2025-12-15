@@ -32,7 +32,8 @@ import type {
   Point, Axis, Mode, PlaceType, CounterKey, Selection, SelectionItem, DiodeSubtype, ResistorStyle, CapacitorSubtype,
   Component, RGBA01, StrokeType, Stroke, Wire, WireColorMode,
   NetClass, Theme, Junction, SWPEdge, SWP, Topology,
-  MoveCollapseCtx, KWire, ProjectSettings, SymbolTheme, SymbolLibraryIndex, InspectorPanelTab
+  MoveCollapseCtx, KWire, ProjectSettings, SymbolTheme, SymbolLibraryIndex, InspectorPanelTab,
+  Pin, GraphicElement
 } from './types.js';
 
 import {
@@ -144,11 +145,135 @@ import {
   const coordInputLength = $q<HTMLInputElement>('#coordInputLength');
   const coordInputAngle = $q<HTMLInputElement>('#coordInputAngle');
 
+  let toastContainer: HTMLDivElement | null = null;
+
+  function ensureToastContainer(): HTMLDivElement {
+    if (toastContainer) return toastContainer;
+    let el = document.getElementById('editorToastContainer') as HTMLDivElement | null;
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'editorToastContainer';
+      el.style.position = 'fixed';
+      el.style.left = '50%';
+      el.style.bottom = '32px';
+      el.style.transform = 'translateX(-50%)';
+      el.style.zIndex = '10000';
+      el.style.display = 'flex';
+      el.style.flexDirection = 'column';
+      el.style.gap = '8px';
+      el.style.pointerEvents = 'none';
+      document.body.appendChild(el);
+    }
+    toastContainer = el;
+    return el;
+  }
+
+  function showToast(message: string, durationMs = 4000): void {
+    const container = ensureToastContainer();
+    const toast = document.createElement('div');
+    toast.textContent = message;
+    toast.style.background = 'rgba(33, 33, 33, 0.9)';
+    toast.style.color = '#fff';
+    toast.style.padding = '10px 16px';
+    toast.style.borderRadius = '6px';
+    toast.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+    toast.style.fontSize = '14px';
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(20px)';
+    toast.style.transition = 'opacity 180ms ease, transform 180ms ease';
+    toast.style.pointerEvents = 'auto';
+
+    container.appendChild(toast);
+
+    requestAnimationFrame(() => {
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateY(0)';
+    });
+
+    window.setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(20px)';
+      window.setTimeout(() => {
+        if (toast.parentElement === container) {
+          container.removeChild(toast);
+        }
+      }, 220);
+    }, durationMs);
+  }
+
   const INSPECTOR_TAB_STORAGE_KEY = 'inspector.panel.tab';
   let inspectorTab: InspectorPanelTab = 'selection';
   const storedInspectorTab = localStorage.getItem(INSPECTOR_TAB_STORAGE_KEY);
   if (storedInspectorTab === 'libraries') {
     inspectorTab = 'libraries';
+  }
+
+  const LIBRARY_TEXT_STORAGE_PREFIX = 'kicad.libraryText.';
+
+  function readStoredLibraryText(libraryName: string): string | null {
+    try {
+      return localStorage.getItem(`${LIBRARY_TEXT_STORAGE_PREFIX}${libraryName}`);
+    } catch {
+      return null;
+    }
+  }
+
+  function writeStoredLibraryText(libraryName: string, text: string): void {
+    try {
+      localStorage.setItem(`${LIBRARY_TEXT_STORAGE_PREFIX}${libraryName}`, text);
+    } catch {
+      /* storage may be unavailable; rely on in-memory cache */
+    }
+  }
+
+  function removeStoredLibraryText(libraryName: string): void {
+    try {
+      localStorage.removeItem(`${LIBRARY_TEXT_STORAGE_PREFIX}${libraryName}`);
+    } catch {
+      /* ignore storage errors */
+    }
+  }
+
+  function clearSymbolLibraryCache(libraryName?: string): void {
+    if (libraryName) {
+      libraryTextCache.delete(libraryName);
+      removeStoredLibraryText(libraryName);
+      console.info(`[KiCad Import] Cleared cache for library "${libraryName}".`);
+      showToast(`Cleared cached KiCad symbols for "${libraryName}".`);
+      return;
+    }
+
+    libraryTextCache.clear();
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(LIBRARY_TEXT_STORAGE_PREFIX)) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((key) => localStorage.removeItem(key));
+    } catch {
+      /* ignore storage errors */
+    }
+    console.info('[KiCad Import] Cleared cache for all libraries.');
+    showToast('Cleared cached KiCad symbols for all libraries.');
+  }
+
+  const libraryTextCache = new Map<string, string>();
+  let pendingLibrarySelection: { library: string; symbol: string } | null = null;
+  let pendingLibrarySymbol: { library: string; symbol: string; pins: Pin[]; graphics: GraphicElement[] } | null = null;
+
+  for (const libraryName of Object.keys(projectSettings.symbolLibraries)) {
+    const storedText = readStoredLibraryText(libraryName);
+    if (storedText) {
+      libraryTextCache.set(libraryName, storedText);
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    const globals = (window as any).OSEditor || ((window as any).OSEditor = {});
+    globals.clearSymbolLibraryCache = (libraryName?: string) => clearSymbolLibraryCache(libraryName);
   }
 
   function setInspectorTab(tab: InspectorPanelTab): void {
@@ -165,7 +290,20 @@ import {
     const nextIndex: SymbolLibraryIndex = { ...projectSettings.symbolLibraries };
     delete nextIndex[libraryName];
     projectSettings = updateProjectSettings({ symbolLibraries: nextIndex });
+    libraryTextCache.delete(libraryName);
+    removeStoredLibraryText(libraryName);
     renderInspector();
+  }
+
+  function handleLibrarySymbolSelect(libraryName: string, symbolName: string): void {
+    pendingLibrarySelection = { library: libraryName, symbol: symbolName };
+    const parsed = parseLibrarySymbol(libraryName, symbolName);
+    if (parsed) {
+      pendingLibrarySymbol = { library: libraryName, symbol: symbolName, ...parsed };
+      console.log('[Library] Parsed symbol ready for placement', pendingLibrarySymbol);
+    } else {
+      pendingLibrarySymbol = null;
+    }
   }
 
   // Grid mode: 'line' (line grid), 'dot' (dot grid), 'off' (no grid) - persisted
@@ -9187,6 +9325,7 @@ import {
       inspectorTab,
       symbolLibraries: projectSettings.symbolLibraries,
       removeLibrary: (libraryName: string) => removeSymbolLibrary(libraryName),
+      onLibrarySymbolSelect: (libraryName: string, symbolName: string) => handleLibrarySymbolSelect(libraryName, symbolName),
       compPinPositions: Components.compPinPositions,
       snap: (val: number) => snap(val),
       snapToBaseScalar: (val: number) => snapToBaseScalar(val),
@@ -9872,7 +10011,8 @@ import {
         return;
       }
 
-      const rawNames = extractTopLevelKiCadSymbols(reader.result);
+      const fileText = reader.result;
+      const rawNames = extractTopLevelKiCadSymbols(fileText);
       if (rawNames.length === 0) {
         console.warn('[KiCad Import] No symbols found in', file.name);
         return;
@@ -9894,6 +10034,8 @@ import {
 
       const nextIndex: SymbolLibraryIndex = { ...projectSettings.symbolLibraries, [libraryKey]: deduped };
       projectSettings = updateProjectSettings({ symbolLibraries: nextIndex });
+      libraryTextCache.set(libraryKey, fileText);
+      writeStoredLibraryText(libraryKey, fileText);
       renderInspector();
     };
     reader.onerror = () => {
@@ -9965,6 +10107,167 @@ import {
       i++;
     }
     return names;
+  }
+
+  function parseLibrarySymbol(libraryName: string, symbolName: string): { pins: Pin[]; graphics: GraphicElement[] } | null {
+    let text = libraryTextCache.get(libraryName);
+    if (!text) {
+      text = readStoredLibraryText(libraryName);
+      if (text) {
+        libraryTextCache.set(libraryName, text);
+      }
+    }
+    if (!text) {
+      console.warn(`[KiCad Import] No cached symbol text for library "${libraryName}". Re-import the library to refresh its contents.`);
+      showToast(`Library "${libraryName}" needs to be re-imported before "${symbolName}" can be placed.`);
+      return null;
+    }
+
+    const symbolBlock = extractSymbolBlock(text, symbolName);
+    if (!symbolBlock) {
+      console.warn(`[KiCad Import] Unable to locate symbol "${symbolName}" in library "${libraryName}".`);
+      return null;
+    }
+
+    const pins = parseKiCadPins(symbolBlock);
+    const graphics = parseKiCadGraphics(symbolBlock);
+    if (pins.length === 0 && graphics.length === 0) {
+      console.warn(`[KiCad Import] Parsed symbol "${symbolName}" produced no geometry or pins.`);
+    }
+    return { pins, graphics };
+  }
+
+  function extractSymbolBlock(content: string, symbolName: string): string | null {
+    const escaped = symbolName.replace(/"/g, '\\"');
+    const needle = `(symbol "${escaped}`;
+    let searchIndex = content.indexOf(needle);
+    while (searchIndex !== -1) {
+      const captured = captureBalanced(content, searchIndex);
+      if (captured) {
+        return captured.block;
+      }
+      searchIndex = content.indexOf(needle, searchIndex + needle.length);
+    }
+    return null;
+  }
+
+  function captureBalanced(source: string, startIndex: number): { block: string; endIndex: number } | null {
+    let depth = 0;
+    let inString = false;
+    let i = startIndex;
+    const len = source.length;
+    while (i < len) {
+      const ch = source[i];
+      if (ch === '"' && source[i - 1] !== '\\') {
+        inString = !inString;
+      }
+      if (!inString) {
+        if (ch === '(') {
+          depth++;
+        } else if (ch === ')') {
+          depth--;
+          if (depth === 0) {
+            return { block: source.slice(startIndex, i + 1), endIndex: i + 1 };
+          }
+        }
+      }
+      i++;
+    }
+    return null;
+  }
+
+  const mmToPxExact = (mm: number): number => mm * PX_PER_MM;
+
+  function parseKiCadPins(symbolBlock: string): Pin[] {
+    const pins: Pin[] = [];
+    let searchIndex = 0;
+    while (true) {
+      const idx = symbolBlock.indexOf('(pin', searchIndex);
+      if (idx === -1) break;
+      const captured = captureBalanced(symbolBlock, idx);
+      if (!captured) break;
+      searchIndex = captured.endIndex;
+      const block = captured.block;
+      const typeMatch = block.match(/\(pin\s+([^\s)]+)/);
+      const atMatch = block.match(/\(at\s+([-+\d.]+)\s+([-+\d.]+)(?:\s+([-+\d.]+))?/);
+      const nameMatch = block.match(/\(name\s+"([^\"]*)"/);
+      const numberMatch = block.match(/\(number\s+"([^\"]*)"/);
+      if (!atMatch || !numberMatch) continue;
+
+      const xMm = Number.parseFloat(atMatch[1]);
+      const yMm = Number.parseFloat(atMatch[2]);
+      const rotDeg = atMatch[3] !== undefined ? Number.parseFloat(atMatch[3]) : 0;
+
+      const rawType = typeMatch ? typeMatch[1] : 'unspecified';
+      const validTypes: Pin['electricalType'][] = ['input', 'output', 'bidirectional', 'power_in', 'power_out', 'passive', 'unspecified'];
+      const normalizedType = validTypes.includes(rawType as Pin['electricalType']) ? (rawType as Pin['electricalType']) : 'unspecified';
+
+      const pin: Pin = {
+        id: numberMatch[1] || '0',
+        x: mmToPxExact(xMm),
+        y: -mmToPxExact(yMm),
+        rotation: Number.isFinite(rotDeg) ? rotDeg : 0,
+        electricalType: normalizedType,
+        name: nameMatch ? nameMatch[1] : undefined,
+        visible: true
+      };
+      pins.push(pin);
+    }
+    return pins;
+  }
+
+  function parseKiCadGraphics(symbolBlock: string): GraphicElement[] {
+    const graphics: GraphicElement[] = [];
+    const symbolBodies = extractNestedSymbolBodies(symbolBlock);
+    symbolBodies.forEach(body => {
+      graphics.push(...parseSymbolBodyGraphics(body));
+    });
+    return graphics;
+  }
+
+  function extractNestedSymbolBodies(symbolBlock: string): string[] {
+    const bodies: string[] = [];
+    let searchIndex = symbolBlock.indexOf('(symbol', 1);
+    while (searchIndex !== -1) {
+      const captured = captureBalanced(symbolBlock, searchIndex);
+      if (!captured) break;
+      bodies.push(captured.block);
+      searchIndex = symbolBlock.indexOf('(symbol', captured.endIndex);
+    }
+    return bodies;
+  }
+
+  function parseSymbolBodyGraphics(bodyBlock: string): GraphicElement[] {
+    const graphics: GraphicElement[] = [];
+    // Polyline primitives
+    let searchIndex = 0;
+    while (true) {
+      const idx = bodyBlock.indexOf('(polyline', searchIndex);
+      if (idx === -1) break;
+      const captured = captureBalanced(bodyBlock, idx);
+      if (!captured) break;
+      searchIndex = captured.endIndex;
+      const poly = captured.block;
+      const points: Point[] = [];
+      const xyRegex = /\(xy\s+([-+\d.]+)\s+([-+\d.]+)\)/g;
+      let match: RegExpExecArray | null;
+      while ((match = xyRegex.exec(poly)) !== null) {
+        const xMm = Number.parseFloat(match[1]);
+        const yMm = Number.parseFloat(match[2]);
+        points.push({ x: mmToPxExact(xMm), y: -mmToPxExact(yMm) });
+      }
+      if (points.length >= 2) {
+        const strokeMatch = poly.match(/\(stroke\s+\(width\s+([-+\d.]+)\)/);
+        const strokeWidthPx = strokeMatch ? Math.max(1, mmToPxExact(Number.parseFloat(strokeMatch[1]))) : 2;
+        graphics.push({
+          type: 'polyline',
+          points,
+          stroke: 'var(--component)',
+          strokeWidth: strokeWidthPx
+        });
+      }
+    }
+    return graphics;
   }
 
   // ====== Topology: nodes, edges, SWPs ======

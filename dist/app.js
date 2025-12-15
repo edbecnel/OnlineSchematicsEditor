@@ -21,7 +21,7 @@ import * as Move from './move.js';
 import * as Input from './input.js';
 import { ConstraintSolver } from './constraints/index.js';
 import { initializeProjectSettings, updateProjectSettings, DEFAULT_THEME_BACKGROUND, getDefaultSymbolTheme } from './projectSettings.js';
-import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
+import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
 (function () {
     // --- Add UI for Place/Delete Junction Dot ---
     // Note: button event listener setup is done after setMode is defined (see attachJunctionDotButtons)
@@ -91,11 +91,125 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     const polarInputGroup = $q('#polarInputGroup');
     const coordInputLength = $q('#coordInputLength');
     const coordInputAngle = $q('#coordInputAngle');
+    let toastContainer = null;
+    function ensureToastContainer() {
+        if (toastContainer)
+            return toastContainer;
+        let el = document.getElementById('editorToastContainer');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'editorToastContainer';
+            el.style.position = 'fixed';
+            el.style.left = '50%';
+            el.style.bottom = '32px';
+            el.style.transform = 'translateX(-50%)';
+            el.style.zIndex = '10000';
+            el.style.display = 'flex';
+            el.style.flexDirection = 'column';
+            el.style.gap = '8px';
+            el.style.pointerEvents = 'none';
+            document.body.appendChild(el);
+        }
+        toastContainer = el;
+        return el;
+    }
+    function showToast(message, durationMs = 4000) {
+        const container = ensureToastContainer();
+        const toast = document.createElement('div');
+        toast.textContent = message;
+        toast.style.background = 'rgba(33, 33, 33, 0.9)';
+        toast.style.color = '#fff';
+        toast.style.padding = '10px 16px';
+        toast.style.borderRadius = '6px';
+        toast.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+        toast.style.fontSize = '14px';
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(20px)';
+        toast.style.transition = 'opacity 180ms ease, transform 180ms ease';
+        toast.style.pointerEvents = 'auto';
+        container.appendChild(toast);
+        requestAnimationFrame(() => {
+            toast.style.opacity = '1';
+            toast.style.transform = 'translateY(0)';
+        });
+        window.setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(20px)';
+            window.setTimeout(() => {
+                if (toast.parentElement === container) {
+                    container.removeChild(toast);
+                }
+            }, 220);
+        }, durationMs);
+    }
     const INSPECTOR_TAB_STORAGE_KEY = 'inspector.panel.tab';
     let inspectorTab = 'selection';
     const storedInspectorTab = localStorage.getItem(INSPECTOR_TAB_STORAGE_KEY);
     if (storedInspectorTab === 'libraries') {
         inspectorTab = 'libraries';
+    }
+    const LIBRARY_TEXT_STORAGE_PREFIX = 'kicad.libraryText.';
+    function readStoredLibraryText(libraryName) {
+        try {
+            return localStorage.getItem(`${LIBRARY_TEXT_STORAGE_PREFIX}${libraryName}`);
+        }
+        catch {
+            return null;
+        }
+    }
+    function writeStoredLibraryText(libraryName, text) {
+        try {
+            localStorage.setItem(`${LIBRARY_TEXT_STORAGE_PREFIX}${libraryName}`, text);
+        }
+        catch {
+            /* storage may be unavailable; rely on in-memory cache */
+        }
+    }
+    function removeStoredLibraryText(libraryName) {
+        try {
+            localStorage.removeItem(`${LIBRARY_TEXT_STORAGE_PREFIX}${libraryName}`);
+        }
+        catch {
+            /* ignore storage errors */
+        }
+    }
+    function clearSymbolLibraryCache(libraryName) {
+        if (libraryName) {
+            libraryTextCache.delete(libraryName);
+            removeStoredLibraryText(libraryName);
+            console.info(`[KiCad Import] Cleared cache for library "${libraryName}".`);
+            showToast(`Cleared cached KiCad symbols for "${libraryName}".`);
+            return;
+        }
+        libraryTextCache.clear();
+        try {
+            const keysToRemove = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith(LIBRARY_TEXT_STORAGE_PREFIX)) {
+                    keysToRemove.push(key);
+                }
+            }
+            keysToRemove.forEach((key) => localStorage.removeItem(key));
+        }
+        catch {
+            /* ignore storage errors */
+        }
+        console.info('[KiCad Import] Cleared cache for all libraries.');
+        showToast('Cleared cached KiCad symbols for all libraries.');
+    }
+    const libraryTextCache = new Map();
+    let pendingLibrarySelection = null;
+    let pendingLibrarySymbol = null;
+    for (const libraryName of Object.keys(projectSettings.symbolLibraries)) {
+        const storedText = readStoredLibraryText(libraryName);
+        if (storedText) {
+            libraryTextCache.set(libraryName, storedText);
+        }
+    }
+    if (typeof window !== 'undefined') {
+        const globals = window.OSEditor || (window.OSEditor = {});
+        globals.clearSymbolLibraryCache = (libraryName) => clearSymbolLibraryCache(libraryName);
     }
     function setInspectorTab(tab) {
         if (tab === inspectorTab)
@@ -113,7 +227,20 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const nextIndex = { ...projectSettings.symbolLibraries };
         delete nextIndex[libraryName];
         projectSettings = updateProjectSettings({ symbolLibraries: nextIndex });
+        libraryTextCache.delete(libraryName);
+        removeStoredLibraryText(libraryName);
         renderInspector();
+    }
+    function handleLibrarySymbolSelect(libraryName, symbolName) {
+        pendingLibrarySelection = { library: libraryName, symbol: symbolName };
+        const parsed = parseLibrarySymbol(libraryName, symbolName);
+        if (parsed) {
+            pendingLibrarySymbol = { library: libraryName, symbol: symbolName, ...parsed };
+            console.log('[Library] Parsed symbol ready for placement', pendingLibrarySymbol);
+        }
+        else {
+            pendingLibrarySymbol = null;
+        }
     }
     let gridMode = localStorage.getItem('grid.mode') || 'line';
     // Junction dots visibility toggle state (persisted)
@@ -8967,6 +9094,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             inspectorTab,
             symbolLibraries: projectSettings.symbolLibraries,
             removeLibrary: (libraryName) => removeSymbolLibrary(libraryName),
+            onLibrarySymbolSelect: (libraryName, symbolName) => handleLibrarySymbolSelect(libraryName, symbolName),
             compPinPositions: Components.compPinPositions,
             snap: (val) => snap(val),
             snapToBaseScalar: (val) => snapToBaseScalar(val),
@@ -9630,7 +9758,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 console.error('[KiCad Import] Unable to read text content for', file.name);
                 return;
             }
-            const rawNames = extractTopLevelKiCadSymbols(reader.result);
+            const fileText = reader.result;
+            const rawNames = extractTopLevelKiCadSymbols(fileText);
             if (rawNames.length === 0) {
                 console.warn('[KiCad Import] No symbols found in', file.name);
                 return;
@@ -9649,6 +9778,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
             const nextIndex = { ...projectSettings.symbolLibraries, [libraryKey]: deduped };
             projectSettings = updateProjectSettings({ symbolLibraries: nextIndex });
+            libraryTextCache.set(libraryKey, fileText);
+            writeStoredLibraryText(libraryKey, fileText);
             renderInspector();
         };
         reader.onerror = () => {
@@ -9730,6 +9861,161 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             i++;
         }
         return names;
+    }
+    function parseLibrarySymbol(libraryName, symbolName) {
+        let text = libraryTextCache.get(libraryName);
+        if (!text) {
+            text = readStoredLibraryText(libraryName);
+            if (text) {
+                libraryTextCache.set(libraryName, text);
+            }
+        }
+        if (!text) {
+            console.warn(`[KiCad Import] No cached symbol text for library "${libraryName}". Re-import the library to refresh its contents.`);
+            showToast(`Library "${libraryName}" needs to be re-imported before "${symbolName}" can be placed.`);
+            return null;
+        }
+        const symbolBlock = extractSymbolBlock(text, symbolName);
+        if (!symbolBlock) {
+            console.warn(`[KiCad Import] Unable to locate symbol "${symbolName}" in library "${libraryName}".`);
+            return null;
+        }
+        const pins = parseKiCadPins(symbolBlock);
+        const graphics = parseKiCadGraphics(symbolBlock);
+        if (pins.length === 0 && graphics.length === 0) {
+            console.warn(`[KiCad Import] Parsed symbol "${symbolName}" produced no geometry or pins.`);
+        }
+        return { pins, graphics };
+    }
+    function extractSymbolBlock(content, symbolName) {
+        const escaped = symbolName.replace(/"/g, '\\"');
+        const needle = `(symbol "${escaped}`;
+        let searchIndex = content.indexOf(needle);
+        while (searchIndex !== -1) {
+            const captured = captureBalanced(content, searchIndex);
+            if (captured) {
+                return captured.block;
+            }
+            searchIndex = content.indexOf(needle, searchIndex + needle.length);
+        }
+        return null;
+    }
+    function captureBalanced(source, startIndex) {
+        let depth = 0;
+        let inString = false;
+        let i = startIndex;
+        const len = source.length;
+        while (i < len) {
+            const ch = source[i];
+            if (ch === '"' && source[i - 1] !== '\\') {
+                inString = !inString;
+            }
+            if (!inString) {
+                if (ch === '(') {
+                    depth++;
+                }
+                else if (ch === ')') {
+                    depth--;
+                    if (depth === 0) {
+                        return { block: source.slice(startIndex, i + 1), endIndex: i + 1 };
+                    }
+                }
+            }
+            i++;
+        }
+        return null;
+    }
+    const mmToPxExact = (mm) => mm * PX_PER_MM;
+    function parseKiCadPins(symbolBlock) {
+        const pins = [];
+        let searchIndex = 0;
+        while (true) {
+            const idx = symbolBlock.indexOf('(pin', searchIndex);
+            if (idx === -1)
+                break;
+            const captured = captureBalanced(symbolBlock, idx);
+            if (!captured)
+                break;
+            searchIndex = captured.endIndex;
+            const block = captured.block;
+            const typeMatch = block.match(/\(pin\s+([^\s)]+)/);
+            const atMatch = block.match(/\(at\s+([-+\d.]+)\s+([-+\d.]+)(?:\s+([-+\d.]+))?/);
+            const nameMatch = block.match(/\(name\s+"([^\"]*)"/);
+            const numberMatch = block.match(/\(number\s+"([^\"]*)"/);
+            if (!atMatch || !numberMatch)
+                continue;
+            const xMm = Number.parseFloat(atMatch[1]);
+            const yMm = Number.parseFloat(atMatch[2]);
+            const rotDeg = atMatch[3] !== undefined ? Number.parseFloat(atMatch[3]) : 0;
+            const rawType = typeMatch ? typeMatch[1] : 'unspecified';
+            const validTypes = ['input', 'output', 'bidirectional', 'power_in', 'power_out', 'passive', 'unspecified'];
+            const normalizedType = validTypes.includes(rawType) ? rawType : 'unspecified';
+            const pin = {
+                id: numberMatch[1] || '0',
+                x: mmToPxExact(xMm),
+                y: -mmToPxExact(yMm),
+                rotation: Number.isFinite(rotDeg) ? rotDeg : 0,
+                electricalType: normalizedType,
+                name: nameMatch ? nameMatch[1] : undefined,
+                visible: true
+            };
+            pins.push(pin);
+        }
+        return pins;
+    }
+    function parseKiCadGraphics(symbolBlock) {
+        const graphics = [];
+        const symbolBodies = extractNestedSymbolBodies(symbolBlock);
+        symbolBodies.forEach(body => {
+            graphics.push(...parseSymbolBodyGraphics(body));
+        });
+        return graphics;
+    }
+    function extractNestedSymbolBodies(symbolBlock) {
+        const bodies = [];
+        let searchIndex = symbolBlock.indexOf('(symbol', 1);
+        while (searchIndex !== -1) {
+            const captured = captureBalanced(symbolBlock, searchIndex);
+            if (!captured)
+                break;
+            bodies.push(captured.block);
+            searchIndex = symbolBlock.indexOf('(symbol', captured.endIndex);
+        }
+        return bodies;
+    }
+    function parseSymbolBodyGraphics(bodyBlock) {
+        const graphics = [];
+        // Polyline primitives
+        let searchIndex = 0;
+        while (true) {
+            const idx = bodyBlock.indexOf('(polyline', searchIndex);
+            if (idx === -1)
+                break;
+            const captured = captureBalanced(bodyBlock, idx);
+            if (!captured)
+                break;
+            searchIndex = captured.endIndex;
+            const poly = captured.block;
+            const points = [];
+            const xyRegex = /\(xy\s+([-+\d.]+)\s+([-+\d.]+)\)/g;
+            let match;
+            while ((match = xyRegex.exec(poly)) !== null) {
+                const xMm = Number.parseFloat(match[1]);
+                const yMm = Number.parseFloat(match[2]);
+                points.push({ x: mmToPxExact(xMm), y: -mmToPxExact(yMm) });
+            }
+            if (points.length >= 2) {
+                const strokeMatch = poly.match(/\(stroke\s+\(width\s+([-+\d.]+)\)/);
+                const strokeWidthPx = strokeMatch ? Math.max(1, mmToPxExact(Number.parseFloat(strokeMatch[1]))) : 2;
+                graphics.push({
+                    type: 'polyline',
+                    points,
+                    stroke: 'var(--component)',
+                    strokeWidth: strokeWidthPx
+                });
+            }
+        }
+        return graphics;
     }
     // ====== Topology: nodes, edges, SWPs ======
     function rebuildTopology() {
