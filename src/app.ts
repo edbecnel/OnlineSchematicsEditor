@@ -69,6 +69,13 @@ import {
   type EditorMode = Mode | 'place-junction' | 'delete-junction';
 
   let projectSettings: ProjectSettings = initializeProjectSettings();
+  Rendering.setSymbolTheme(projectSettings.theme.symbol);
+
+  let applySymbolThemeToScene = () => {
+    Rendering.setSymbolTheme(projectSettings.theme.symbol);
+    Rendering.applySymbolStrokeColors();
+    Rendering.applySymbolFillColors();
+  };
 
   type SymbolColorKey = keyof SymbolTheme;
 
@@ -80,10 +87,12 @@ import {
     const rgba = cssToRGBA01(cssColor);
     const symbolPatch: Partial<SymbolTheme> = { [key]: rgba };
     projectSettings = updateProjectSettings({ theme: { symbol: symbolPatch } });
+    applySymbolThemeToScene();
   }
 
   function resetSymbolTheme(): void {
     projectSettings = updateProjectSettings({ theme: { symbol: getDefaultSymbolTheme() } });
+    applySymbolThemeToScene();
   }
 
   // ================================================================================
@@ -113,6 +122,13 @@ import {
     if (!svg) return;
     [gWires, gComps, gJunctions, gDrawing, gOverlay].forEach(g => svg.appendChild(g));
   })();
+
+  applySymbolThemeToScene = () => {
+    Rendering.setSymbolTheme(projectSettings.theme.symbol);
+    Rendering.applySymbolStrokeColors(gComps);
+    Rendering.applySymbolFillColors(gComps);
+  };
+  applySymbolThemeToScene();
   const inspector = $q<HTMLElement>('#inspector');
   const inspectorNone = $q<HTMLElement>('#inspectorNone');
   const projTitle = $q<HTMLInputElement>('#projTitle'); // uses .value later
@@ -3098,6 +3114,8 @@ import {
     // draw symbol via helper
     const symbolGroup = Rendering.buildSymbolGroup(c, GRID, defaultResistorStyle);
     g.appendChild(symbolGroup);
+    Rendering.applySymbolStrokeColors(symbolGroup);
+    Rendering.applySymbolFillColors(symbolGroup);
     
     // Add click handlers for label and value text for independent selection/movement
     const labelText = symbolGroup.querySelector(`[data-label-for="${c.id}"]`) as SVGTextElement;

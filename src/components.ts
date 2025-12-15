@@ -79,7 +79,7 @@ export function compPinPositions(c: Component): Array<{
     }));
   } else if (c.type === 'ground') {
     // single pin at top of ground symbol
-    return [{ name: 'G', id: 'G', x: c.x, y: c.y - 2, electricalType: 'power_in' as const }];
+    return [{ name: 'G', id: 'G', x: c.x, y: c.y, electricalType: 'power_in' as const }];
   } else {
     // Generic 2-pin (resistor, capacitor, inductor, diode, battery, ac)
     const L = 2 * GRID;

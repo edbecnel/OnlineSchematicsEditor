@@ -1,8 +1,106 @@
 // rendering.ts - SVG rendering and drawing
 // Handles component symbols, wire visualization, junction dots, endpoint circles, selection outline
 
-import { Point, Component, Wire, Junction, Stroke, RGBA01, Theme, NetClass, DiodeSubtype, ResistorStyle, CapacitorSubtype, Selection } from './types.js';
+import { Point, Component, Wire, Junction, Stroke, RGBA01, Theme, NetClass, DiodeSubtype, ResistorStyle, CapacitorSubtype, Selection, SymbolTheme } from './types.js';
 import { formatValue } from './components.js';
+
+export type SymbolStrokeCategory = 'body' | 'pin' | 'powerSymbol' | 'pinText';
+export type SymbolFillCategory = 'pinText' | 'referenceText' | 'valueText';
+
+const SYMBOL_STROKE_DEFAULTS: Record<SymbolStrokeCategory, string> = {
+  body: 'var(--component)',
+  pin: 'var(--component)',
+  powerSymbol: 'var(--component)',
+  pinText: 'var(--component)'
+};
+
+const SYMBOL_FILL_DEFAULTS: Record<SymbolFillCategory, string> = {
+  pinText: 'var(--component)',
+  referenceText: 'var(--component)',
+  valueText: 'var(--component)'
+};
+
+const SYMBOL_THEME_STROKE_KEYS: Record<SymbolStrokeCategory, keyof SymbolTheme> = {
+  body: 'body',
+  pin: 'pin',
+  powerSymbol: 'powerSymbol',
+  pinText: 'pinText'
+};
+
+const SYMBOL_THEME_FILL_KEYS: Record<SymbolFillCategory, keyof SymbolTheme> = {
+  pinText: 'pinText',
+  referenceText: 'referenceText',
+  valueText: 'valueText'
+};
+
+let currentSymbolTheme: SymbolTheme | null = null;
+
+function cloneRgba(c: RGBA01): RGBA01 {
+  return { r: c.r, g: c.g, b: c.b, a: c.a };
+}
+
+function cloneSymbolTheme(theme: SymbolTheme): SymbolTheme {
+  return {
+    body: cloneRgba(theme.body),
+    pin: cloneRgba(theme.pin),
+    pinText: cloneRgba(theme.pinText),
+    referenceText: cloneRgba(theme.referenceText),
+    valueText: cloneRgba(theme.valueText),
+    powerSymbol: cloneRgba(theme.powerSymbol)
+  };
+}
+
+function applySymbolStroke(el: SVGElement, category: SymbolStrokeCategory = 'body'): void {
+  el.setAttribute('data-symbol-stroke', category);
+  const stroke = currentSymbolTheme
+    ? rgba01ToCss(currentSymbolTheme[SYMBOL_THEME_STROKE_KEYS[category]])
+    : SYMBOL_STROKE_DEFAULTS[category];
+  el.setAttribute('stroke', stroke || SYMBOL_STROKE_DEFAULTS.body);
+}
+
+function applySymbolFill(el: SVGElement, category: SymbolFillCategory): void {
+  el.setAttribute('data-symbol-fill', category);
+  const fill = currentSymbolTheme
+    ? rgba01ToCss(currentSymbolTheme[SYMBOL_THEME_FILL_KEYS[category]])
+    : SYMBOL_FILL_DEFAULTS[category];
+  el.setAttribute('fill', fill || SYMBOL_FILL_DEFAULTS[category]);
+}
+
+export function setSymbolTheme(theme: SymbolTheme | null): void {
+  currentSymbolTheme = theme ? cloneSymbolTheme(theme) : null;
+}
+
+export function applySymbolStrokeColors(root: ParentNode | null = typeof document !== 'undefined' ? document : null): void {
+  if (!root || !currentSymbolTheme) return;
+  const cssColors: Record<SymbolStrokeCategory, string> = {
+    body: rgba01ToCss(currentSymbolTheme.body),
+    pin: rgba01ToCss(currentSymbolTheme.pin),
+    powerSymbol: rgba01ToCss(currentSymbolTheme.powerSymbol),
+    pinText: rgba01ToCss(currentSymbolTheme.pinText)
+  };
+  const elements = root.querySelectorAll<SVGElement>('[data-symbol-stroke]');
+  elements.forEach((el) => {
+    const attr = el.getAttribute('data-symbol-stroke');
+    const category: SymbolStrokeCategory = attr === 'pin' || attr === 'powerSymbol' || attr === 'pinText' ? attr : 'body';
+    const stroke = cssColors[category];
+    el.setAttribute('stroke', stroke);
+  });
+}
+
+export function applySymbolFillColors(root: ParentNode | null = typeof document !== 'undefined' ? document : null): void {
+  if (!root || !currentSymbolTheme) return;
+  const fills: Record<SymbolFillCategory, string> = {
+    pinText: rgba01ToCss(currentSymbolTheme.pinText),
+    referenceText: rgba01ToCss(currentSymbolTheme.referenceText),
+    valueText: rgba01ToCss(currentSymbolTheme.valueText)
+  };
+  const elements = root.querySelectorAll<SVGElement>('[data-symbol-fill]');
+  elements.forEach((el) => {
+    const attr = el.getAttribute('data-symbol-fill');
+    const category: SymbolFillCategory = attr === 'pinText' || attr === 'referenceText' || attr === 'valueText' ? attr : 'referenceText';
+    el.setAttribute('fill', fills[category]);
+  });
+}
 
 // ========================================================================================
 // ===== SVG ELEMENT CREATION HELPERS =====
@@ -40,17 +138,18 @@ export function buildSymbolGroup(
   gg.setAttribute('transform', `rotate(${c.rot} ${c.x} ${c.y})`);
 
   const add = (el: SVGElement) => { gg.appendChild(el); return el; };
-  const line = (x1: number, y1: number, x2: number, y2: number) => {
+  const line = (x1: number, y1: number, x2: number, y2: number, strokeCategory: SymbolStrokeCategory = 'body') => {
     const ln = document.createElementNS(SVG_NS, 'line');
-    setAttrs(ln, { x1, y1, x2, y2, stroke: 'var(--component)', 'stroke-width': '2' });
+    setAttrs(ln, { x1, y1, x2, y2, 'stroke-width': '2' });
+    applySymbolStroke(ln, strokeCategory);
     return add(ln);
   };
-  const path = (d: string) => {
+  const path = (d: string, strokeCategory: SymbolStrokeCategory = 'body') => {
     const p = document.createElementNS(SVG_NS, 'path');
-    setAttrs(p, { d, fill: 'none', stroke: 'var(--component)', 'stroke-width': '2' });
+    setAttrs(p, { d, fill: 'none', 'stroke-width': '2' });
+    applySymbolStroke(p, strokeCategory);
     return add(p);
   };
-
   const y = c.y, x = c.x;
   const ax = c.x - 50, bx = c.x + 50; // Pin positions at ±50 (2*GRID)
 
@@ -109,12 +208,12 @@ export function buildSymbolGroup(
     'text-anchor': labelAnchor,
     'dominant-baseline': c.type === 'npn' || c.type === 'pnp' ? 'middle' : 'auto',
     'font-size': '12', 
-    fill: 'var(--ink)',
     transform: `rotate(${-c.rot} ${labelX} ${labelY})`,
     'pointer-events': 'all',
     'cursor': 'move',
     'user-select': 'none'
   });
+  applySymbolFill(label, 'referenceText');
   
   label.textContent = c.label;
   gg.appendChild(label);
@@ -144,12 +243,12 @@ export function buildSymbolGroup(
       y: valueY,
       'text-anchor': labelAnchor,
       'font-size': '12',
-      fill: 'var(--ink)',
       transform: `rotate(${-c.rot} ${valueX} ${valueY})`,
       'pointer-events': 'all',
       'cursor': 'move',
       'user-select': 'none'
     });
+    applySymbolFill(value, 'valueText');
     
     value.textContent = valText;
     gg.appendChild(value);
@@ -162,9 +261,9 @@ export function buildSymbolGroup(
       y: c.y + 62, 
       'text-anchor': 'middle', 
       'font-size': '12', 
-      fill: 'var(--ink)',
       transform: `rotate(${-c.rot} ${c.x} ${c.y + 62})`
     });
+    applySymbolFill(vtxt, 'valueText');
     const v = (c.props?.voltage ?? '') !== '' ? `${c.props!.voltage} V` : '';
     vtxt.textContent = v;
     gg.appendChild(vtxt);
@@ -178,8 +277,8 @@ function drawResistor(
   c: Component,
   x: number, y: number, ax: number, bx: number,
   defaultResistorStyle: ResistorStyle,
-  line: (x1: number, y1: number, x2: number, y2: number) => SVGElement,
-  path: (d: string) => SVGElement,
+  line: (x1: number, y1: number, x2: number, y2: number, strokeCategory?: SymbolStrokeCategory) => SVGElement,
+  path: (d: string, strokeCategory?: SymbolStrokeCategory) => SVGElement,
   add: (el: SVGElement) => SVGElement
 ) {
   const style = (c.props?.resistorStyle as ResistorStyle) || defaultResistorStyle;
@@ -189,17 +288,23 @@ function drawResistor(
     const rectWidth = 60;
     const rectLeft = x - rectWidth / 2;
     const rectRight = x + rectWidth / 2;
-    line(ax, y, rectLeft, y);
-    line(rectRight, y, bx, y);
+    line(ax, y, rectLeft, y, 'pin');
+    line(rectRight, y, bx, y, 'pin');
     const rect = document.createElementNS(SVG_NS, 'rect');
     setAttrs(rect, {
       x: rectLeft, y: y - 12, width: rectWidth, height: 24, rx: 1,
-      stroke: 'var(--component)', 'stroke-width': '2', fill: 'none'
+      'stroke-width': '2', fill: 'none'
     });
+    applySymbolStroke(rect);
     add(rect);
   } else {
     // US/ANSI zigzag resistor
-    path(`M ${ax} ${y} H ${x - 39} L ${x - 33} ${y - 12} L ${x - 21} ${y + 12} L ${x - 9} ${y - 12} L ${x + 3} ${y + 12} L ${x + 15} ${y - 12} L ${x + 27} ${y + 12} L ${x + 33} ${y} H ${bx}`);
+    line(ax, y, x - 39, y, 'pin');
+    path(
+      `M ${x - 39} ${y} L ${x - 33} ${y - 12} L ${x - 21} ${y + 12} L ${x - 9} ${y - 12} L ${x + 3} ${y + 12} L ${x + 15} ${y - 12} L ${x + 27} ${y + 12} L ${x + 33} ${y}`,
+      'body'
+    );
+    line(x + 33, y, bx, y, 'pin');
   }
 }
 
@@ -208,8 +313,8 @@ function drawCapacitor(
   c: Component,
   x: number, y: number, ax: number, bx: number,
   defaultResistorStyle: ResistorStyle,
-  line: (x1: number, y1: number, x2: number, y2: number) => SVGElement,
-  path: (d: string) => SVGElement,
+  line: (x1: number, y1: number, x2: number, y2: number, strokeCategory?: SymbolStrokeCategory) => SVGElement,
+  path: (d: string, strokeCategory?: SymbolStrokeCategory) => SVGElement,
   add: (el: SVGElement) => SVGElement
 ) {
   const subtype = (c.props?.capacitorSubtype as CapacitorSubtype) || 'standard';
@@ -220,37 +325,37 @@ function drawCapacitor(
 
     if (style === 'iec') {
       // IEC polarized: straight plates with +/- marks, leads to 50 mil grid
-      line(ax, y, x1, y);
-      line(x1, y - 16, x1, y + 16);
-      line(x2, y - 16, x2, y + 16);
-      line(x2, y, bx, y);
-      line(x - 18, y - 24, x - 18, y - 12);
-      line(x - 24, y - 18, x - 12, y - 18);
-      line(x + 12, y - 18, x + 24, y - 18);
+      line(ax, y, x1, y, 'pin');
+      line(x1, y - 16, x1, y + 16, 'body');
+      line(x2, y - 16, x2, y + 16, 'body');
+      line(x2, y, bx, y, 'pin');
+      line(x - 18, y - 24, x - 18, y - 12, 'pinText');
+      line(x - 24, y - 18, x - 12, y - 18, 'pinText');
+      line(x + 12, y - 18, x + 24, y - 18, 'pinText');
     } else {
       // ANSI polarized: straight + curved plates, leads to 50 mil grid
-      line(ax, y, x1, y);
-      line(x1, y - 16, x1, y + 16);
+      line(ax, y, x1, y, 'pin');
+      line(x1, y - 16, x1, y + 16, 'body');
       const curveLeft = x2 - 6;
-      path(`M ${x2} ${y - 16} Q ${curveLeft} ${y} ${x2} ${y + 16}`);
-      line(x2, y, bx, y);
-      line(x - 20, y - 24, x - 20, y - 12);
-      line(x - 26, y - 18, x - 14, y - 18);
+      path(`M ${x2} ${y - 16} Q ${curveLeft} ${y} ${x2} ${y + 16}`, 'body');
+      line(x2, y, bx, y, 'pin');
+      line(x - 20, y - 24, x - 20, y - 12, 'pinText');
+      line(x - 26, y - 18, x - 14, y - 18, 'pinText');
     }
   } else {
     // Standard non-polarized capacitor, leads to 50 mil grid
     const x1 = x - 6, x2 = x + 6;
-    line(ax, y, x1, y);
-    line(x1, y - 16, x1, y + 16);
-    line(x2, y - 16, x2, y + 16);
-    line(x2, y, bx, y);
+    line(ax, y, x1, y, 'pin');
+    line(x1, y - 16, x1, y + 16, 'body');
+    line(x2, y - 16, x2, y + 16, 'body');
+    line(x2, y, bx, y, 'pin');
   }
 }
 
 function drawInductor(
   x: number, y: number, ax: number, bx: number,
-  line: (x1: number, y1: number, x2: number, y2: number) => SVGElement,
-  path: (d: string) => SVGElement
+  line: (x1: number, y1: number, x2: number, y2: number, strokeCategory?: SymbolStrokeCategory) => SVGElement,
+  path: (d: string, strokeCategory?: SymbolStrokeCategory) => SVGElement
 ) {
   // Inductor with 4 semicircular coils as in assets/Inductor.svg
   // Total width: ax to bx = 100px
@@ -263,7 +368,7 @@ function drawInductor(
   const coilEnd = coilStart + coilWidth;
   
   // Left lead
-  line(ax, y, coilStart, y);
+  line(ax, y, coilStart, y, 'pin');
   
   // 4 semicircles going up (a command with positive y creates upward arc)
   const d = `M ${coilStart} ${y}
@@ -272,25 +377,26 @@ function drawInductor(
     a ${r} ${r} 0 0 1 ${r * 2} 0
     a ${r} ${r} 0 0 1 ${r * 2} 0`;
   
-  path(d);
+  path(d, 'body');
   
   // Right lead
-  line(coilEnd, y, bx, y);
+  line(coilEnd, y, bx, y, 'pin');
 }
 
 function drawDiodeInto(gg: SVGGElement, c: Component, subtype: DiodeSubtype) {
-  const stroke = 'var(--component)';
   const sw = 2;
   const add = (el: SVGElement) => { gg.appendChild(el); return el; };
   const mk = (tag: string) => document.createElementNS(SVG_NS, tag);
-  const lineEl = (x1: number, y1: number, x2: number, y2: number, w = sw) => {
+  const lineEl = (x1: number, y1: number, x2: number, y2: number, w = sw, strokeCategory: SymbolStrokeCategory = 'body') => {
     const ln = mk('line');
-    setAttrs(ln, { x1, y1, x2, y2, stroke, 'stroke-width': w, fill: 'none' });
+    setAttrs(ln, { x1, y1, x2, y2, 'stroke-width': w, fill: 'none' });
+    applySymbolStroke(ln, strokeCategory);
     return add(ln);
   };
-  const pathEl = (d: string, w = sw) => {
+  const pathEl = (d: string, w = sw, strokeCategory: SymbolStrokeCategory = 'body') => {
     const p = mk('path');
-    setAttrs(p, { d, stroke, 'stroke-width': w, fill: 'none' });
+    setAttrs(p, { d, 'stroke-width': w, fill: 'none' });
+    applySymbolStroke(p, strokeCategory);
     return add(p);
   };
 
@@ -306,26 +412,26 @@ function drawDiodeInto(gg: SVGGElement, c: Component, subtype: DiodeSubtype) {
     case 'tvs_bi':
       // Bidirectional TVS: two triangles pointing at each other, leads to 50 mil grid
       // Left cathode bar
-      lineEl(ax, cy - 16, ax, cy + 16);
+      lineEl(ax, cy - 16, ax, cy + 16, sw, 'pin');
       // Left triangle
       pathEl(`M ${ax} ${cy} L ${ax + 16} ${cy - 16} L ${ax + 16} ${cy + 16} Z`);
       // Right triangle
       pathEl(`M ${bx} ${cy} L ${bx - 16} ${cy - 16} L ${bx - 16} ${cy + 16} Z`);
       // Right cathode bar
-      lineEl(bx, cy - 16, bx, cy + 16);
+      lineEl(bx, cy - 16, bx, cy + 16, sw, 'pin');
       // Center connection between triangles
-      lineEl(ax + 16, cy, bx - 16, cy);
+      lineEl(ax + 16, cy, bx - 16, cy, sw, 'body');
       break;
     case 'schottky':
       // Schottky diode: leads extended to 50 mil grid (ax and bx)
       // Anode lead
-      lineEl(ax, cy, cx - 8, cy);
+      lineEl(ax, cy, cx - 8, cy, sw, 'pin');
       // Diode triangle (anode side)
       pathEl(`M ${cx - 8} ${cy - 16} L ${cx + 16} ${cy} L ${cx - 8} ${cy + 16} Z`);
       // Cathode bar
-      lineEl(cx + 16, cy - 16, cx + 16, cy + 16);
+      lineEl(cx + 16, cy - 16, cx + 16, cy + 16, sw, 'body');
       // Cathode lead
-      lineEl(cx + 16, cy, bx, cy);
+      lineEl(cx + 16, cy, bx, cy, sw, 'pin');
       // Schottky hooks
       pathEl(`M ${cx + 16} ${cy - 16} h 8 v 4`);
       pathEl(`M ${cx + 16} ${cy + 16} h -8 v -4`);
@@ -333,20 +439,20 @@ function drawDiodeInto(gg: SVGGElement, c: Component, subtype: DiodeSubtype) {
     default:
       // Standard diode: leads extended to 50 mil grid (ax and bx)
       // Anode lead
-      lineEl(ax, cy, cx - 8, cy);
+      lineEl(ax, cy, cx - 8, cy, sw, 'pin');
       // Diode triangle (anode side)
       pathEl(`M ${cx - 8} ${cy - 16} L ${cx + 16} ${cy} L ${cx - 8} ${cy + 16} Z`);
       // Cathode bar (touching the triangle point)
-      lineEl(cx + 16, cy - 16, cx + 16, cy + 16);
+      lineEl(cx + 16, cy - 16, cx + 16, cy + 16, sw, 'body');
       // Cathode lead
-      lineEl(cx + 16, cy, bx, cy);
+      lineEl(cx + 16, cy, bx, cy, sw, 'pin');
 
       // Subtype adorners (adjusted for body center at cx)
       const bodyCenter = cx;
       switch (String(subtype).toLowerCase()) {
         case 'zener':
-          lineEl(bodyCenter - 6, cy - 6, bodyCenter + 6, cy);
-          lineEl(bodyCenter - 6, cy + 6, bodyCenter + 6, cy);
+          lineEl(bodyCenter - 6, cy - 6, bodyCenter + 6, cy, sw, 'body');
+          lineEl(bodyCenter - 6, cy + 6, bodyCenter + 6, cy, sw, 'body');
           break;
         case 'led':
           addArrow(true);
@@ -355,19 +461,19 @@ function drawDiodeInto(gg: SVGGElement, c: Component, subtype: DiodeSubtype) {
           addArrow(false);
           break;
         case 'tunnel':
-          lineEl(bodyCenter - 2, cy - 12, bodyCenter - 2, cy + 12);
+          lineEl(bodyCenter - 2, cy - 12, bodyCenter - 2, cy + 12, sw, 'body');
           break;
         case 'varactor':
         case 'varicap':
-          lineEl(bodyCenter + 16, cy - 12, bodyCenter + 16, cy + 12);
+          lineEl(bodyCenter + 16, cy - 12, bodyCenter + 16, cy + 12, sw, 'body');
           break;
         case 'laser':
           addArrow(true);
-          lineEl(bodyCenter + 22, cy - 14, bodyCenter + 22, cy + 14);
+          lineEl(bodyCenter + 22, cy - 14, bodyCenter + 22, cy + 14, sw, 'body');
           break;
         case 'tvs_uni':
-          lineEl(bx, cy - 16, bx - 8, cy - 22);
-          lineEl(bx, cy + 16, bx - 8, cy + 22);
+          lineEl(bx, cy - 16, bx - 8, cy - 22, sw, 'body');
+          lineEl(bx, cy + 16, bx - 8, cy + 22, sw, 'body');
           break;
       }
       break;
@@ -376,111 +482,109 @@ function drawDiodeInto(gg: SVGGElement, c: Component, subtype: DiodeSubtype) {
 
 function drawBattery(
   c: Component, x: number, y: number, GRID: number,
-  line: (x1: number, y1: number, x2: number, y2: number) => SVGElement,
+  line: (x1: number, y1: number, x2: number, y2: number, strokeCategory?: SymbolStrokeCategory) => SVGElement,
   add: (el: SVGElement) => SVGElement
 ) {
   const pinOffset = 2 * GRID;
   const xNeg = c.x - 10, xPos = c.x + 10;
 
-  line(xNeg, y - 18, xNeg, y + 18);
-  line(xNeg, y, c.x - pinOffset, y);
-  line(xPos, y - 12, xPos, y + 12);
-  line(xPos, y, c.x + pinOffset, y);
+  line(xNeg, y - 18, xNeg, y + 18, 'body');
+  line(xNeg, y, c.x - pinOffset, y, 'pin');
+  line(xPos, y - 12, xPos, y + 12, 'body');
+  line(xPos, y, c.x + pinOffset, y, 'pin');
 
   const plusText = document.createElementNS(SVG_NS, 'text');
   setAttrs(plusText, {
     x: xNeg - 16, y: y - 8, 'text-anchor': 'end',
-    'font-size': '16', 'font-weight': 'bold', fill: 'var(--component)'
+    'font-size': '16', 'font-weight': 'bold'
   });
   plusText.textContent = '+';
+  applySymbolFill(plusText, 'pinText');
   add(plusText);
 
   const minusText = document.createElementNS(SVG_NS, 'text');
   setAttrs(minusText, {
     x: xPos + 16, y: y - 8, 'text-anchor': 'start',
-    'font-size': '16', 'font-weight': 'bold', fill: 'var(--component)'
+    'font-size': '16', 'font-weight': 'bold'
   });
   minusText.textContent = '−';
+  applySymbolFill(minusText, 'pinText');
   add(minusText);
 }
 
 function drawACSource(
   x: number, y: number, ax: number, bx: number,
-  line: (x1: number, y1: number, x2: number, y2: number) => SVGElement,
+  line: (x1: number, y1: number, x2: number, y2: number, strokeCategory?: SymbolStrokeCategory) => SVGElement,
   add: (el: SVGElement) => SVGElement,
-  path: (d: string) => SVGElement
+  path: (d: string, strokeCategory?: SymbolStrokeCategory) => SVGElement
 ) {
   const radius = 40;
-  line(ax, y, x - radius, y);
-  line(x + radius, y, bx, y);
+  line(ax, y, x - radius, y, 'pin');
+  line(x + radius, y, bx, y, 'pin');
 
   const circ = document.createElementNS(SVG_NS, 'circle');
   setAttrs(circ, {
     cx: x, cy: y, r: radius, fill: 'none',
-    stroke: 'var(--component)', 'stroke-width': '2'
+    'stroke-width': '2'
   });
+  applySymbolStroke(circ);
   add(circ);
 
-  path(`M ${x - 30} ${y} q 15 -20 30 0 q 15 20 30 0`);
+  path(`M ${x - 30} ${y} q 15 -20 30 0 q 15 20 30 0`, 'body');
 }
 
 function drawTransistor(
   c: Component, x: number, y: number,
-  line: (x1: number, y1: number, x2: number, y2: number) => SVGElement,
+  line: (x1: number, y1: number, x2: number, y2: number, strokeCategory?: SymbolStrokeCategory) => SVGElement,
   add: (el: SVGElement) => SVGElement
 ) {
-  // Double the size: SVG 64x64 -> 128x128 equivalent, centered at (x,y)
-  // All external leads on 50mil grid: base at x-50, collector/emitter at x, y±50
   const isNPN = c.type === 'npn';
+  const bodyRadius = 36;
+  const topBody = y - bodyRadius;
+  const bottomBody = y + bodyRadius;
+  const leftBody = x - bodyRadius;
   
-  // Device body - circle at center, radius 36 (doubled from 18)
   const circle = document.createElementNS(SVG_NS, 'circle');
   circle.setAttribute('cx', x.toString());
   circle.setAttribute('cy', y.toString());
-  circle.setAttribute('r', '36');
+  circle.setAttribute('r', bodyRadius.toString());
   circle.setAttribute('fill', 'none');
-  circle.setAttribute('stroke', 'var(--component)');
   circle.setAttribute('stroke-width', '2');
+  applySymbolStroke(circle);
   add(circle);
   
-  // Collector vertical lead: external at (x, y-50), internal at (x, y-28)
-  line(x, y - 50, x, y - 28);
+  // Collector lead: external portion in pin color, internal portion in body color
+  line(x, y - 50, x, topBody, 'pin');
+  line(x, topBody, x, y - 28, 'body');
   
-  // Emitter vertical lead: external at (x, y+50), internal at (x, y+32)
-  line(x, y + 50, x, y + 32);
+  // Emitter lead: same treatment
+  line(x, y + 50, x, bottomBody, 'pin');
+  line(x, bottomBody, x, y + 32, 'body');
   
-  // Base electrode inside circle: vertical line at x-16, from y-20 to y+20
-  line(x - 16, y - 20, x - 16, y + 20);
+  // Base electrode and connections
+  line(x - 16, y - 20, x - 16, y + 20, 'body');
+  line(x - 50, y, leftBody, y, 'pin');
+  line(leftBody, y, x - 16, y, 'body');
+  line(x - 16, y - 16, x, y - 28, 'body');
+  line(x - 16, y + 16, x, y + 32, 'body');
   
-  // Base lead external: from x-50 to base electrode at x-16
-  line(x - 50, y, x - 16, y);
-  
-  // Internal connection to collector: from base electrode to collector lead
-  line(x - 16, y - 16, x, y - 28);
-  
-  // Internal connection to emitter: from base electrode to emitter lead
-  line(x - 16, y + 16, x, y + 32);
-  
-  // Arrow on emitter (doubled size, balanced on slanted line)
-  // Emitter slant goes from (x-16, y+16) to (x, y+32)
-  // dx=16, dy=16, so slope is 1:1 at 45 degrees
   if (isNPN) {
-    // NPN: arrow pointing outward, positioned near emitter end
-    // Arrow head at (x-1, y+31)
-    line(x - 1, y + 31, x - 9, y + 28);  // lower side
-    line(x - 1, y + 31, x - 4, y + 22);  // upper side
+    line(x - 1, y + 31, x - 9, y + 28);
+    line(x - 1, y + 31, x - 4, y + 22);
   } else {
-    // PNP: arrow pointing inward, positioned near base end
-    // Arrow head at (x-12, y+20)
-    line(x - 12, y + 20, x - 8, y + 28);  // lower side
-    line(x - 12, y + 20, x - 4, y + 24);  // upper side
+    line(x - 12, y + 20, x - 8, y + 28);
+    line(x - 12, y + 20, x - 4, y + 24);
   }
 }
 
-function drawGround(x: number, y: number, line: (x1: number, y1: number, x2: number, y2: number) => SVGElement) {
-  line(x - 16, y, x + 16, y);
-  line(x - 10, y + 6, x + 10, y + 6);
-  line(x - 4, y + 12, x + 4, y + 12);
+function drawGround(
+  x: number,
+  y: number,
+  line: (x1: number, y1: number, x2: number, y2: number, strokeCategory?: SymbolStrokeCategory) => SVGElement
+) {
+  line(x - 16, y, x + 16, y, 'powerSymbol');
+  line(x - 10, y + 6, x + 10, y + 6, 'powerSymbol');
+  line(x - 4, y + 12, x + 4, y + 12, 'powerSymbol');
 }
 
 // ========================================================================================
@@ -618,14 +722,40 @@ export function updateSelectionOutline(selection: Selection): void {
     
     if (labelText) {
       const labelSelected = isItemSelected(selection, 'label', id);
-      labelText.style.fill = labelSelected ? 'var(--accent)' : 'var(--ink)';
-      labelText.style.fontWeight = labelSelected ? 'bold' : 'normal';
+      if (labelSelected) {
+        const original = labelText.getAttribute('fill');
+        labelText.setAttribute('data-original-fill', original ?? '');
+        labelText.style.fill = 'var(--accent)';
+        labelText.style.fontWeight = 'bold';
+      } else {
+        const original = labelText.getAttribute('data-original-fill');
+        if (original !== null) {
+          if (original === '') labelText.removeAttribute('fill');
+          else labelText.setAttribute('fill', original);
+          labelText.removeAttribute('data-original-fill');
+        }
+        labelText.style.fill = '';
+        labelText.style.fontWeight = 'normal';
+      }
     }
     
     if (valueText) {
       const valueSelected = isItemSelected(selection, 'value', id);
-      valueText.style.fill = valueSelected ? 'var(--accent)' : 'var(--ink)';
-      valueText.style.fontWeight = valueSelected ? 'bold' : 'normal';
+      if (valueSelected) {
+        const original = valueText.getAttribute('fill');
+        valueText.setAttribute('data-original-fill', original ?? '');
+        valueText.style.fill = 'var(--accent)';
+        valueText.style.fontWeight = 'bold';
+      } else {
+        const original = valueText.getAttribute('data-original-fill');
+        if (original !== null) {
+          if (original === '') valueText.removeAttribute('fill');
+          else valueText.setAttribute('fill', original);
+          valueText.removeAttribute('data-original-fill');
+        }
+        valueText.style.fill = '';
+        valueText.style.fontWeight = 'normal';
+      }
     }
   });
   

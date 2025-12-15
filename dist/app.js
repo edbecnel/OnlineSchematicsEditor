@@ -29,6 +29,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
     const { $q, $qa, setAttr, setAttrs, getClientXY, colorToHex, cssToRGBA01, rgba01ToCss, deg, normDeg, rotatePoint, eqPt, pointToSegmentDistance, projectPointToSegment, segmentAngle, rectFromPoints, inRect, segsIntersect, segmentIntersectsRect, clamp } = Utils;
     const { GRID, NM_PER_MM, NM_PER_IN, NM_PER_MIL, SNAP_MILS, SNAP_NM, BASE_W, BASE_H, HINT_SNAP_TOLERANCE_PX, HINT_UNLOCK_THRESHOLD_PX, UNIT_OPTIONS, WIRE_COLOR_OPTIONS } = Constants;
     let projectSettings = initializeProjectSettings();
+    Rendering.setSymbolTheme(projectSettings.theme.symbol);
+    let applySymbolThemeToScene = () => {
+        Rendering.setSymbolTheme(projectSettings.theme.symbol);
+        Rendering.applySymbolStrokeColors();
+        Rendering.applySymbolFillColors();
+    };
     function syncProjectSettingsBackground(color) {
         projectSettings = updateProjectSettings({ theme: { background: color } });
     }
@@ -36,9 +42,11 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const rgba = cssToRGBA01(cssColor);
         const symbolPatch = { [key]: rgba };
         projectSettings = updateProjectSettings({ theme: { symbol: symbolPatch } });
+        applySymbolThemeToScene();
     }
     function resetSymbolTheme() {
         projectSettings = updateProjectSettings({ theme: { symbol: getDefaultSymbolTheme() } });
+        applySymbolThemeToScene();
     }
     // ================================================================================
     // ====== 2. CONSTANTS & CONFIGURATION ======
@@ -63,6 +71,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             return;
         [gWires, gComps, gJunctions, gDrawing, gOverlay].forEach(g => svg.appendChild(g));
     })();
+    applySymbolThemeToScene = () => {
+        Rendering.setSymbolTheme(projectSettings.theme.symbol);
+        Rendering.applySymbolStrokeColors(gComps);
+        Rendering.applySymbolFillColors(gComps);
+    };
+    applySymbolThemeToScene();
     const inspector = $q('#inspector');
     const inspectorNone = $q('#inspectorNone');
     const projTitle = $q('#projTitle'); // uses .value later
@@ -2990,6 +3004,8 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         // draw symbol via helper
         const symbolGroup = Rendering.buildSymbolGroup(c, GRID, defaultResistorStyle);
         g.appendChild(symbolGroup);
+        Rendering.applySymbolStrokeColors(symbolGroup);
+        Rendering.applySymbolFillColors(symbolGroup);
         // Add click handlers for label and value text for independent selection/movement
         const labelText = symbolGroup.querySelector(`[data-label-for="${c.id}"]`);
         const valueText = symbolGroup.querySelector(`[data-value-for="${c.id}"]`);
