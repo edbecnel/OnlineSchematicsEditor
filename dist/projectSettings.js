@@ -14,6 +14,9 @@ const DEFAULT_THEME = {
     symbol: DEFAULT_SYMBOL_THEME
 };
 export const DEFAULT_THEME_BACKGROUND = DEFAULT_THEME.background;
+export function getDefaultSymbolTheme() {
+    return cloneSymbolTheme(DEFAULT_SYMBOL_THEME);
+}
 const DEFAULT_SETTINGS = {
     componentClearancePx: 0,
     theme: DEFAULT_THEME

@@ -20,7 +20,7 @@ import * as FileIO from './fileio.js';
 import * as Move from './move.js';
 import * as Input from './input.js';
 import { ConstraintSolver } from './constraints/index.js';
-import { initializeProjectSettings, updateProjectSettings, DEFAULT_THEME_BACKGROUND } from './projectSettings.js';
+import { initializeProjectSettings, updateProjectSettings, DEFAULT_THEME_BACKGROUND, getDefaultSymbolTheme } from './projectSettings.js';
 import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
 (function () {
     // --- Add UI for Place/Delete Junction Dot ---
@@ -36,6 +36,9 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         const rgba = cssToRGBA01(cssColor);
         const symbolPatch = { [key]: rgba };
         projectSettings = updateProjectSettings({ theme: { symbol: symbolPatch } });
+    }
+    function resetSymbolTheme() {
+        projectSettings = updateProjectSettings({ theme: { symbol: getDefaultSymbolTheme() } });
     }
     // ================================================================================
     // ====== 2. CONSTANTS & CONFIGURATION ======
@@ -1985,23 +1988,33 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
         function themeColorToHex(theme, key) {
             return rgbaToHex(theme[key]);
         }
-        symbolFields.forEach(({ id, key, valueId }) => {
+        function updateFieldDisplays(source) {
+            symbolFields.forEach(({ id, key, valueId }) => {
+                const input = document.getElementById(id);
+                const valueEl = document.getElementById(valueId);
+                if (!input || !valueEl)
+                    return;
+                const hex = themeColorToHex(projectSettings.theme.symbol, key);
+                if (key !== source) {
+                    try {
+                        input.value = hex.toLowerCase();
+                    }
+                    catch { /* ignore */ }
+                }
+                valueEl.textContent = hex;
+            });
+        }
+        symbolFields.forEach(({ id, key }) => {
             const input = document.getElementById(id);
-            const valueEl = document.getElementById(valueId);
             if (!input)
                 return;
-            const initialHex = themeColorToHex(projectSettings.theme.symbol, key);
-            input.value = initialHex.toLowerCase();
-            if (valueEl)
-                valueEl.textContent = initialHex;
             function applyHex(hex) {
                 const normalized = hex.startsWith('#') ? hex.toUpperCase() : colorToHex(hex).toUpperCase();
-                if (valueEl)
-                    valueEl.textContent = normalized;
                 const currentHex = themeColorToHex(projectSettings.theme.symbol, key);
                 if (currentHex === normalized)
                     return;
                 syncProjectSettingsSymbolColor(key, normalized);
+                updateFieldDisplays(key);
             }
             input.addEventListener('input', (event) => {
                 const hex = event.target.value;
@@ -2012,6 +2025,14 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 applyHex(hex);
             });
         });
+        updateFieldDisplays();
+        const resetBtn = document.getElementById('resetSymbolColorsBtn');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                resetSymbolTheme();
+                updateFieldDisplays();
+            });
+        }
     })();
     // ====== Component Drawing ======
     function drawComponent(c) {

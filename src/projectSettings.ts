@@ -20,6 +20,10 @@ const DEFAULT_THEME: SchematicTheme = {
 
 export const DEFAULT_THEME_BACKGROUND = DEFAULT_THEME.background;
 
+export function getDefaultSymbolTheme(): SymbolTheme {
+  return cloneSymbolTheme(DEFAULT_SYMBOL_THEME);
+}
+
 const DEFAULT_SETTINGS: ProjectSettings = {
   componentClearancePx: 0,
   theme: DEFAULT_THEME

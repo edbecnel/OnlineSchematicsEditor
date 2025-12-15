@@ -26,7 +26,7 @@ import * as Input from './input.js';
 import type { ClientXYEvent } from './utils.js';
 import { ConstraintSolver } from './constraints/index.js';
 import type { Entity } from './constraints/types.js';
-import { initializeProjectSettings, updateProjectSettings, DEFAULT_THEME_BACKGROUND } from './projectSettings.js';
+import { initializeProjectSettings, updateProjectSettings, DEFAULT_THEME_BACKGROUND, getDefaultSymbolTheme } from './projectSettings.js';
 
 import type {
   Point, Axis, Mode, PlaceType, CounterKey, Selection, SelectionItem, DiodeSubtype, ResistorStyle, CapacitorSubtype,
@@ -80,6 +80,10 @@ import {
     const rgba = cssToRGBA01(cssColor);
     const symbolPatch: Partial<SymbolTheme> = { [key]: rgba };
     projectSettings = updateProjectSettings({ theme: { symbol: symbolPatch } });
+  }
+
+  function resetSymbolTheme(): void {
+    projectSettings = updateProjectSettings({ theme: { symbol: getDefaultSymbolTheme() } });
   }
 
   // ================================================================================
@@ -2064,23 +2068,31 @@ import {
       return rgbaToHex(theme[key]);
     }
 
-    symbolFields.forEach(({ id, key, valueId }) => {
-      const input = document.getElementById(id) as HTMLInputElement | null;
-      const valueEl = document.getElementById(valueId) as HTMLElement | null;
-      if (!input) return;
+    function updateFieldDisplays(source?: SymbolColorKey) {
+      symbolFields.forEach(({ id, key, valueId }) => {
+        const input = document.getElementById(id) as HTMLInputElement | null;
+        const valueEl = document.getElementById(valueId) as HTMLElement | null;
+        if (!input || !valueEl) return;
 
-      const initialHex = themeColorToHex(projectSettings.theme.symbol, key);
-      input.value = initialHex.toLowerCase();
-      if (valueEl) valueEl.textContent = initialHex;
+        const hex = themeColorToHex(projectSettings.theme.symbol, key);
+        if (key !== source) {
+          try { input.value = hex.toLowerCase(); } catch { /* ignore */ }
+        }
+        valueEl.textContent = hex;
+      });
+    }
+
+    symbolFields.forEach(({ id, key }) => {
+      const input = document.getElementById(id) as HTMLInputElement | null;
+      if (!input) return;
 
       function applyHex(hex: string) {
         const normalized = hex.startsWith('#') ? hex.toUpperCase() : colorToHex(hex).toUpperCase();
-        if (valueEl) valueEl.textContent = normalized;
-
         const currentHex = themeColorToHex(projectSettings.theme.symbol, key);
         if (currentHex === normalized) return;
 
         syncProjectSettingsSymbolColor(key, normalized);
+        updateFieldDisplays(key);
       }
 
       input.addEventListener('input', (event) => {
@@ -2093,6 +2105,16 @@ import {
         applyHex(hex);
       });
     });
+
+    updateFieldDisplays();
+
+    const resetBtn = document.getElementById('resetSymbolColorsBtn');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        resetSymbolTheme();
+        updateFieldDisplays();
+      });
+    }
   })();
 
   // ====== Component Drawing ======
