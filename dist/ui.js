@@ -1,5 +1,6 @@
 // ui.ts - UI controls, mode management, and toolbar handlers
 // Handles editor modes, grid/snap/ortho/crosshair toggles, theme switching, and UI state
+import { setThemeMode as setRenderingThemeMode } from './rendering.js';
 // Update grid toggle button appearance
 export function updateGridToggleButton(ctx) {
     if (!ctx.gridToggleBtnEl) {
@@ -197,6 +198,7 @@ export function applyTheme(ctx, theme) {
     else {
         htmlEl.removeAttribute('data-theme');
     }
+    setRenderingThemeMode(theme === 'light' ? 'light' : 'dark');
     localStorage.setItem('theme', theme);
     // Update button icon
     if (themeBtn) {

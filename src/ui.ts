@@ -2,6 +2,7 @@
 // Handles editor modes, grid/snap/ortho/crosshair toggles, theme switching, and UI state
 
 import type { EditorMode, DiodeSubtype, CapacitorSubtype, ResistorStyle, GridMode, SnapMode, Selection } from './types.js';
+import { setThemeMode as setRenderingThemeMode } from './rendering.js';
 
 // Context interface for UI operations
 export interface UIContext {
@@ -254,6 +255,7 @@ export function applyTheme(ctx: UIContext, theme: string): void {
   } else {
     htmlEl.removeAttribute('data-theme');
   }
+  setRenderingThemeMode(theme === 'light' ? 'light' : 'dark');
   localStorage.setItem('theme', theme);
 
   // Update button icon

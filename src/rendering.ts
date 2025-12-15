@@ -34,6 +34,53 @@ const SYMBOL_THEME_FILL_KEYS: Record<SymbolFillCategory, keyof SymbolTheme> = {
 };
 
 let currentSymbolTheme: SymbolTheme | null = null;
+let currentThemeMode: 'light' | 'dark' = 'dark';
+
+export function setThemeMode(mode: 'light' | 'dark'): void {
+  currentThemeMode = mode;
+}
+
+function parseRgbFromString(normalized: string): { r: number; g: number; b: number; a?: number } | null {
+  const match = normalized.match(/^rgba?\((\d+),(\d+),(\d+)(?:,([0-9.]+))?\)$/);
+  if (!match) return null;
+  return {
+    r: parseInt(match[1], 10),
+    g: parseInt(match[2], 10),
+    b: parseInt(match[3], 10),
+    a: match[4] !== undefined ? parseFloat(match[4]) : undefined
+  };
+}
+
+function isPureBlackColor(normalized: string): boolean {
+  if (normalized === '#000000' || normalized === '#000' || normalized === 'black') return true;
+  const rgb = parseRgbFromString(normalized);
+  if (!rgb) return false;
+  return rgb.r === 0 && rgb.g === 0 && rgb.b === 0;
+}
+
+function isPureWhiteColor(normalized: string): boolean {
+  if (normalized === '#ffffff' || normalized === '#fff' || normalized === 'white') return true;
+  const rgb = parseRgbFromString(normalized);
+  if (!rgb) return false;
+  return rgb.r === 255 && rgb.g === 255 && rgb.b === 255;
+}
+
+function normalizeSymbolColorForTheme(color: string | null | undefined): string {
+  if (!color) return '';
+  const trimmed = color.trim();
+  if (!trimmed) return color;
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('var(') || lower === 'none' || lower === 'currentcolor') return color;
+  const normalized = lower.replace(/\s+/g, '');
+
+  if (currentThemeMode === 'dark' && isPureBlackColor(normalized)) {
+    return '#ffffff';
+  }
+  if (currentThemeMode === 'light' && isPureWhiteColor(normalized)) {
+    return '#000000';
+  }
+  return color;
+}
 
 function cloneRgba(c: RGBA01): RGBA01 {
   return { r: c.r, g: c.g, b: c.b, a: c.a };
@@ -55,7 +102,8 @@ function applySymbolStroke(el: SVGElement, category: SymbolStrokeCategory = 'bod
   const stroke = currentSymbolTheme
     ? rgba01ToCss(currentSymbolTheme[SYMBOL_THEME_STROKE_KEYS[category]])
     : SYMBOL_STROKE_DEFAULTS[category];
-  el.setAttribute('stroke', stroke || SYMBOL_STROKE_DEFAULTS.body);
+  const resolved = normalizeSymbolColorForTheme(stroke || SYMBOL_STROKE_DEFAULTS.body);
+  el.setAttribute('stroke', resolved);
 }
 
 function applySymbolFill(el: SVGElement, category: SymbolFillCategory): void {
@@ -63,7 +111,8 @@ function applySymbolFill(el: SVGElement, category: SymbolFillCategory): void {
   const fill = currentSymbolTheme
     ? rgba01ToCss(currentSymbolTheme[SYMBOL_THEME_FILL_KEYS[category]])
     : SYMBOL_FILL_DEFAULTS[category];
-  el.setAttribute('fill', fill || SYMBOL_FILL_DEFAULTS[category]);
+  const resolved = normalizeSymbolColorForTheme(fill || SYMBOL_FILL_DEFAULTS[category]);
+  el.setAttribute('fill', resolved);
 }
 
 export function setSymbolTheme(theme: SymbolTheme | null): void {
@@ -82,7 +131,7 @@ export function applySymbolStrokeColors(root: ParentNode | null = typeof documen
   elements.forEach((el) => {
     const attr = el.getAttribute('data-symbol-stroke');
     const category: SymbolStrokeCategory = attr === 'pin' || attr === 'powerSymbol' || attr === 'pinText' ? attr : 'body';
-    const stroke = cssColors[category];
+    const stroke = normalizeSymbolColorForTheme(cssColors[category]);
     el.setAttribute('stroke', stroke);
   });
 }
@@ -98,7 +147,8 @@ export function applySymbolFillColors(root: ParentNode | null = typeof document 
   elements.forEach((el) => {
     const attr = el.getAttribute('data-symbol-fill');
     const category: SymbolFillCategory = attr === 'pinText' || attr === 'referenceText' || attr === 'valueText' ? attr : 'referenceText';
-    el.setAttribute('fill', fills[category]);
+    const fill = normalizeSymbolColorForTheme(fills[category]);
+    el.setAttribute('fill', fill);
   });
 }
 
@@ -119,7 +169,8 @@ function setAttrs(el: SVGElement, attrs: Record<string, string | number>) {
 }
 
 export function rgba01ToCss(c: RGBA01): string {
-  return `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${c.a})`;
+  const base = `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${c.a})`;
+  return normalizeSymbolColorForTheme(base);
 }
 
 // ========================================================================================
@@ -731,7 +782,7 @@ export function updateSelectionOutline(selection: Selection): void {
         const original = labelText.getAttribute('data-original-fill');
         if (original !== null) {
           if (original === '') labelText.removeAttribute('fill');
-          else labelText.setAttribute('fill', original);
+          else labelText.setAttribute('fill', normalizeSymbolColorForTheme(original));
           labelText.removeAttribute('data-original-fill');
         }
         labelText.style.fill = '';
@@ -750,7 +801,7 @@ export function updateSelectionOutline(selection: Selection): void {
         const original = valueText.getAttribute('data-original-fill');
         if (original !== null) {
           if (original === '') valueText.removeAttribute('fill');
-          else valueText.setAttribute('fill', original);
+          else valueText.setAttribute('fill', normalizeSymbolColorForTheme(original));
           valueText.removeAttribute('data-original-fill');
         }
         valueText.style.fill = '';

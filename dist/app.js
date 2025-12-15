@@ -1852,6 +1852,7 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
             }
             currentTheme = theme;
             localStorage.setItem('theme', theme);
+            Rendering.setThemeMode(theme === 'light' ? 'light' : 'dark');
             // Update button icon
             if (themeBtn) {
                 themeBtn.textContent = theme === 'light' ? '🌙' : '☀';
@@ -9967,9 +9968,12 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                 // Track axes of connected edges at this node to detect non-collinear joins
                 const axesAtNode = new Set();
                 for (const eid of node.edges) {
-                    const edge = edges.find(e => e.id === eid);
+                    const edge = edgeById.get(eid);
                     if (edge && edge.wireId) {
                         wireIds.add(edge.wireId);
+                        if (edge.axis === 'x' || edge.axis === 'y') {
+                            axesAtNode.add(edge.axis);
+                        }
                         const w = wires.find(w => w.id === edge.wireId);
                         if (w) {
                             // Check if node is NOT an endpoint for this wire
@@ -9977,26 +9981,28 @@ import { pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimFor
                             const isEnd = (Math.round(w.points[w.points.length - 1].x) === node.x && Math.round(w.points[w.points.length - 1].y) === node.y);
                             if (!isStart && !isEnd)
                                 hasMidSegment = true;
-                            // Determine axis of the edge relative to this node (for non-collinearity check)
-                            let ax = null;
-                            const n = w.points.length;
-                            if (n >= 2) {
-                                let other = null;
-                                if (isStart)
-                                    other = w.points[1];
-                                else if (isEnd)
-                                    other = w.points[n - 2];
-                                else if (n === 2)
-                                    other = w.points[1];
-                                if (other) {
-                                    if (Math.round(other.y) === node.y)
-                                        ax = 'x';
-                                    else if (Math.round(other.x) === node.x)
-                                        ax = 'y';
+                            if (edge.axis !== 'x' && edge.axis !== 'y') {
+                                // Fallback: derive axis from adjacent segment when edge lacks axis metadata
+                                let ax = null;
+                                const n = w.points.length;
+                                if (n >= 2) {
+                                    let other = null;
+                                    if (isStart)
+                                        other = w.points[1];
+                                    else if (isEnd)
+                                        other = w.points[n - 2];
+                                    else if (n === 2)
+                                        other = w.points[1];
+                                    if (other) {
+                                        if (Math.round(other.y) === node.y)
+                                            ax = 'x';
+                                        else if (Math.round(other.x) === node.x)
+                                            ax = 'y';
+                                    }
                                 }
+                                if (ax)
+                                    axesAtNode.add(ax);
                             }
-                            if (ax)
-                                axesAtNode.add(ax);
                         }
                     }
                 }
