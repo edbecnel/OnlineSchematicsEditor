@@ -4,15 +4,15 @@ import { formatValue, getComponentBounds } from './components.js';
 import { scaleForComponent } from './symbolScale.js';
 import { mmToPx } from './conversions.js';
 const SYMBOL_STROKE_DEFAULTS = {
-    body: 'var(--component)',
-    pin: 'var(--component)',
-    powerSymbol: 'var(--component)',
-    pinText: 'var(--component)'
+    body: '#000000', // Black
+    pin: '#FF0000', // Red
+    powerSymbol: '#008000', // Green
+    pinText: '#000000' // Black
 };
 const SYMBOL_FILL_DEFAULTS = {
-    pinText: 'var(--component)',
-    referenceText: 'var(--component)',
-    valueText: 'var(--component)'
+    pinText: '#000000', // Black
+    referenceText: '#0000FF', // Blue
+    valueText: '#000000' // Black
 };
 const SYMBOL_THEME_STROKE_KEYS = {
     body: 'body',

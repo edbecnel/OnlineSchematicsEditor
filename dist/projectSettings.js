@@ -2,12 +2,12 @@ import { cssToRGBA01 } from './utils.js';
 const STORAGE_KEY = 'project.settings.v1';
 const LEGACY_CLEARANCE_KEY = 'constraints.componentClearancePx';
 const DEFAULT_SYMBOL_THEME = {
-    body: cssToRGBA01('#202020'),
-    pin: cssToRGBA01('#202020'),
-    pinText: cssToRGBA01('#202020'),
-    referenceText: cssToRGBA01('#202020'),
-    valueText: cssToRGBA01('#202020'),
-    powerSymbol: cssToRGBA01('#202020')
+    body: cssToRGBA01('#000000'), // Black
+    pin: cssToRGBA01('#FF0000'), // Red
+    pinText: cssToRGBA01('#000000'), // Black
+    referenceText: cssToRGBA01('#0000FF'), // Blue
+    valueText: cssToRGBA01('#000000'), // Black
+    powerSymbol: cssToRGBA01('#008000') // Green
 };
 const DEFAULT_THEME = {
     background: '#e8e8e8',

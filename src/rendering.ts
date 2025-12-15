@@ -10,16 +10,16 @@ export type SymbolStrokeCategory = 'body' | 'pin' | 'powerSymbol' | 'pinText';
 export type SymbolFillCategory = 'pinText' | 'referenceText' | 'valueText';
 
 const SYMBOL_STROKE_DEFAULTS: Record<SymbolStrokeCategory, string> = {
-  body: 'var(--component)',
-  pin: 'var(--component)',
-  powerSymbol: 'var(--component)',
-  pinText: 'var(--component)'
+  body: '#000000', // Black
+  pin: '#FF0000', // Red
+  powerSymbol: '#008000', // Green
+  pinText: '#000000' // Black
 };
 
 const SYMBOL_FILL_DEFAULTS: Record<SymbolFillCategory, string> = {
-  pinText: 'var(--component)',
-  referenceText: 'var(--component)',
-  valueText: 'var(--component)'
+  pinText: '#000000', // Black
+  referenceText: '#0000FF', // Blue
+  valueText: '#000000' // Black
 };
 
 const SYMBOL_THEME_STROKE_KEYS: Record<SymbolStrokeCategory, keyof SymbolTheme> = {
