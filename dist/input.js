@@ -1,5 +1,6 @@
 // input.ts - Mouse/keyboard input handlers, pointer events, drawing mode, marquee selection
 // Handles all user input: pointer events, keyboard shortcuts, pan/zoom, marquee selection, coordinate inputs
+import { ZOOM_MIN, ZOOM_MAX } from './constants.js';
 // Marquee selection helpers
 export function beginMarqueeAt(ctx, p, startedOnEmpty, preferComponents) {
     ctx.marquee.active = true;
@@ -213,7 +214,7 @@ export function handleWheel(ctx, e) {
     const scale = (e.deltaY < 0) ? 1.1 : (1 / 1.1);
     const oldZoom = ctx.zoom;
     const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-    const newZoom = clamp(oldZoom * scale, 0.25, 10);
+    const newZoom = clamp(oldZoom * scale, ZOOM_MIN, ZOOM_MAX);
     if (newZoom === oldZoom)
         return;
     const fp = ctx.svgPoint(e);

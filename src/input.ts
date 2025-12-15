@@ -2,6 +2,7 @@
 // Handles all user input: pointer events, keyboard shortcuts, pan/zoom, marquee selection, coordinate inputs
 
 import type { Point, EditorMode, GridMode, SnapMode, Component, Wire, Junction, DiodeSubtype, CapacitorSubtype, ResistorStyle, PlaceType } from './types.js';
+import { ZOOM_MIN, ZOOM_MAX } from './constants.js';
 
 // Context interface for input operations
 export interface InputContext {
@@ -367,7 +368,7 @@ export function handleWheel(ctx: InputContext, e: WheelEvent): void {
   const scale = (e.deltaY < 0) ? 1.1 : (1 / 1.1);
   const oldZoom = ctx.zoom;
   const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-  const newZoom = clamp(oldZoom * scale, 0.25, 10);
+  const newZoom = clamp(oldZoom * scale, ZOOM_MIN, ZOOM_MAX);
   if (newZoom === oldZoom) return;
   
   const fp = ctx.svgPoint(e);

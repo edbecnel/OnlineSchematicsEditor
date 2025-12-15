@@ -15,6 +15,10 @@ export const SNAP_NM = Math.round(NM_PER_MIL * SNAP_MILS);
 // ====== Viewport ======
 export const BASE_W = 1600;
 export const BASE_H = 1000;
+// Zoom calibration
+export const ZOOM_DEFAULT = 2;
+export const ZOOM_MIN = 0.25;
+export const ZOOM_MAX = 40;
 // ====== Connection Hints ======
 export const HINT_SNAP_TOLERANCE_PX = 5;
 export const HINT_UNLOCK_THRESHOLD_PX = 5;

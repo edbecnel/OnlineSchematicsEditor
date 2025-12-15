@@ -27,7 +27,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
     // Note: button event listener setup is done after setMode is defined (see attachJunctionDotButtons)
     // ====== Module Imports (re-export for internal use) ======
     const { $q, $qa, setAttr, setAttrs, getClientXY, colorToHex, cssToRGBA01, rgba01ToCss, deg, normDeg, rotatePoint, eqPt, pointToSegmentDistance, projectPointToSegment, segmentAngle, rectFromPoints, inRect, segsIntersect, segmentIntersectsRect, clamp } = Utils;
-    const { GRID, NM_PER_MM, NM_PER_IN, NM_PER_MIL, SNAP_MILS, SNAP_NM, BASE_W, BASE_H, HINT_SNAP_TOLERANCE_PX, HINT_UNLOCK_THRESHOLD_PX, UNIT_OPTIONS, WIRE_COLOR_OPTIONS } = Constants;
+    const { GRID, NM_PER_MM, NM_PER_IN, NM_PER_MIL, SNAP_MILS, SNAP_NM, BASE_W, BASE_H, ZOOM_DEFAULT, ZOOM_MIN, ZOOM_MAX, HINT_SNAP_TOLERANCE_PX, HINT_UNLOCK_THRESHOLD_PX, UNIT_OPTIONS, WIRE_COLOR_OPTIONS } = Constants;
     let projectSettings = initializeProjectSettings();
     Rendering.setSymbolTheme(projectSettings.theme.symbol);
     let applySymbolThemeToScene = () => {
@@ -888,9 +888,9 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
     // Suppress the next contextmenu after right-click finishing a wire
     let suppressNextContextMenu = false;
     // ViewBox zoom state
-    let zoom = 1;
+    let zoom = ZOOM_DEFAULT;
     let viewX = 0, viewY = 0; // pan in SVG units
-    let viewW = BASE_W, viewH = BASE_H; // effective viewBox size (updated by applyZoom)
+    let viewW = BASE_W / zoom, viewH = BASE_H / zoom; // effective viewBox size (updated by applyZoom)
     function applyZoom() {
         // Match the SVG element's current aspect ratio so the grid fills the canvas (no letterboxing)
         const vw = Math.max(1, svg.clientWidth);
@@ -1100,7 +1100,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         }
     }
     function updateZoomUI() {
-        const z = Math.round(zoom * 100);
+        const z = Math.round((zoom / ZOOM_DEFAULT) * 100);
         const inp = document.getElementById('zoomPct');
         if (inp && inp.value !== z + '%')
             inp.value = z + '%';
@@ -6615,7 +6615,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         e.preventDefault();
         const scale = (e.deltaY < 0) ? 1.1 : (1 / 1.1);
         const oldZoom = zoom;
-        const newZoom = clamp(oldZoom * scale, 0.25, 10);
+        const newZoom = clamp(oldZoom * scale, ZOOM_MIN, ZOOM_MAX);
         if (newZoom === oldZoom)
             return;
         // focal point in svg coords
@@ -8674,9 +8674,9 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         window.addEventListener('resize', closeWireMenu);
     }
     // Zoom controls
-    document.getElementById('zoomInBtn').addEventListener('click', () => { zoom = Math.min(10, zoom * 1.25); applyZoom(); });
-    document.getElementById('zoomOutBtn').addEventListener('click', () => { zoom = Math.max(0.25, zoom / 1.25); applyZoom(); });
-    document.getElementById('zoomResetBtn').addEventListener('click', () => { zoom = 1; applyZoom(); viewX = 0; viewY = 0; applyZoom(); });
+    document.getElementById('zoomInBtn').addEventListener('click', () => { zoom = Math.min(ZOOM_MAX, zoom * 1.25); applyZoom(); });
+    document.getElementById('zoomOutBtn').addEventListener('click', () => { zoom = Math.max(ZOOM_MIN, zoom / 1.25); applyZoom(); });
+    document.getElementById('zoomResetBtn').addEventListener('click', () => { zoom = ZOOM_DEFAULT; applyZoom(); viewX = 0; viewY = 0; applyZoom(); });
     document.getElementById('zoomPct').addEventListener('change', (e) => {
         const input = e.target;
         const raw = (input?.value || '').trim();
@@ -8685,7 +8685,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             updateZoomUI();
             return;
         }
-        zoom = clamp(n, 0.25, 10);
+        zoom = clamp(n * ZOOM_DEFAULT, ZOOM_MIN, ZOOM_MAX);
         applyZoom();
     });
     // ---- NEW: while typing, ignore app keyboard shortcuts ----
