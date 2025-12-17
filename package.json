@@ -7,7 +7,7 @@
     "watch": "tsc -w",
     "dev": "http-server . -c-1 -p 5173",
     "start": "concurrently -k \"npm:watch\" \"npm:dev\"",
-    "test:kicad": "npm run build && node dist/routing/kicad/tests/connectivity.test.js"
+    "test:kicad": "npm run build && node dist/routing/kicad/tests/connectivity.test.js && node dist/routing/kicad/tests/wirePlacement.test.js"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

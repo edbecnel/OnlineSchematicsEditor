@@ -12,6 +12,13 @@ export interface IRoutingKernel {
   // Snap helper: snap to grid or nearby object
   snapToGridOrObject(pos: { x: number; y: number }, snapRadius?: number): { x: number; y: number };
 
+  // Wire placement lifecycle (Phase 3)
+  beginPlacement(start: { x: number; y: number }, mode: 'HV' | 'VH'): void;
+  updatePlacement(cursor: { x: number; y: number }): { preview: { x: number; y: number }[] };
+  commitCorner(): { points: { x: number; y: number }[] };
+  finishPlacement(): { points: { x: number; y: number }[] };
+  cancelPlacement(): void;
+
   // Optional lifecycle hooks
   init?(): void;
   dispose?(): void;
