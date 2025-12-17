@@ -1327,7 +1327,11 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
             const nc = ctx.NET_CLASSES[w.netId || ctx.activeNetClass] || ctx.NET_CLASSES.default;
             const eff = ctx.effectiveStroke(w, nc, ctx.THEME);
             // Determine the raw color to use (from wire's current stroke, or from netclass if using defaults)
-            const rawColor = (w.stroke && w.stroke.width > 0) ? w.stroke.color : nc.wire.color;
+            let rawColor = (w.stroke && w.stroke.width > 0) ? w.stroke.color : nc.wire.color;
+            // Ensure we have an RGBA01 object (some older code may store strings)
+            if (typeof rawColor === 'string') {
+                rawColor = ctx.cssToRGBA01(rawColor);
+            }
             const patch = {
                 width: eff.width,
                 type: (eff.type === 'default' ? 'solid' : eff.type) || 'solid',
