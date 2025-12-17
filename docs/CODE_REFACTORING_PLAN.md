@@ -1,3 +1,4 @@
+```markdown
 # Code Refactoring Plan - Breaking up app.ts
 
 ## Current Status
@@ -126,3 +127,4 @@
 10. move.ts (depends on topology, geometry, state)
 11. ui.ts (depends on most modules)
 12. input.ts (depends on ui, rendering, state)
+```

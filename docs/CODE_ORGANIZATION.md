@@ -133,3 +133,5 @@ When ready to split into modules, consider this grouping:
 8. `ui/` folder - Section 9 components (toolbar.ts, inspector.ts, dialogs.ts)
 9. `serialization.ts` - Section 10 save/load
 10. `main.ts` - Section 11 initialization
+
+\*\*\* End Patch

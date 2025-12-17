@@ -1,4 +1,5 @@
-# Constraint System Migration Guide
+````markdown
+# Code Refactoring - Migration Guide
 
 ## Overview
 
@@ -32,6 +33,7 @@ const solver = new ConstraintSolver(snap, snapToBaseScalar);
 const stats = solver.getStats();
 console.log("Constraint system initialized:", stats);
 ```
+````
 
 **Deliverable**: Constraint system exists but not yet connected to existing movement code.
 
@@ -351,7 +353,7 @@ function beginWireStretch(wire: Wire, segmentIndex: number) {
 
 ## Phase 5: Extensions (Week 9+)
 
-### New Features Enabled by Constraints:
+### New Features Enabled By Constraints:
 
 1. **Undo/Redo**: Track constraint changes
 2. **Animation**: Interpolate between constraint solutions
@@ -397,26 +399,6 @@ At any phase, can rollback by:
 
 **Risk**: Minimal - old code remains functional throughout migration.
 
----
+```
 
-## Success Metrics
-
-- **Code complexity**: -60% lines in movement logic
-- **Bug rate**: -50% movement-related issues
-- **Feature velocity**: +200% for movement features
-- **Developer onboarding**: New devs understand system in <1 day vs. <1 week
-
----
-
-## Timeline Summary
-
-| Phase          | Duration | Risk   | Value             |
-| -------------- | -------- | ------ | ----------------- |
-| 0 - Foundation | 1 week   | None   | Infrastructure    |
-| 1 - Parallel   | 2 weeks  | Low    | Validation        |
-| 2 - Components | 2 weeks  | Medium | First major win   |
-| 3 - Wires      | 2 weeks  | Medium | Complete coverage |
-| 4 - Cleanup    | 1 week   | Low    | Code quality      |
-| 5 - Extensions | Ongoing  | Low    | New features      |
-
-**Total core migration**: 8 weeks with shipping at each phase.
+```
