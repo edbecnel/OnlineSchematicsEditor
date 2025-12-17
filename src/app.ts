@@ -460,10 +460,8 @@ import {
       };
       placeType = inferredType;
       setMode('place');
-      console.log('[Library] Parsed symbol ready for placement', pendingLibrarySymbol);
     } else {
       pendingLibrarySymbol = null;
-      showToast(`Unable to prepare "${symbolName}" for placement. Re-import the library and try again.`);
     }
   }
 
@@ -1730,15 +1728,13 @@ import {
         btn.addEventListener('click', (e) => {
           const nextMode = (btn.dataset.mode || '') as EditorMode;
           if (!nextMode) return;
-          console.log(`Mode button clicked: ${nextMode}`);
           // Toggle Select: clicking Select when already active deselects (goes to 'none')
           if (nextMode === 'select') {
             // If the capture handler just activated Select for this click (when previous
             // mode was not 'select'), avoid immediately toggling it off here.
             if (mode === 'select' && !(selectCaptureActivated && selectCapturePrevMode !== 'select')) {
               clearSelection();
-              try { renderInspector(); } catch (_) {}
-              try { Rendering.updateSelectionOutline(selection); } catch (_) {}
+              try { redraw(); } catch (_) {}
               setMode('none');
             } else {
               setMode(nextMode);
@@ -1772,12 +1768,9 @@ import {
   })();
 
   function setMode(m: EditorMode) {
-    try { console.log('[setMode] requested ->', m, 'current ->', mode); } catch (_) { }
-    // No-op if mode is already the requested value to avoid duplicate work
-    if (m === mode) {
-      try { console.log('[setMode] no-op ->', m); } catch (_) { }
-      return;
-    }
+    // No-op if mode already set — prevents redundant expensive work from
+    // multiple click handlers (capture + bubble) invoking setMode repeatedly.
+    if (m === mode) return;
     // Finalize any active wire drawing before mode change
     if (drawing.active && drawing.points.length > 0) {
       finishWire();
@@ -1790,7 +1783,7 @@ import {
       // If we were in embedded slide context (no SWP), restore gaps at the component pins.
       finalizeEmbeddedMove('mode-change');
     }
-    mode = m; try { console.log('[setMode] applied ->', mode); } catch (_) { }
+    mode = m;
     overlayMode.textContent = m[0].toUpperCase() + m.slice(1);
 
     $qa<HTMLButtonElement>('#modeGroup button').forEach(b => {

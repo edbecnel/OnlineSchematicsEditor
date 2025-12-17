@@ -378,11 +378,9 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             };
             placeType = inferredType;
             setMode('place');
-            console.log('[Library] Parsed symbol ready for placement', pendingLibrarySymbol);
         }
         else {
             pendingLibrarySymbol = null;
-            showToast(`Unable to prepare "${symbolName}" for placement. Re-import the library and try again.`);
         }
     }
     let gridMode = localStorage.getItem('grid.mode') || 'line';
@@ -1616,7 +1614,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                     const nextMode = (btn.dataset.mode || '');
                     if (!nextMode)
                         return;
-                    console.log(`Mode button clicked: ${nextMode}`);
                     // Toggle Select: clicking Select when already active deselects (goes to 'none')
                     if (nextMode === 'select') {
                         // If the capture handler just activated Select for this click (when previous
@@ -1624,11 +1621,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                         if (mode === 'select' && !(selectCaptureActivated && selectCapturePrevMode !== 'select')) {
                             clearSelection();
                             try {
-                                renderInspector();
-                            }
-                            catch (_) { }
-                            try {
-                                Rendering.updateSelectionOutline(selection);
+                                redraw();
                             }
                             catch (_) { }
                             setMode('none');
@@ -1671,18 +1664,10 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         catch (_) { }
     })();
     function setMode(m) {
-        try {
-            console.log('[setMode] requested ->', m, 'current ->', mode);
-        }
-        catch (_) { }
-        // No-op if mode is already the requested value to avoid duplicate work
-        if (m === mode) {
-            try {
-                console.log('[setMode] no-op ->', m);
-            }
-            catch (_) { }
+        // No-op if mode already set — prevents redundant expensive work from
+        // multiple click handlers (capture + bubble) invoking setMode repeatedly.
+        if (m === mode)
             return;
-        }
         // Finalize any active wire drawing before mode change
         if (drawing.active && drawing.points.length > 0) {
             finishWire();
@@ -1696,10 +1681,6 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             finalizeEmbeddedMove('mode-change');
         }
         mode = m;
-        try {
-            console.log('[setMode] applied ->', mode);
-        }
-        catch (_) { }
         overlayMode.textContent = m[0].toUpperCase() + m.slice(1);
         $qa('#modeGroup button').forEach(b => {
             b.classList.toggle('active', b.dataset.mode === m);

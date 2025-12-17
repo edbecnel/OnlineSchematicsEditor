@@ -1097,14 +1097,16 @@
         <button data-tool="diode" title="Place Diode (D)">
           <svg width="32" height="12" viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
-            <!-- Anode lead -->
-            <line x1="2" y1="12" x2="25" y2="12" />
-            <!-- Triangle -->
-            <path d="M25 4 L41 12 L25 20 Z" />
-            <!-- Cathode bar -->
-            <line x1="41" y1="4" x2="41" y2="20" />
-            <!-- Cathode lead -->
-            <line x1="41" y1="12" x2="62" y2="12" />
+            <g transform="rotate(180 32 12)">
+              <!-- Anode lead -->
+              <line x1="2" y1="12" x2="25" y2="12" />
+              <!-- Triangle -->
+              <path d="M25 4 L41 12 L25 20 Z" />
+              <!-- Cathode bar -->
+              <line x1="41" y1="4" x2="41" y2="20" />
+              <!-- Cathode lead -->
+              <line x1="41" y1="12" x2="62" y2="12" />
+            </g>
           </svg>
         </button>
         <button data-tool="transistor" title="Place Transistor (Q)">

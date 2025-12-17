@@ -623,8 +623,8 @@ function drawInductor(x, y, ax, bx, line, path) {
 }
 function drawDiodeInto(group, c, subtype) {
     const sw = 2;
-    const add = (el) => { group.appendChild(el); return el; };
     const mk = (tag) => document.createElementNS(SVG_NS, tag);
+    let add = (el) => { group.appendChild(el); return el; };
     const lineEl = (x1, y1, x2, y2, w = sw, strokeCategory = 'body') => {
         const ln = mk('line');
         setAttrs(ln, { x1, y1, x2, y2, 'stroke-width': w, fill: 'none' });
@@ -638,6 +638,11 @@ function drawDiodeInto(group, c, subtype) {
         return add(p);
     };
     const y = c.y, ax = c.x - 50, bx = c.x + 50, cx = c.x, cy = y;
+    // Draw diodes into a rotated subgroup so built-in diodes are oriented correctly
+    const drawGroup = mk('g');
+    drawGroup.setAttribute('transform', `rotate(180 ${cx} ${cy})`);
+    group.appendChild(drawGroup);
+    add = (el) => { drawGroup.appendChild(el); return el; };
     const addArrow = (outward = true) => {
         const dir = outward ? 1 : -1, arrX = cx + (outward ? 10 : -10);
         pathEl(`M ${arrX} ${cy - 10} l ${6 * dir} -6 m -6 6 l ${6 * dir} 6`);

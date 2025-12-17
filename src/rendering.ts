@@ -680,8 +680,8 @@ function drawInductor(
 
 function drawDiodeInto(group: SVGGElement, c: Component, subtype: DiodeSubtype) {
   const sw = 2;
-  const add = (el: SVGElement) => { group.appendChild(el); return el; };
   const mk = (tag: string) => document.createElementNS(SVG_NS, tag);
+  let add = (el: SVGElement) => { group.appendChild(el); return el; };
   const lineEl = (x1: number, y1: number, x2: number, y2: number, w = sw, strokeCategory: SymbolStrokeCategory = 'body') => {
     const ln = mk('line');
     setAttrs(ln, { x1, y1, x2, y2, 'stroke-width': w, fill: 'none' });
@@ -696,6 +696,12 @@ function drawDiodeInto(group: SVGGElement, c: Component, subtype: DiodeSubtype) 
   };
 
   const y = c.y, ax = c.x - 50, bx = c.x + 50, cx = c.x, cy = y;
+
+  // Draw diodes into a rotated subgroup so built-in diodes are oriented correctly
+  const drawGroup = mk('g');
+  drawGroup.setAttribute('transform', `rotate(180 ${cx} ${cy})`);
+  group.appendChild(drawGroup);
+  add = (el: SVGElement) => { drawGroup.appendChild(el); return el; };
 
   const addArrow = (outward = true) => {
     const dir = outward ? 1 : -1, arrX = cx + (outward ? 10 : -10);
