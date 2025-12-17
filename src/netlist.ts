@@ -287,6 +287,7 @@ export function showNetPropertiesDialog(options: NetPropertiesDialogOptions): vo
   widthInput.type = 'text';
   const widthNm = Math.round((netClass.wire.width || 0) * NM_PER_MM);
   widthInput.value = formatDimForDisplay(widthNm, globalUnits);
+  try { widthInput.name = `net-width-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   
   // Format width input on blur to show units
   widthInput.onblur = () => {
@@ -315,6 +316,7 @@ export function showNetPropertiesDialog(options: NetPropertiesDialogOptions): vo
     styleSelect.appendChild(o);
   });
   styleSelect.value = netClass.wire.type;
+  try { styleSelect.name = `net-style-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   styleRow.appendChild(styleLabel);
   styleRow.appendChild(styleSelect);
   dialog.appendChild(styleRow);
@@ -337,6 +339,7 @@ export function showNetPropertiesDialog(options: NetPropertiesDialogOptions): vo
   colorInput.title = 'Pick color';
   const rgbCss = rgba01ToCss(netClass.wire.color);
   colorInput.value = colorToHex(rgbCss);
+  try { colorInput.name = `net-color-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
 
   const alphaInput = document.createElement('input');
   alphaInput.type = 'range';
@@ -345,6 +348,7 @@ export function showNetPropertiesDialog(options: NetPropertiesDialogOptions): vo
   alphaInput.step = '0.05';
   alphaInput.style.flex = '1';
   alphaInput.value = String(netClass.wire.color.a);
+  try { alphaInput.name = `net-alpha-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   alphaInput.title = 'Opacity';
 
   const alphaLabel = document.createElement('span');

@@ -15,6 +15,23 @@ export function rowPair(lbl: string, control: HTMLElement): HTMLDivElement {
   const label = document.createElement('label');
   label.textContent = lbl;
   label.style.width = '90px';
+  // Try to associate the label with a form control inside `control` for accessibility.
+  // If a control (input/select/textarea) exists, ensure it has an id and set the label's `for`.
+  try {
+    let assoc: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null = null;
+    if ((control as any) instanceof HTMLInputElement || (control as any) instanceof HTMLSelectElement || (control as any) instanceof HTMLTextAreaElement) {
+      assoc = control as any;
+    } else {
+      assoc = control.querySelector('input,select,textarea') as (HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement) | null;
+    }
+    if (assoc) {
+      if (!assoc.id) {
+        assoc.id = `ins-${Math.random().toString(36).slice(2,8)}`;
+      }
+      label.htmlFor = assoc.id;
+    }
+  } catch (_) { }
+
   row.appendChild(label);
   row.appendChild(control);
   return row;
@@ -26,6 +43,7 @@ export function input(val: string, on: (v: string) => void): HTMLInputElement {
   el.type = 'text';
   el.value = val;
   el.oninput = () => on(el.value);
+  try { el.name = `ins-input-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   return el;
 }
 
@@ -35,6 +53,7 @@ export function number(val: number, on: (v: number) => void): HTMLInputElement {
   el.type = 'number';
   el.value = String(val);
   el.oninput = () => on(Number.parseFloat(el.value) || 0);
+  try { el.name = `ins-number-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   return el;
 }
 
@@ -44,6 +63,7 @@ export function text(val: string, readonly: boolean = false): HTMLInputElement {
   el.type = 'text';
   el.value = val;
   el.readOnly = readonly;
+  try { el.name = `ins-text-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   return el;
 }
 
@@ -81,6 +101,7 @@ export function unitSelect(
 
   sel.addEventListener('change', () => onChange(sel.value));
   sizeUnitSelectToContent(sel);
+  try { sel.name = `ins-select-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   return sel;
 }
 
@@ -161,6 +182,7 @@ export function dimNumberPx(
     }
   });
 
+  try { inp.name = `ins-dim-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   return inp;
 }
 
@@ -407,6 +429,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
       searchWrap.className = 'library-search';
       const searchInput = document.createElement('input');
       searchInput.type = 'search';
+      try { searchInput.name = `ins-search-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
       searchInput.placeholder = 'Search symbols…';
       searchInput.value = librarySearchValue;
       searchWrap.appendChild(searchInput);
@@ -606,6 +629,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
       const valInput = document.createElement('input');
       valInput.type = 'text';
       valInput.value = c.value || '';
+      try { valInput.name = `ins-val-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
       valInput.oninput = () => {
         ctx.pushUndo();
         c.value = valInput.value;
@@ -624,6 +648,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
       // Resistor style selector (only for resistors)
       if (c.type === 'resistor') {
         const styleSel = document.createElement('select');
+        try { styleSel.name = `ins-select-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
         const ansiOpt = document.createElement('option');
         ansiOpt.value = 'ansi';
         ansiOpt.textContent = 'ANSI/IEEE (US)';
@@ -645,6 +670,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
       // Capacitor subtype and style selectors (only for capacitors)
       if (c.type === 'capacitor') {
         const subSel = document.createElement('select');
+        try { subSel.name = `ins-select-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
         const stdOpt = document.createElement('option');
         stdOpt.value = 'standard';
         stdOpt.textContent = 'Standard';
@@ -669,6 +695,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
         // Style selector for polarized capacitors
         if (c.props.capacitorSubtype === 'polarized') {
           const styleSel = document.createElement('select');
+          try { styleSel.name = `ins-select-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
           const ansiOpt = document.createElement('option');
           ansiOpt.value = 'ansi';
           ansiOpt.textContent = 'ANSI/IEEE (US)';
@@ -1113,6 +1140,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     customSizeInputRow.className = 'row';
     const sizeIn = document.createElement('input');
     sizeIn.type = 'text';
+    try { sizeIn.name = `ins-size-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     sizeIn.style.width = '12ch';
     sizeIn.placeholder = 'Optional';
     
@@ -1166,6 +1194,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     
     const colorIn = document.createElement('input');
     colorIn.type = 'color';
+    try { colorIn.name = `ins-color-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     colorIn.title = 'Pick color';
     colorIn.style.minWidth = '32px';
     colorIn.style.height = '32px';
@@ -1184,6 +1213,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     // Opacity slider
     const opacityIn = document.createElement('input');
     opacityIn.type = 'range';
+    try { opacityIn.name = `ins-range-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     opacityIn.min = '0';
     opacityIn.max = '1';
     opacityIn.step = '0.05';
@@ -1398,6 +1428,7 @@ function renderWireInspector(ctx: InspectorContext, w: Wire, inspector: HTMLElem
   customLbl.style.gap = '6px';
   const chkCustom = document.createElement('input');
   chkCustom.type = 'checkbox';
+  try { chkCustom.name = `ins-chk-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   const hasCustomProps = () => {
     ctx.ensureStroke(w);
     return w.stroke!.width > 0 || (w.stroke!.type !== 'default' && w.stroke!.type !== undefined);
@@ -1497,6 +1528,7 @@ function buildWireStrokeEditor(
   wLbl.style.width = '90px';
   const wIn = document.createElement('input');
   wIn.type = 'text';
+  try { wIn.name = `ins-w-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   wIn.step = '0.05';
 
   const syncWidth = () => {
@@ -1705,6 +1737,7 @@ function buildColorEditor(
 
   const cIn = document.createElement('input');
   cIn.type = 'color';
+  try { cIn.name = `ins-color-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   cIn.title = 'Pick color';
   cIn.style.minWidth = '32px';
   cIn.style.height = '32px';
@@ -1719,6 +1752,7 @@ function buildColorEditor(
 
   const aIn = document.createElement('input');
   aIn.type = 'range';
+  try { aIn.name = `ins-range-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
   aIn.min = '0';
   aIn.max = '1';
   aIn.step = '0.05';

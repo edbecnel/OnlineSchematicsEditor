@@ -8,6 +8,24 @@ export function rowPair(lbl, control) {
     const label = document.createElement('label');
     label.textContent = lbl;
     label.style.width = '90px';
+    // Try to associate the label with a form control inside `control` for accessibility.
+    // If a control (input/select/textarea) exists, ensure it has an id and set the label's `for`.
+    try {
+        let assoc = null;
+        if (control instanceof HTMLInputElement || control instanceof HTMLSelectElement || control instanceof HTMLTextAreaElement) {
+            assoc = control;
+        }
+        else {
+            assoc = control.querySelector('input,select,textarea');
+        }
+        if (assoc) {
+            if (!assoc.id) {
+                assoc.id = `ins-${Math.random().toString(36).slice(2, 8)}`;
+            }
+            label.htmlFor = assoc.id;
+        }
+    }
+    catch (_) { }
     row.appendChild(label);
     row.appendChild(control);
     return row;
@@ -18,6 +36,10 @@ export function input(val, on) {
     el.type = 'text';
     el.value = val;
     el.oninput = () => on(el.value);
+    try {
+        el.name = `ins-input-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    catch (_) { }
     return el;
 }
 // Helper to create a number input
@@ -26,6 +48,10 @@ export function number(val, on) {
     el.type = 'number';
     el.value = String(val);
     el.oninput = () => on(Number.parseFloat(el.value) || 0);
+    try {
+        el.name = `ins-number-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    catch (_) { }
     return el;
 }
 // Helper to create a read-only text input
@@ -34,6 +60,10 @@ export function text(val, readonly = false) {
     el.type = 'text';
     el.value = val;
     el.readOnly = readonly;
+    try {
+        el.name = `ins-text-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    catch (_) { }
     return el;
 }
 // Helper to create a unit selector (resistor, capacitor, inductor)
@@ -61,6 +91,10 @@ export function unitSelect(kind, current, onChange, UNIT_OPTIONS, defaultUnit) {
         sel.value = selected;
     sel.addEventListener('change', () => onChange(sel.value));
     sizeUnitSelectToContent(sel);
+    try {
+        sel.name = `ins-select-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    catch (_) { }
     return sel;
 }
 // Helper to fit inspector unit selects to their content
@@ -128,6 +162,10 @@ export function dimNumberPx(pxVal, onCommit, pxToNm, nmToPx, formatDimForDisplay
             inp.blur();
         }
     });
+    try {
+        inp.name = `ins-dim-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    catch (_) { }
     return inp;
 }
 let librarySearchValue = '';
@@ -312,6 +350,10 @@ export function renderInspector(ctx, inspector, inspectorNone) {
             searchWrap.className = 'library-search';
             const searchInput = document.createElement('input');
             searchInput.type = 'search';
+            try {
+                searchInput.name = `ins-search-${Math.random().toString(36).slice(2, 8)}`;
+            }
+            catch (_) { }
             searchInput.placeholder = 'Search symbols…';
             searchInput.value = librarySearchValue;
             searchWrap.appendChild(searchInput);
@@ -482,6 +524,10 @@ export function renderInspector(ctx, inspector, inspectorNone) {
             const valInput = document.createElement('input');
             valInput.type = 'text';
             valInput.value = c.value || '';
+            try {
+                valInput.name = `ins-val-${Math.random().toString(36).slice(2, 8)}`;
+            }
+            catch (_) { }
             valInput.oninput = () => {
                 ctx.pushUndo();
                 c.value = valInput.value;
@@ -499,6 +545,10 @@ export function renderInspector(ctx, inspector, inspectorNone) {
             // Resistor style selector (only for resistors)
             if (c.type === 'resistor') {
                 const styleSel = document.createElement('select');
+                try {
+                    styleSel.name = `ins-select-${Math.random().toString(36).slice(2, 8)}`;
+                }
+                catch (_) { }
                 const ansiOpt = document.createElement('option');
                 ansiOpt.value = 'ansi';
                 ansiOpt.textContent = 'ANSI/IEEE (US)';
@@ -520,6 +570,10 @@ export function renderInspector(ctx, inspector, inspectorNone) {
             // Capacitor subtype and style selectors (only for capacitors)
             if (c.type === 'capacitor') {
                 const subSel = document.createElement('select');
+                try {
+                    subSel.name = `ins-select-${Math.random().toString(36).slice(2, 8)}`;
+                }
+                catch (_) { }
                 const stdOpt = document.createElement('option');
                 stdOpt.value = 'standard';
                 stdOpt.textContent = 'Standard';
@@ -544,6 +598,10 @@ export function renderInspector(ctx, inspector, inspectorNone) {
                 // Style selector for polarized capacitors
                 if (c.props.capacitorSubtype === 'polarized') {
                     const styleSel = document.createElement('select');
+                    try {
+                        styleSel.name = `ins-select-${Math.random().toString(36).slice(2, 8)}`;
+                    }
+                    catch (_) { }
                     const ansiOpt = document.createElement('option');
                     ansiOpt.value = 'ansi';
                     ansiOpt.textContent = 'ANSI/IEEE (US)';
@@ -945,6 +1003,10 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         customSizeInputRow.className = 'row';
         const sizeIn = document.createElement('input');
         sizeIn.type = 'text';
+        try {
+            sizeIn.name = `ins-size-${Math.random().toString(36).slice(2, 8)}`;
+        }
+        catch (_) { }
         sizeIn.style.width = '12ch';
         sizeIn.placeholder = 'Optional';
         const currentSizeNm = currentSizeMils * 0.0254 * ctx.NM_PER_MM;
@@ -992,6 +1054,10 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         colorLbl.style.marginRight = '0.5rem';
         const colorIn = document.createElement('input');
         colorIn.type = 'color';
+        try {
+            colorIn.name = `ins-color-${Math.random().toString(36).slice(2, 8)}`;
+        }
+        catch (_) { }
         colorIn.title = 'Pick color';
         colorIn.style.minWidth = '32px';
         colorIn.style.height = '32px';
@@ -1008,6 +1074,10 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         // Opacity slider
         const opacityIn = document.createElement('input');
         opacityIn.type = 'range';
+        try {
+            opacityIn.name = `ins-range-${Math.random().toString(36).slice(2, 8)}`;
+        }
+        catch (_) { }
         opacityIn.min = '0';
         opacityIn.max = '1';
         opacityIn.step = '0.05';
@@ -1202,6 +1272,10 @@ function renderWireInspector(ctx, w, inspector) {
     customLbl.style.gap = '6px';
     const chkCustom = document.createElement('input');
     chkCustom.type = 'checkbox';
+    try {
+        chkCustom.name = `ins-chk-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    catch (_) { }
     const hasCustomProps = () => {
         ctx.ensureStroke(w);
         return w.stroke.width > 0 || (w.stroke.type !== 'default' && w.stroke.type !== undefined);
@@ -1287,6 +1361,10 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
     wLbl.style.width = '90px';
     const wIn = document.createElement('input');
     wIn.type = 'text';
+    try {
+        wIn.name = `ins-w-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    catch (_) { }
     wIn.step = '0.05';
     const syncWidth = () => {
         const eff = ctx.effectiveStroke(w, ctx.netClassForWire(w), ctx.THEME);
@@ -1483,6 +1561,10 @@ function buildColorEditor(ctx, w, swp, holder, chkCustom, syncWidth, syncStyle, 
     cLbl.style.width = '90px';
     const cIn = document.createElement('input');
     cIn.type = 'color';
+    try {
+        cIn.name = `ins-color-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    catch (_) { }
     cIn.title = 'Pick color';
     cIn.style.minWidth = '32px';
     cIn.style.height = '32px';
@@ -1495,6 +1577,10 @@ function buildColorEditor(ctx, w, swp, holder, chkCustom, syncWidth, syncStyle, 
     cIn.value = initialHex;
     const aIn = document.createElement('input');
     aIn.type = 'range';
+    try {
+        aIn.name = `ins-range-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    catch (_) { }
     aIn.min = '0';
     aIn.max = '1';
     aIn.step = '0.05';
