@@ -24,33 +24,82 @@ class DefaultLegacyKernel implements IRoutingKernel {
     // No snapping in default; real adapter will replace this.
     return { x: pos.x, y: pos.y };
   }
+
+  beginPlacement(start: { x: number; y: number }, mode: 'HV' | 'VH'): void {
+    /* no-op */
+  }
+  updatePlacement(cursor: { x: number; y: number }): { preview: { x: number; y: number }[] } {
+    return { preview: [] };
+  }
+  commitCorner(): { points: { x: number; y: number }[] } { return { points: [] }; }
+  finishPlacement(): { points: { x: number; y: number }[] } { return { points: [] }; }
+  cancelPlacement(): void { /* no-op */ }
 }
 
 export class RoutingFacade {
   private kernel: IRoutingKernel;
+  private isDefaultKernel = true;
+  private warnedDefault = false;
+
+  private warnIfDefault(method: string) {
+    if (!this.warnedDefault && this.isDefaultKernel) {
+      this.warnedDefault = true;
+      console.warn(
+        `[RoutingFacade] DefaultLegacyKernel is still active (method: ${method}). ` +
+        `app.ts should call routingFacade.setKernel(...) early during startup.`
+      );
+    }
+  }
 
   constructor() {
     this.kernel = new DefaultLegacyKernel();
+    this.isDefaultKernel = true;
     this.kernel.init?.();
   }
 
   setKernel(k: IRoutingKernel) {
     if (this.kernel && this.kernel.dispose) this.kernel.dispose();
     this.kernel = k;
+    this.isDefaultKernel = false;
     if (this.kernel.init) this.kernel.init();
   }
 
 
   getMode(): RoutingMode {
+    this.warnIfDefault('getMode');
     return this.kernel.name;
   }
 
   manhattanPath(A: { x: number; y: number }, P: { x: number; y: number }, mode: 'HV' | 'VH') {
+    this.warnIfDefault('manhattanPath');
     return this.kernel.manhattanPath(A, P, mode);
   }
 
   snapToGridOrObject(pos: { x: number; y: number }, snapRadius?: number) {
+    this.warnIfDefault('snapToGridOrObject');
     return this.kernel.snapToGridOrObject(pos, snapRadius);
+  }
+
+  // Wire placement lifecycle pass-throughs
+  beginPlacement(start: { x: number; y: number }, mode: 'HV' | 'VH') {
+    this.warnIfDefault('beginPlacement');
+    return this.kernel.beginPlacement(start, mode);
+  }
+  updatePlacement(cursor: { x: number; y: number }) {
+    this.warnIfDefault('updatePlacement');
+    return this.kernel.updatePlacement(cursor);
+  }
+  commitCorner() {
+    this.warnIfDefault('commitCorner');
+    return this.kernel.commitCorner();
+  }
+  finishPlacement() {
+    this.warnIfDefault('finishPlacement');
+    return this.kernel.finishPlacement();
+  }
+  cancelPlacement() {
+    this.warnIfDefault('cancelPlacement');
+    return this.kernel.cancelPlacement();
   }
 }
 
