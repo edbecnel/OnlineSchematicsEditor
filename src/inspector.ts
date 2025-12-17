@@ -7,6 +7,7 @@ import type {
 } from './types.js';
 import type { SWP } from './topology.js';
 import { nmToUnit, unitToNm } from './conversions.js';
+import { cssToRGBA01, rgba01ToCss } from './utils.js';
 
 // Helper to create a row with label and control
 export function rowPair(lbl: string, control: HTMLElement): HTMLDivElement {
@@ -1202,7 +1203,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     
     // Get current color (from junction override, default color, or netclass)
     const nc = ctx.NET_CLASSES[j.netId || 'default'] || ctx.NET_CLASSES.default;
-    let currentColor = j.color || ctx.junctionDefaultColor || ctx.rgba01ToCss(nc.junction.color);
+    let currentColor = j.color || ctx.junctionDefaultColor || rgba01ToCss(nc.junction.color);
     if (currentColor.startsWith('var(')) {
       // Use default black for var() colors in the picker
       currentColor = '#000000';
@@ -1497,7 +1498,7 @@ function buildWireStrokeEditor(
       let rawColor: any = (w.stroke && w.stroke.width > 0) ? w.stroke.color : nc.wire.color;
       // Ensure we have an RGBA01 object (some older code may store strings)
       if (typeof rawColor === 'string') {
-        rawColor = ctx.cssToRGBA01(rawColor);
+        rawColor = cssToRGBA01(rawColor);
       }
       const patch: Partial<Stroke> = {
         width: eff.width,
@@ -1506,14 +1507,14 @@ function buildWireStrokeEditor(
       };
       w.stroke = { ...(w.stroke as Stroke), ...patch };
       (w.stroke as any).widthNm = Math.round(patch.width! * ctx.NM_PER_MM);
-      w.color = ctx.rgba01ToCss(rawColor);
+      w.color = rgba01ToCss(rawColor);
     } else {
       // Switching to net class: use defaults
       const netClass = ctx.NET_CLASSES[w.netId || ctx.activeNetClass];
       const patch: Partial<Stroke> = { width: 0, type: 'default' };
       w.stroke = { ...(w.stroke as Stroke), ...patch };
       delete (w.stroke as any).widthNm;
-      w.color = ctx.rgba01ToCss(netClass.wire.color);
+      w.color = rgba01ToCss(netClass.wire.color);
     }
     ctx.updateWireDOM(w);
     ctx.redrawCanvasOnly();
@@ -1563,7 +1564,7 @@ function buildWireStrokeEditor(
       ctx.ensureStroke(w);
       (w.stroke as any).widthNm = nm;
       w.stroke!.width = valMm;
-      w.color = ctx.rgba01ToCss(w.stroke!.color);
+      w.color = rgba01ToCss(w.stroke!.color);
       ctx.updateWireDOM(w);
       syncPreview();
     } catch (err) {
@@ -1583,7 +1584,7 @@ function buildWireStrokeEditor(
       (w.stroke as any).widthNm = nm;
       w.stroke!.width = valMm;
       if (valMm <= 0) w.stroke!.type = 'default';
-      w.color = ctx.rgba01ToCss(w.stroke!.color);
+      w.color = rgba01ToCss(w.stroke!.color);
       ctx.updateWireDOM(w);
       ctx.redrawCanvasOnly();
       ctx.selection.items = [{ kind: 'wire', id: w.id, segIndex: null }];
@@ -1681,7 +1682,7 @@ function buildWireStrokeEditor(
     const rawColor = (netSel.value !== '__none__')
       ? ctx.NET_CLASSES[netSel.value].wire.color
       : w.stroke!.color;
-    pLine.setAttribute('stroke', ctx.rgba01ToCss(rawColor));
+    pLine.setAttribute('stroke', rgba01ToCss(rawColor));
     pLine.setAttribute('stroke-width', String(ctx.mmToPx(eff.width)));
     const d = ctx.dashArrayFor(eff.type);
     if (d) pLine.setAttribute('stroke-dasharray', d);
@@ -1803,7 +1804,7 @@ function buildColorEditor(
       const newColor: RGBA01 = { r: r / 255, g: g / 255, b: b / 255, a };
       ctx.ensureStroke(w);
       w.stroke = { ...w.stroke!, color: newColor };
-      w.color = ctx.rgba01ToCss(w.stroke.color);
+      w.color = rgba01ToCss(w.stroke.color);
       ctx.updateWireDOM(w);
       syncPreview();
     } catch (err) {
@@ -1845,7 +1846,7 @@ function buildColorEditor(
     if (w.points && w.points.length === 2) {
       ctx.ensureStroke(w);
       w.stroke = { ...w.stroke!, color: newColor };
-      w.color = ctx.rgba01ToCss(w.stroke.color);
+      w.color = rgba01ToCss(w.stroke.color);
       ctx.updateWireDOM(w);
       ctx.redrawCanvasOnly();
       ctx.selection.items = [{ kind: 'wire', id: w.id, segIndex: null }];

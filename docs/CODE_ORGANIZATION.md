@@ -1,5 +1,7 @@
 # Online Schematics Editor - Code Organization
 
+> See the documentation index for a curated overview and quick links: [docs/INDEX.md](INDEX.md)
+
 ## File Structure
 
 The application is organized as a single file (`src/app.ts`) with clear section markers for navigation.

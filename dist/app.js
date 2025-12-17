@@ -19,6 +19,8 @@ import * as Inspector from './inspector.js';
 import * as FileIO from './fileio.js';
 import * as Move from './move.js';
 import * as Input from './input.js';
+import { routingFacade } from './routing/facade.js';
+import { LegacyRoutingKernelAdapter } from './routing/legacyAdapter.js';
 import { ConstraintSolver } from './constraints/index.js';
 import { initializeProjectSettings, updateProjectSettings, DEFAULT_THEME_BACKGROUND, getDefaultSymbolTheme } from './projectSettings.js';
 import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, formatDimForDisplay } from './conversions.js';
@@ -4813,6 +4815,39 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         // No object nearby - snap to grid
         return { x: snap(pos.x), y: snap(pos.y) };
     }
+    // --------- Wire routing facade setup (Phase 1)
+    // Create legacy adapter that delegates to the existing local implementations
+    const _legacyRoutingAdapter = new LegacyRoutingKernelAdapter({
+        manhattanPath: (A, P, mode) => manhattanPath(A, P, mode),
+        snapToGridOrObject: (pos, snapRadius) => snapToGridOrObject(pos, snapRadius)
+    });
+    // Default kernel mode (feature flag). 'legacy' uses the adapter which delegates to current functions.
+    let routingKernelMode = 'legacy';
+    // Wire the legacy adapter into the facade by default
+    routingFacade.setKernel(_legacyRoutingAdapter);
+    // Expose routingKernelMode on window for runtime toggling
+    Object.defineProperty(window, 'routingKernelMode', {
+        get() { return routingKernelMode; },
+        set(value) {
+            routingKernelMode = value;
+            if (value === 'legacy') {
+                routingFacade.setKernel(_legacyRoutingAdapter);
+            }
+            else {
+                // kicad not implemented yet; stay on legacy adapter
+                console.warn('kicad routing kernel not implemented; staying on legacy adapter');
+                routingFacade.setKernel(_legacyRoutingAdapter);
+            }
+        }
+    });
+    // Quick verification (Phase 1): ensure adapter responds without changing behavior
+    try {
+        const sample = routingFacade.manhattanPath({ x: 0, y: 0 }, { x: 20, y: 15 }, 'HV');
+        console.debug('RoutingFacade initialized (legacy). Sample Manhattan path:', sample);
+    }
+    catch (e) {
+        console.warn('RoutingFacade initialization check failed:', e);
+    }
     /**
      * Find nearby snap object (pin, wire endpoint, junction) within radius.
      * @param pos Cursor position
@@ -5896,7 +5931,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                     if (isDiagonal) {
                         // Would be diagonal - insert bend to make it orthogonal
                         const mode = dx >= dy ? 'HV' : 'VH';
-                        const manhattanPts = manhattanPath(start, end, mode);
+                        const manhattanPts = routingFacade.manhattanPath(start, end, mode);
                         // Add intermediate bend points (skip first point which is already in drawing.points,
                         // and skip last point which is the click position - it becomes the new cursor position)
                         for (let i = 1; i < manhattanPts.length - 1; i++) {
@@ -6186,7 +6221,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         // When Manhattan routing is enabled, use object snap to connect to off-grid pins
         let snapCandMove;
         if (mode === 'wire' && USE_MANHATTAN_ROUTING) {
-            snapCandMove = snapToGridOrObject({ x: p.x, y: p.y }, 10);
+            snapCandMove = routingFacade.snapToGridOrObject({ x: p.x, y: p.y }, 10);
         }
         else if (mode === 'wire') {
             snapCandMove = snapPointPreferAnchor({ x: p.x, y: p.y });
@@ -7242,7 +7277,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                         // No hint - use normal distance-based logic
                         mode = dx >= dy ? 'HV' : 'VH';
                     }
-                    const manhattanPts = manhattanPath(start, end, mode);
+                    const manhattanPts = routingFacade.manhattanPath(start, end, mode);
                     pts = [...effectivePoints, ...manhattanPts.slice(1)];
                 }
                 else if (dx > minDistance || dy > minDistance) {

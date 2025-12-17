@@ -1,6 +1,7 @@
 // inspector.ts - Inspector panel rendering and property editors
 // Handles component and wire property editing in the inspector panel
 import { nmToUnit, unitToNm } from './conversions.js';
+import { cssToRGBA01, rgba01ToCss } from './utils.js';
 // Helper to create a row with label and control
 export function rowPair(lbl, control) {
     const row = document.createElement('div');
@@ -1064,7 +1065,7 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         colorIn.style.flex = '0 0 auto';
         // Get current color (from junction override, default color, or netclass)
         const nc = ctx.NET_CLASSES[j.netId || 'default'] || ctx.NET_CLASSES.default;
-        let currentColor = j.color || ctx.junctionDefaultColor || ctx.rgba01ToCss(nc.junction.color);
+        let currentColor = j.color || ctx.junctionDefaultColor || rgba01ToCss(nc.junction.color);
         if (currentColor.startsWith('var(')) {
             // Use default black for var() colors in the picker
             currentColor = '#000000';
@@ -1330,7 +1331,7 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
             let rawColor = (w.stroke && w.stroke.width > 0) ? w.stroke.color : nc.wire.color;
             // Ensure we have an RGBA01 object (some older code may store strings)
             if (typeof rawColor === 'string') {
-                rawColor = ctx.cssToRGBA01(rawColor);
+                rawColor = cssToRGBA01(rawColor);
             }
             const patch = {
                 width: eff.width,
@@ -1339,7 +1340,7 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
             };
             w.stroke = { ...w.stroke, ...patch };
             w.stroke.widthNm = Math.round(patch.width * ctx.NM_PER_MM);
-            w.color = ctx.rgba01ToCss(rawColor);
+            w.color = rgba01ToCss(rawColor);
         }
         else {
             // Switching to net class: use defaults
@@ -1347,7 +1348,7 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
             const patch = { width: 0, type: 'default' };
             w.stroke = { ...w.stroke, ...patch };
             delete w.stroke.widthNm;
-            w.color = ctx.rgba01ToCss(netClass.wire.color);
+            w.color = rgba01ToCss(netClass.wire.color);
         }
         ctx.updateWireDOM(w);
         ctx.redrawCanvasOnly();
@@ -1398,7 +1399,7 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
             ctx.ensureStroke(w);
             w.stroke.widthNm = nm;
             w.stroke.width = valMm;
-            w.color = ctx.rgba01ToCss(w.stroke.color);
+            w.color = rgba01ToCss(w.stroke.color);
             ctx.updateWireDOM(w);
             syncPreview();
         }
@@ -1419,7 +1420,7 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
             w.stroke.width = valMm;
             if (valMm <= 0)
                 w.stroke.type = 'default';
-            w.color = ctx.rgba01ToCss(w.stroke.color);
+            w.color = rgba01ToCss(w.stroke.color);
             ctx.updateWireDOM(w);
             ctx.redrawCanvasOnly();
             ctx.selection.items = [{ kind: 'wire', id: w.id, segIndex: null }];
@@ -1520,7 +1521,7 @@ function buildWireStrokeEditor(ctx, w, swp, wrap, netSel, chkCustom) {
         const rawColor = (netSel.value !== '__none__')
             ? ctx.NET_CLASSES[netSel.value].wire.color
             : w.stroke.color;
-        pLine.setAttribute('stroke', ctx.rgba01ToCss(rawColor));
+        pLine.setAttribute('stroke', rgba01ToCss(rawColor));
         pLine.setAttribute('stroke-width', String(ctx.mmToPx(eff.width)));
         const d = ctx.dashArrayFor(eff.type);
         if (d)
@@ -1628,7 +1629,7 @@ function buildColorEditor(ctx, w, swp, holder, chkCustom, syncWidth, syncStyle, 
             const newColor = { r: r / 255, g: g / 255, b: b / 255, a };
             ctx.ensureStroke(w);
             w.stroke = { ...w.stroke, color: newColor };
-            w.color = ctx.rgba01ToCss(w.stroke.color);
+            w.color = rgba01ToCss(w.stroke.color);
             ctx.updateWireDOM(w);
             syncPreview();
         }
@@ -1666,7 +1667,7 @@ function buildColorEditor(ctx, w, swp, holder, chkCustom, syncWidth, syncStyle, 
         if (w.points && w.points.length === 2) {
             ctx.ensureStroke(w);
             w.stroke = { ...w.stroke, color: newColor };
-            w.color = ctx.rgba01ToCss(w.stroke.color);
+            w.color = rgba01ToCss(w.stroke.color);
             ctx.updateWireDOM(w);
             ctx.redrawCanvasOnly();
             ctx.selection.items = [{ kind: 'wire', id: w.id, segIndex: null }];
