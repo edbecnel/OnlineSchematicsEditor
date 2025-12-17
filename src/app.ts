@@ -26,6 +26,7 @@ import * as Input from './input.js';
 import type { ClientXYEvent } from './utils.js';
 import { routingFacade } from './routing/facade.js';
 import { LegacyRoutingKernelAdapter } from './routing/legacyAdapter.js';
+import { KiCadRoutingKernel } from './routing/kicadKernel.js';
 import { ConstraintSolver } from './constraints/index.js';
 import type { Entity } from './constraints/types.js';
 import { initializeProjectSettings, updateProjectSettings, DEFAULT_THEME_BACKGROUND, getDefaultSymbolTheme } from './projectSettings.js';
@@ -4955,9 +4956,23 @@ import {
       if (value === 'legacy') {
         routingFacade.setKernel(_legacyRoutingAdapter);
       } else {
-        // kicad not implemented yet; stay on legacy adapter
-        console.warn('kicad routing kernel not implemented; staying on legacy adapter');
-        routingFacade.setKernel(_legacyRoutingAdapter);
+        // Dev-only enablement for KiCad kernel
+        const isDev = (() => {
+          try {
+            const h = location.hostname;
+            return h === 'localhost' || h === '127.0.0.1';
+          } catch {
+            return false;
+          }
+        })();
+        if (isDev) {
+          routingFacade.setKernel(new KiCadRoutingKernel());
+          console.info('[Routing] KiCad kernel enabled (dev override).');
+        } else {
+          console.warn('KiCad mode ignored outside dev; staying on legacy adapter');
+          routingFacade.setKernel(_legacyRoutingAdapter);
+          routingKernelMode = 'legacy';
+        }
       }
     }
   });
@@ -4969,6 +4984,22 @@ import {
   } catch (e) {
     console.warn('RoutingFacade initialization check failed:', e);
   }
+
+  // Dev-only override: allow `?routing=kicad` or localStorage('routingKernelMode'='kicad') to opt-in
+  (function applyDevRoutingOverride() {
+    const isDev = (() => {
+      try { const h = location.hostname; return h === 'localhost' || h === '127.0.0.1'; } catch { return false; }
+    })();
+    const params = new URLSearchParams(location.search);
+    const q = params.get('routing');
+    const ls = localStorage.getItem('routingKernelMode');
+    const wantKicad = (q === 'kicad') || (ls === 'kicad');
+    if (isDev && wantKicad) {
+      (window as any).routingKernelMode = 'kicad';
+    } else {
+      (window as any).routingKernelMode = 'legacy';
+    }
+  })();
 
 
   /**
@@ -6047,9 +6078,12 @@ import {
       // start drawing if not active, else add point
       if (!drawing.active) {
         // Use the T-junction smart snap point (x, y) which already handles wire alignment
-        drawing.active = true; 
-        drawing.points = [{ x, y }]; 
+        drawing.active = true;
+        drawing.points = [{ x, y }];
         drawing.cursor = { x, y };
+        if ((window as any).routingKernelMode === 'kicad') {
+          routingFacade.beginPlacement({ x, y }, 'HV');
+        }
       } else {
         // Check if we clicked on an endpoint circle (during drawing)
         const tgt = e.target as Element;
@@ -6098,8 +6132,13 @@ import {
           ny = drawing.cursor ? drawing.cursor.y : y;
         }
 
-        // KiCad-style Manhattan routing: If enabled, check if we need to insert bend for orthogonality
-        if (USE_MANHATTAN_ROUTING && drawing.points.length >= 1) {
+        // KiCad dev-only: commit corner via routing kernel
+        if ((window as any).routingKernelMode === 'kicad') {
+          routingFacade.updatePlacement({ x: nx, y: ny });
+          const res = routingFacade.commitCorner();
+          drawing.points = res.points;
+          drawing.cursor = { x: nx, y: ny };
+        } else if (USE_MANHATTAN_ROUTING && drawing.points.length >= 1) {
           const start = drawing.points[drawing.points.length - 1]; // Last placed point
           const end = { x: nx, y: ny };
           
@@ -6458,6 +6497,16 @@ import {
     }
 
     if (mode === 'wire' && drawing.active) {
+      if ((window as any).routingKernelMode === 'kicad') {
+        const prev = routingFacade.updatePlacement({ x, y }).preview;
+        if (prev && prev.length >= 1) {
+          drawing.points = prev;
+          drawing.cursor = prev[prev.length - 1];
+        }
+        renderDrawing();
+        renderConnectionHint();
+        return;
+      }
       // enforce orthogonal preview while Shift is down (or globally tracked) or when ortho mode is on
       const isShift = (e as PointerEvent).shiftKey || globalShiftDown;
 
@@ -7310,7 +7359,21 @@ import {
 
   function finishWire() {
     // Commit only if we have at least one segment
-    if (drawing.points.length >= 2) {
+    if ((window as any).routingKernelMode === 'kicad') {
+      const res = routingFacade.finishPlacement();
+      const pts = res.points;
+      if (pts.length >= 2) {
+        pushUndo();
+        emitRunsFromPolyline(pts);
+        const comps = components.slice();
+        for (const c of comps) {
+          const didBreak = breakWiresForComponent(c);
+          if (didBreak) deleteBridgeBetweenPins(c);
+        }
+        normalizeAllWires();
+        unifyInlineWires();
+      }
+    } else if (drawing.points.length >= 2) {
       // De-dup consecutive identical points to avoid zero-length segments
       const pts = [];
       for (const p of drawing.points) {
