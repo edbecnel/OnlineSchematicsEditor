@@ -1020,7 +1020,7 @@
   <div class="app">
     <header id="mainHeader">
       <div class="group" id="modeGroup">
-        <button id="selectModeBtn" data-mode="select" class="active" title="Select/Move (V)" onclick="finalizeAndSelect()">Select</button>
+        <button id="selectModeBtn" data-mode="select" class="active" title="Select/Move (V)">Select</button>
         <button data-mode="wire" title="Wire (W)">Wire</button>
         <button data-mode="delete" title="Delete (Del)">Delete</button>
         <button data-mode="pan" title="Pan (P or MMB drag)">Pan</button>
@@ -1362,7 +1362,7 @@
           <button class="panel-toggle" data-panel="right" title="Collapse/Expand">▶</button>
         </div>
         <div class="panel-content">
-          <div class="row"><label>Title</label></div>
+          <div class="row"><label for="projTitle">Title</label></div>
           <div class="row"><input id="projTitle" type="text" placeholder="Untitled schematic" /></div>
           <div class="row hint">Saved into JSON</div>
           <hr style="border-color:#22262f; margin:1rem 0" />
@@ -1371,7 +1371,7 @@
             <span class="section-toggle">▼</span>
           </div>
           <div class="section-content" data-section-content="settings">
-            <div class="row"><label>Schematic Standard</label></div>
+            <div class="row"><label for="defaultResistorStyleSelect">Schematic Standard</label></div>
             <div class="row">
               <select id="defaultResistorStyleSelect">
                 <option value="ansi" selected>ANSI/IEEE (US)</option>
@@ -1443,9 +1443,9 @@
             <span class="section-toggle">▼</span>
           </div>
           <div class="section-content" data-section-content="junction-dots">
-            <div class="row"><label>Junction Dot Size</label></div>
-            <div class="row">
-              <div id="junctionDotSizeSelect" class="junction-size-selector">
+            <fieldset class="row" id="junctionDotSizeFieldset" style="border:0; padding:0; margin:0;">
+              <legend style="color:var(--muted); font-size: .9rem; margin-bottom: .25rem;">Junction Dot Size</legend>
+              <div id="junctionDotSizeSelect" class="junction-size-selector" role="radiogroup" aria-label="Junction Dot Size">
                 <button type="button" class="junction-size-option" data-size="smallest"
                   title="Smallest (15 mils / 0.381mm)">
                   <svg width="24" height="24" viewBox="0 0 24 24">
@@ -1480,11 +1480,11 @@
                 </button>
               </div>
             </div>
-            <div class="row"><label id="junctionCustomSizeLabel">Custom Junction Size (mils)</label></div>
+            <div class="row"><label for="junctionCustomSizeInput" id="junctionCustomSizeLabel">Custom Junction Size (mils)</label></div>
             <div class="row">
               <input type="text" id="junctionCustomSizeInput" placeholder="Optional" style="width: 12ch;" />
             </div>
-            <div class="row"><label>Default Junction Color</label></div>
+            <div class="row"><label for="junctionDefaultColorPicker">Default Junction Color</label></div>
             <div class="row">
               <input type="color" id="junctionDefaultColorPicker" style="min-width: 32px; height: 32px; cursor: pointer;" title="Choose default junction color">
               <input type="range" id="junctionDefaultOpacity" min="0" max="1" step="0.05" value="1" style="flex: 0 0 120px; margin-left: 0.5rem;" title="Opacity">
@@ -1500,7 +1500,7 @@
             <span class="section-toggle">▼</span>
           </div>
           <div class="section-content" data-section-content="light-bg">
-            <div class="row"><label>Light Theme Background</label></div>
+            <div class="row"><label for="lightBgColorPicker">Light Theme Background</label></div>
             <div class="row">
               <div id="lightBgColorSwatches" style="display: flex; gap: 0.25rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
                 <button type="button" class="color-swatch" data-color="#e8e8e8" data-permanent="true" title="Default Gray" style="background: #e8e8e8; width: 32px; height: 32px; border: 2px solid var(--muted); border-radius: 4px; cursor: pointer;"></button>

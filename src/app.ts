@@ -1722,19 +1722,62 @@ import {
     try {
       const modeGroup = document.getElementById('modeGroup');
       const buttons = modeGroup ? Array.from(modeGroup.querySelectorAll('button[data-mode]')) as HTMLButtonElement[] : [];
+      // Helpers to coordinate capture-phase activation vs bubble-phase toggle
+      let selectCaptureActivated = false as boolean;
+      let selectCapturePrevMode: EditorMode | null = null;
+
       for (const btn of buttons) {
         btn.addEventListener('click', (e) => {
           const nextMode = (btn.dataset.mode || '') as EditorMode;
-          if (nextMode) {
+          if (!nextMode) return;
+          console.log(`Mode button clicked: ${nextMode}`);
+          // Toggle Select: clicking Select when already active deselects (goes to 'none')
+          if (nextMode === 'select') {
+            // If the capture handler just activated Select for this click (when previous
+            // mode was not 'select'), avoid immediately toggling it off here.
+            if (mode === 'select' && !(selectCaptureActivated && selectCapturePrevMode !== 'select')) {
+              clearSelection();
+              try { renderInspector(); } catch (_) {}
+              try { Rendering.updateSelectionOutline(selection); } catch (_) {}
+              setMode('none');
+            } else {
+              setMode(nextMode);
+            }
+            // Reset coordination flags after handling
+            selectCaptureActivated = false; selectCapturePrevMode = null;
+          } else {
             setMode(nextMode);
           }
           e.stopPropagation();
         });
       }
+      // Ensure clicking the Select button activates Select mode when currently none.
+      // Use capture-phase handler so it runs before other bubble handlers/inline onclick.
+      const selectBtnEl = document.getElementById('selectModeBtn') as HTMLButtonElement | null;
+      if (selectBtnEl) {
+        selectBtnEl.addEventListener('click', (e) => {
+          try {
+            if (mode !== 'select') {
+              // Mark that the capture handler activated Select for this interaction so
+              // the bubble-phase click handler won't immediately toggle it off.
+              selectCapturePrevMode = mode;
+              selectCaptureActivated = true;
+              setMode('select');
+              try { requestAnimationFrame(() => redraw()); } catch (_) { }
+            }
+          } catch (_) { }
+        }, true);
+      }
     } catch (_) { }
   })();
 
   function setMode(m: EditorMode) {
+    try { console.log('[setMode] requested ->', m, 'current ->', mode); } catch (_) { }
+    // No-op if mode is already the requested value to avoid duplicate work
+    if (m === mode) {
+      try { console.log('[setMode] no-op ->', m); } catch (_) { }
+      return;
+    }
     // Finalize any active wire drawing before mode change
     if (drawing.active && drawing.points.length > 0) {
       finishWire();
@@ -1747,7 +1790,8 @@ import {
       // If we were in embedded slide context (no SWP), restore gaps at the component pins.
       finalizeEmbeddedMove('mode-change');
     }
-    mode = m; overlayMode.textContent = m[0].toUpperCase() + m.slice(1);
+    mode = m; try { console.log('[setMode] applied ->', mode); } catch (_) { }
+    overlayMode.textContent = m[0].toUpperCase() + m.slice(1);
 
     $qa<HTMLButtonElement>('#modeGroup button').forEach(b => {
       b.classList.toggle('active', b.dataset.mode === m);
@@ -8139,15 +8183,7 @@ import {
   }
 
   // ====== Toolbar ======
-  document.getElementById('modeGroup')!.addEventListener('click', (e) => {
-    const btn = (e.target as Element | null)?.closest('button') as HTMLButtonElement | null;
-    if (!btn) return;
-    const m = btn.dataset.mode as Mode | undefined;
-    if (!m) return;
-    // Toggle Select: clicking Select when already active deselects (goes to 'none')
-    if (m === 'select' && mode === 'select') setMode('none');
-    else setMode(m);
-  });
+  // NOTE: Mode button handlers are attached in attachModeButtons above.
 
   // Fallback selection by delegation (ensures inspector opens on click)
   gComps.addEventListener('pointerdown', (e) => {
@@ -8540,6 +8576,7 @@ import {
     const chkCustom = document.createElement('input');
     chkCustom.type = 'checkbox';
     chkCustom.checked = !WIRE_DEFAULTS.useNetclass;
+    try { chkCustom.name = `app-chk-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     const lblCustom = document.createElement('span');
     lblCustom.textContent = 'Use custom properties';
     rowCustom.append(chkCustom, lblCustom);
@@ -8557,6 +8594,7 @@ import {
       ? (WIRE_DEFAULTS.stroke as any).widthNm
       : unitToNm(WIRE_DEFAULTS.stroke.width || 0, 'mm');
     inpW.value = formatDimForDisplay(initialNm, globalUnits);
+    try { inpW.name = `app-dim-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     rowW.append(capW, inpW);
     box.appendChild(rowW);
 
@@ -8571,6 +8609,7 @@ import {
       selS.appendChild(o);
     });
     selS.value = (WIRE_DEFAULTS.stroke.type || 'default') as string;
+    try { selS.name = `app-select-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     rowS.append(capS, selS);
     box.appendChild(rowS);
 
@@ -8588,7 +8627,9 @@ import {
     const hex = '#'
       + [rgb.r, rgb.g, rgb.b].map(v => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
     inpColor.value = hex;
+    try { inpColor.name = `app-color-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     const inpA = document.createElement('input'); inpA.type = 'range'; inpA.min = '0'; inpA.max = '1'; inpA.step = '0.01'; inpA.value = String(rgb.a ?? 1);
+    try { inpA.name = `app-range-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     wrapC.append(inpColor, inpA);
     rowC.append(capC, wrapC);
     box.appendChild(rowC);
@@ -9037,6 +9078,7 @@ import {
     }
     inp.addEventListener('blur', () => commitFromStr(inp.value));
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { commitFromStr(inp.value); inp.blur(); } });
+    try { inp.name = `app-dim-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     return inp;
   }
 
@@ -9131,6 +9173,8 @@ import {
         });
         inp.title = 'Minimum spacing enforced between component bodies. Pins may still touch.';
         inp.id = 'componentClearanceInput';
+        // Associate the label with the input for accessibility
+        try { lbl.htmlFor = inp.id; } catch (_) {}
         rowInp.appendChild(inp);
         injectionTarget.appendChild(rowInp);
 
