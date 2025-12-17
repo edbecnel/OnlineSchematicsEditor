@@ -1420,6 +1420,62 @@
               <div class="row" style="justify-content: flex-end;">
                 <button type="button" id="resetSymbolColorsBtn" style="padding: 0.45rem 0.9rem; background: var(--muted); color: var(--ink); border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">Reset</button>
               </div>
+            
+            <div class="section-header" data-section="junction-dots" style="margin-top: 0.75rem;">
+              <h3>Junction Dots</h3>
+              <span class="section-toggle">▼</span>
+            </div>
+            <div class="section-content" data-section-content="junction-dots">
+              <fieldset class="row" id="junctionDotSizeFieldset" style="border:0; padding:0; margin:0;">
+                <legend style="color:var(--muted); font-size: .9rem; margin-bottom: .25rem;">Junction Dot Size</legend>
+                <div id="junctionDotSizeSelect" class="junction-size-selector" role="radiogroup" aria-label="Junction Dot Size">
+                  <button type="button" class="junction-size-option" data-size="smallest"
+                    title="Smallest (15 mils / 0.381mm)">
+                    <svg width="24" height="24" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+                    </svg>
+                  </button>
+                  <button type="button" class="junction-size-option" data-size="small"
+                    title="Small (30 mils / 0.762mm)">
+                    <svg width="24" height="24" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="3.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+                    </svg>
+                  </button>
+                  <button type="button" class="junction-size-option selected" data-size="default" title="Default (40 mils / 1.016mm)">
+                    <svg width="24" height="24" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="4.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+                    </svg>
+                  </button>
+                  <button type="button" class="junction-size-option" data-size="large" title="Large (50 mils / 1.27mm)">
+                    <svg width="24" height="24" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="5.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+                    </svg>
+                  </button>
+                  <button type="button" class="junction-size-option" data-size="largest" title="Largest (65 mils / 1.651mm)">
+                    <svg width="24" height="24" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="6.5" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
+                    </svg>
+                  </button>
+                  <button type="button" class="junction-size-option" id="junctionCustomPreview" data-size="custom" title="Custom" style="display: none;">
+                    <svg width="24" height="24" viewBox="0 0 24 24" id="junctionCustomPreviewSvg">
+                      <!-- Dynamic content -->
+                    </svg>
+                  </button>
+                </div>
+              </fieldset>
+              <div class="row"><label for="junctionCustomSizeInput" id="junctionCustomSizeLabel">Custom Junction Size (mils)</label></div>
+              <div class="row">
+                <input type="text" id="junctionCustomSizeInput" placeholder="Optional" style="width: 12ch;" />
+              </div>
+              <div class="row"><label for="junctionDefaultColorPicker">Default Junction Color</label></div>
+              <div class="row">
+                <input type="color" id="junctionDefaultColorPicker" style="min-width: 32px; height: 32px; cursor: pointer;" title="Choose default junction color">
+                <input type="range" id="junctionDefaultOpacity" min="0" max="1" step="0.05" value="1" style="flex: 0 0 120px; margin-left: 0.5rem;" title="Opacity">
+              </div>
+              <div class="row" id="junctionColorSwatches" style="gap: 4px; flex-wrap: wrap; margin-top: 0.5rem;">
+                <!-- Color swatches will be added by JavaScript -->
+              </div>
+              <div class="row hint">Default color for junction dots (uses net class if not set)</div>
             </div>
           </div>
           <hr style="border-color:#22262f; margin:1rem 0" />
@@ -1440,62 +1496,7 @@
             <!-- Component Clearance UI is injected here programmatically -->
           </div>
 
-          <div class="section-header" data-section="junction-dots" style="margin-top: 1rem;">
-            <h2>Junction Dots</h2>
-            <span class="section-toggle">▼</span>
-          </div>
-          <div class="section-content" data-section-content="junction-dots">
-            <fieldset class="row" id="junctionDotSizeFieldset" style="border:0; padding:0; margin:0;">
-              <legend style="color:var(--muted); font-size: .9rem; margin-bottom: .25rem;">Junction Dot Size</legend>
-              <div id="junctionDotSizeSelect" class="junction-size-selector" role="radiogroup" aria-label="Junction Dot Size">
-                <button type="button" class="junction-size-option" data-size="smallest"
-                  title="Smallest (15 mils / 0.381mm)">
-                  <svg width="24" height="24" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
-                  </svg>
-                </button>
-                <button type="button" class="junction-size-option" data-size="small"
-                  title="Small (30 mils / 0.762mm)">
-                  <svg width="24" height="24" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="3.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
-                  </svg>
-                </button>
-                <button type="button" class="junction-size-option selected" data-size="default" title="Default (40 mils / 1.016mm)">
-                  <svg width="24" height="24" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="4.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
-                  </svg>
-                </button>
-                <button type="button" class="junction-size-option" data-size="large" title="Large (50 mils / 1.27mm)">
-                  <svg width="24" height="24" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="5.0" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
-                  </svg>
-                </button>
-                <button type="button" class="junction-size-option" data-size="largest" title="Largest (65 mils / 1.651mm)">
-                  <svg width="24" height="24" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="6.5" fill="currentColor" stroke="var(--bg)" stroke-width="1" />
-                  </svg>
-                </button>
-                <button type="button" class="junction-size-option" id="junctionCustomPreview" data-size="custom" title="Custom" style="display: none;">
-                  <svg width="24" height="24" viewBox="0 0 24 24" id="junctionCustomPreviewSvg">
-                    <!-- Dynamic content -->
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div class="row"><label for="junctionCustomSizeInput" id="junctionCustomSizeLabel">Custom Junction Size (mils)</label></div>
-            <div class="row">
-              <input type="text" id="junctionCustomSizeInput" placeholder="Optional" style="width: 12ch;" />
-            </div>
-            <div class="row"><label for="junctionDefaultColorPicker">Default Junction Color</label></div>
-            <div class="row">
-              <input type="color" id="junctionDefaultColorPicker" style="min-width: 32px; height: 32px; cursor: pointer;" title="Choose default junction color">
-              <input type="range" id="junctionDefaultOpacity" min="0" max="1" step="0.05" value="1" style="flex: 0 0 120px; margin-left: 0.5rem;" title="Opacity">
-            </div>
-            <div class="row" id="junctionColorSwatches" style="gap: 4px; flex-wrap: wrap; margin-top: 0.5rem;">
-              <!-- Color swatches will be added by JavaScript -->
-            </div>
-            <div class="row hint">Default color for junction dots (uses net class if not set)</div>
-          </div>
+          <!-- Junction Dots subsection moved into Settings (rendered below as an h3 subsection) -->
 
           <div class="section-header" data-section="light-bg" style="margin-top: 1rem;">
             <h2>Light Theme Background</h2>
