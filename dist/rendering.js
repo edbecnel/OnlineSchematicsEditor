@@ -982,17 +982,38 @@ export function renderDrawing(gDrawing, drawingPoints, cursor, orthoMode) {
             pts.push(cursor);
         }
     }
+    // Determine preview wire color using the same base setting as legacy wires.
+    // Prefer CSS variable --wire; fallback to white/black depending on theme background.
+    let previewColor = '#c7f284';
+    try {
+        const cssVar = getComputedStyle(document.documentElement).getPropertyValue('--wire').trim();
+        if (cssVar)
+            previewColor = cssVar;
+        // If the resolved color is pure black, flip to white in dark mode for visibility.
+        const bg = getComputedStyle(document.body).backgroundColor;
+        const rgb = bg.match(/\d+/g)?.map(Number) || [0, 0, 0];
+        const [r, g, b] = rgb;
+        const srgb = [r / 255, g / 255, b / 255].map(v => (v <= 0.03928) ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+        const L = 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+        const normalized = (previewColor || '').toLowerCase().replace(/\s+/g, '');
+        if (normalized === '#000000' || normalized === '#000' || normalized === 'black') {
+            previewColor = (L < 0.5) ? '#ffffff' : '#000000';
+        }
+    }
+    catch {
+        /* ignore environment issues; keep fallback */
+    }
     const polyline = document.createElementNS(SVG_NS, 'polyline');
     polyline.setAttribute('points', pts.map(p => `${p.x},${p.y}`).join(' '));
     polyline.setAttribute('fill', 'none');
-    polyline.setAttribute('stroke', 'cyan');
+    polyline.setAttribute('stroke', previewColor);
     polyline.setAttribute('stroke-width', '2');
     polyline.setAttribute('stroke-dasharray', '4 2');
     gDrawing.appendChild(polyline);
     // Draw dots at each vertex
     for (const p of pts) {
         const circle = document.createElementNS(SVG_NS, 'circle');
-        setAttrs(circle, { cx: p.x, cy: p.y, r: 3, fill: 'cyan' });
+        setAttrs(circle, { cx: p.x, cy: p.y, r: 3, fill: previewColor });
         gDrawing.appendChild(circle);
     }
 }

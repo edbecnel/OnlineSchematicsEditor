@@ -5,6 +5,7 @@ export class KiCadRoutingKernel {
     constructor() {
         this.name = 'kicad';
         this.state = { wires: [], junctions: [], pins: [], tolerance: 0.5 };
+        this.snapDelegate = null;
         this.placement = {
             started: false,
             mode: 'HV',
@@ -16,6 +17,10 @@ export class KiCadRoutingKernel {
     getState() { return this.state; }
     init() { }
     dispose() { }
+    // Allow host app to provide snapping implementation (grid/object/junction, etc.)
+    configureSnap(delegate) {
+        this.snapDelegate = delegate;
+    }
     manhattanPath(A, P, mode) {
         if (Math.abs(A.x - P.x) < 1e-6)
             return [{ x: A.x, y: A.y }, { x: A.x, y: P.y }];
@@ -25,7 +30,9 @@ export class KiCadRoutingKernel {
             return [{ x: A.x, y: A.y }, { x: P.x, y: A.y }, { x: P.x, y: P.y }];
         return [{ x: A.x, y: A.y }, { x: A.x, y: P.y }, { x: P.x, y: P.y }];
     }
-    snapToGridOrObject(pos, _snapRadius) {
+    snapToGridOrObject(pos, snapRadius) {
+        if (this.snapDelegate)
+            return this.snapDelegate(pos, snapRadius);
         return { x: pos.x, y: pos.y };
     }
     beginPlacement(start, mode) {

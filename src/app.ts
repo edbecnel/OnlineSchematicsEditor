@@ -4966,7 +4966,10 @@ import {
           }
         })();
         if (isDev) {
-          routingFacade.setKernel(new KiCadRoutingKernel());
+          const ki = new KiCadRoutingKernel();
+          // Use the existing app-level snapping so KiCad routing observes snap settings
+          ki.configureSnap((pos, snapRadius) => snapToGridOrObject(pos as any, snapRadius as any));
+          routingFacade.setKernel(ki);
           console.info('[Routing] KiCad kernel enabled (dev override).');
         } else {
           console.warn('KiCad mode ignored outside dev; staying on legacy adapter');

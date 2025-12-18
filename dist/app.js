@@ -4846,7 +4846,10 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                     }
                 })();
                 if (isDev) {
-                    routingFacade.setKernel(new KiCadRoutingKernel());
+                    const ki = new KiCadRoutingKernel();
+                    // Use the existing app-level snapping so KiCad routing observes snap settings
+                    ki.configureSnap((pos, snapRadius) => snapToGridOrObject(pos, snapRadius));
+                    routingFacade.setKernel(ki);
                     console.info('[Routing] KiCad kernel enabled (dev override).');
                 }
                 else {

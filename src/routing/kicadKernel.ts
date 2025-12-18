@@ -9,6 +9,7 @@ export class KiCadRoutingKernel implements IRoutingKernel {
 	readonly name: RoutingMode = 'kicad';
 
 	private state: RoutingState = { wires: [], junctions: [], pins: [], tolerance: 0.5 };
+	private snapDelegate: ((pos: { x: number; y: number }, snapRadius?: number) => { x: number; y: number }) | null = null;
 	private placement = {
 		started: false,
 		mode: 'HV' as 'HV' | 'VH',
@@ -22,6 +23,11 @@ export class KiCadRoutingKernel implements IRoutingKernel {
 	init(): void { /* no-op */ }
 	dispose(): void { /* no-op */ }
 
+	// Allow host app to provide snapping implementation (grid/object/junction, etc.)
+	configureSnap(delegate: (pos: { x: number; y: number }, snapRadius?: number) => { x: number; y: number }) {
+		this.snapDelegate = delegate;
+	}
+
 	manhattanPath(A: { x: number; y: number }, P: { x: number; y: number }, mode: 'HV' | 'VH') {
 		if (Math.abs(A.x - P.x) < 1e-6) return [{ x: A.x, y: A.y }, { x: A.x, y: P.y }];
 		if (Math.abs(A.y - P.y) < 1e-6) return [{ x: A.x, y: A.y }, { x: P.x, y: A.y }];
@@ -29,7 +35,8 @@ export class KiCadRoutingKernel implements IRoutingKernel {
 		return [{ x: A.x, y: A.y }, { x: A.x, y: P.y }, { x: P.x, y: P.y }];
 	}
 
-	snapToGridOrObject(pos: { x: number; y: number }, _snapRadius?: number) {
+	snapToGridOrObject(pos: { x: number; y: number }, snapRadius?: number) {
+		if (this.snapDelegate) return this.snapDelegate(pos, snapRadius);
 		return { x: pos.x, y: pos.y };
 	}
 
