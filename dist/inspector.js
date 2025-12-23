@@ -1135,7 +1135,7 @@ export function renderInspector(ctx, inspector, inspectorNone) {
         swatchRow.style.flexWrap = 'wrap';
         swatchRow.style.marginTop = '0.5rem';
         const swatches = [
-            '#000000', '#ff0000', '#00ff00', '#0000ff',
+            '#000000', '#ff0000', '#008000', '#0000ff',
             '#ffff00', '#ff00ff', '#00ffff', '#ffffff',
             '#808080', '#800000', '#008000', '#000080'
         ];
@@ -1724,7 +1724,7 @@ function buildColorEditor(ctx, w, swp, holder, chkCustom, syncWidth, syncStyle, 
 function buildSwatchPopover(ctx, w, cIn, aIn, swatchToggle, ensureColorUndo, commitColor) {
     const swatches = [
         ['black', '#000000'],
-        ['red', '#FF0000'], ['green', '#00FF00'], ['blue', '#0000FF'],
+        ['red', '#FF0000'], ['green', '#008000'], ['blue', '#0000FF'],
         ['cyan', '#00FFFF'], ['magenta', '#FF00FF'], ['yellow', '#FFFF00']
     ];
     const popover = document.createElement('div');

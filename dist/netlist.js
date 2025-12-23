@@ -36,7 +36,7 @@ export function resolveWireColor(mode) {
         white: '#ffffff',
         black: '#000000',
         red: 'red',
-        green: 'lime',
+        green: '#008000',
         blue: 'blue',
         yellow: 'yellow',
         magenta: 'magenta',
@@ -298,7 +298,7 @@ export function showNetPropertiesDialog(options) {
     // Color swatch palette popover
     const swatches = [
         ['black', '#000000'],
-        ['red', '#FF0000'], ['green', '#00FF00'], ['blue', '#0000FF'],
+        ['red', '#FF0000'], ['green', '#008000'], ['blue', '#0000FF'],
         ['cyan', '#00FFFF'], ['magenta', '#FF00FF'], ['yellow', '#FFFF00']
     ];
     const popover = document.createElement('div');

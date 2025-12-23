@@ -1106,7 +1106,7 @@ export function renderDrawing(
 
   // Determine preview wire color using the same base setting as legacy wires.
   // Prefer CSS variable --wire; fallback to white/black depending on theme background.
-  let previewColor = '#c7f284';
+  let previewColor = '#008000';
   try {
     const cssVar = getComputedStyle(document.documentElement).getPropertyValue('--wire').trim();
     if (cssVar) previewColor = cssVar;

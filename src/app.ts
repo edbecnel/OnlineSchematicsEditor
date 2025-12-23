@@ -1401,7 +1401,7 @@ import {
   let transistorType: 'npn' | 'pnp' = 'npn';
 
   // Wire color state: default from CSS var, and current palette choice (affects new wires only)
-  const defaultWireColor: string = (getComputedStyle(document.documentElement).getPropertyValue('--wire').trim() || '#c7f284');
+  const defaultWireColor: string = (getComputedStyle(document.documentElement).getPropertyValue('--wire').trim() || '#008000');
   // --- Theme & NetClasses (moved early so redraw() doesn't hit TDZ) ---
   const THEME: Theme = {
     wire: { width: 0.25, type: 'solid', color: cssToRGBA01(defaultWireColor) },
@@ -1425,7 +1425,7 @@ import {
       white: '#ffffff',
       black: '#000000',
       red: 'red',
-      green: 'lime',
+      green: '#008000',
       blue: 'deepskyblue',
       yellow: 'gold',
       magenta: 'magenta',
@@ -8736,7 +8736,7 @@ import {
     (function () {
       const swatches = [
         ['black', '#000000'],
-        ['red', '#FF0000'], ['green', '#00FF00'], ['blue', '#0000FF'],
+        ['red', '#FF0000'], ['green', '#008000'], ['blue', '#0000FF'],
         ['cyan', '#00FFFF'], ['magenta', '#FF00FF'], ['yellow', '#FFFF00']
       ];
       const pal = document.createElement('div'); pal.className = 'palette';
@@ -9548,7 +9548,7 @@ import {
       const junctionColorSwatches = $q<HTMLElement>('#junctionColorSwatches');
       if (junctionColorSwatches) {
         const swatches = [
-          '#000000', '#ff0000', '#00ff00', '#0000ff',
+          '#000000', '#ff0000', '#008000', '#0000ff',
           '#ffff00', '#ff00ff', '#00ffff', '#ffffff',
           '#808080', '#800000', '#008000', '#000080'
         ];

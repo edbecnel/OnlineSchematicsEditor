@@ -55,7 +55,7 @@ export function resolveWireColor(mode: WireColorMode): string {
     white: '#ffffff',
     black: '#000000',
     red: 'red',
-    green: 'lime',
+    green: '#008000',
     blue: 'blue',
     yellow: 'yellow',
     magenta: 'magenta',
@@ -384,7 +384,7 @@ export function showNetPropertiesDialog(options: NetPropertiesDialogOptions): vo
   // Color swatch palette popover
   const swatches: [string, string][] = [
     ['black', '#000000'],
-    ['red', '#FF0000'], ['green', '#00FF00'], ['blue', '#0000FF'],
+    ['red', '#FF0000'], ['green', '#008000'], ['blue', '#0000FF'],
     ['cyan', '#00FFFF'], ['magenta', '#FF00FF'], ['yellow', '#FFFF00']
   ];
   
