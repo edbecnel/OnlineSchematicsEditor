@@ -757,6 +757,8 @@ import {
       seg2FixedEndIndex: number;
       seg1FixedEnd: Point;
       seg2FixedEnd: Point;
+      seg1InitialFixedEnd: Point;
+      seg2InitialFixedEnd: Point;
       hostAxis: 'x' | 'y';
       hostLock: number;
       tempJunctionId?: string;
@@ -4018,6 +4020,8 @@ import {
                 seg2FixedEndIndex: number;
                 seg1FixedEnd: Point;
                 seg2FixedEnd: Point;
+                seg1InitialFixedEnd: Point;
+                seg2InitialFixedEnd: Point;
                 hostAxis: 'x' | 'y';
                 hostLock: number;
                 tempJunctionId?: string;
@@ -4112,6 +4116,8 @@ import {
                         seg2FixedEndIndex,
                         seg1FixedEnd: { x: merge.segment1.points[seg1FixedEndIndex].x, y: merge.segment1.points[seg1FixedEndIndex].y },
                         seg2FixedEnd: { x: merge.segment2.points[seg2FixedEndIndex].x, y: merge.segment2.points[seg2FixedEndIndex].y },
+                        seg1InitialFixedEnd: { x: merge.segment1.points[seg1FixedEndIndex].x, y: merge.segment1.points[seg1FixedEndIndex].y },
+                        seg2InitialFixedEnd: { x: merge.segment2.points[seg2FixedEndIndex].x, y: merge.segment2.points[seg2FixedEndIndex].y },
                         hostAxis,
                         hostLock,
                         tempJunctionId,
@@ -4382,6 +4388,8 @@ import {
                     seg2FixedEndIndex,
                     seg1FixedEnd: { x: merge.segment1.points[seg1FixedEndIndex].x, y: merge.segment1.points[seg1FixedEndIndex].y },
                     seg2FixedEnd: { x: merge.segment2.points[seg2FixedEndIndex].x, y: merge.segment2.points[seg2FixedEndIndex].y },
+                    seg1InitialFixedEnd: { x: merge.segment1.points[seg1FixedEndIndex].x, y: merge.segment1.points[seg1FixedEndIndex].y },
+                    seg2InitialFixedEnd: { x: merge.segment2.points[seg2FixedEndIndex].x, y: merge.segment2.points[seg2FixedEndIndex].y },
                     hostAxis,
                     hostLock,
                     tempJunctionId,
@@ -7291,8 +7299,15 @@ import {
               // Get the "other end" of each segment (the non-junction endpoint)
               const seg1OtherEndIndex = shj.seg1EndIndex === 0 ? seg1.points.length - 1 : 0;
               const seg2OtherEndIndex = shj.seg2EndIndex === 0 ? seg2.points.length - 1 : 0;
-              // Force the far endpoints to remain fixed during drag (prevents translating a host half).
-              // Only the shared junction endpoint is allowed to change.
+              // Baseline endpoints for deciding whether we are extending past an end.
+              // We must NOT permanently overwrite these while dragging (so dragging back inside
+              // restores the original host endpoint position).
+              const seg1BaseEnd = shj.seg1InitialFixedEnd;
+              const seg2BaseEnd = shj.seg2InitialFixedEnd;
+
+              // Default: lock far endpoints to their baseline positions.
+              shj.seg1FixedEnd = { x: seg1BaseEnd.x, y: seg1BaseEnd.y };
+              shj.seg2FixedEnd = { x: seg2BaseEnd.x, y: seg2BaseEnd.y };
               seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
               seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
 
@@ -7307,14 +7322,14 @@ import {
                 // Vertical host: lock X, slide Y
                 const x = shj.hostLock;
                 const y = snap(movedEp.y);
-                const minY = Math.min(seg1OtherEnd.y, seg2OtherEnd.y);
-                const maxY = Math.max(seg1OtherEnd.y, seg2OtherEnd.y);
+                const minY = Math.min(seg1BaseEnd.y, seg2BaseEnd.y);
+                const maxY = Math.max(seg1BaseEnd.y, seg2BaseEnd.y);
 
-                // If the junction is dragged beyond an end, extend that host endpoint to follow.
-                // (KiCad behavior: host end rubber-bands rather than anchoring.)
+                let atEndpoint = false;
                 if (y < minY - 0.1) {
                   // Extend the endpoint at the min side.
-                  if (seg1OtherEnd.y <= seg2OtherEnd.y) {
+                  atEndpoint = true;
+                  if (seg1BaseEnd.y <= seg2BaseEnd.y) {
                     shj.seg1FixedEnd = { x: shj.seg1FixedEnd.x, y };
                     seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
                   } else {
@@ -7324,7 +7339,8 @@ import {
                   newJunctionPt = { x, y };
                 } else if (y > maxY + 0.1) {
                   // Extend the endpoint at the max side.
-                  if (seg1OtherEnd.y >= seg2OtherEnd.y) {
+                  atEndpoint = true;
+                  if (seg1BaseEnd.y >= seg2BaseEnd.y) {
                     shj.seg1FixedEnd = { x: shj.seg1FixedEnd.x, y };
                     seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
                   } else {
@@ -7333,18 +7349,31 @@ import {
                   }
                   newJunctionPt = { x, y };
                 } else {
-                  // Within the original span: clamp.
+                  // Within span: clamp, endpoints remain at their baseline.
                   newJunctionPt = { x, y: Math.max(minY, Math.min(maxY, y)) };
+                }
+
+                // If connection is at a host endpoint, it is no longer a stub junction: hide the junction dot.
+                if (atEndpoint) {
+                  junctions = junctions.filter(j => j.id !== shj.junction.id);
+                  // Also remove the SVG circle immediately if it exists.
+                  const el = gJunctions.querySelector(`[data-junction-id="${shj.junction.id}"]`) as SVGCircleElement | null;
+                  if (el) el.remove();
+                } else {
+                  // Ensure junction is present while in the interior.
+                  if (!junctions.some(j => j.id === shj.junction.id)) junctions.push(shj.junction);
                 }
               } else {
                 // Horizontal host: lock Y, slide X
                 const y = shj.hostLock;
                 const x = snap(movedEp.x);
-                const minX = Math.min(seg1OtherEnd.x, seg2OtherEnd.x);
-                const maxX = Math.max(seg1OtherEnd.x, seg2OtherEnd.x);
+                const minX = Math.min(seg1BaseEnd.x, seg2BaseEnd.x);
+                const maxX = Math.max(seg1BaseEnd.x, seg2BaseEnd.x);
 
+                let atEndpoint = false;
                 if (x < minX - 0.1) {
-                  if (seg1OtherEnd.x <= seg2OtherEnd.x) {
+                  atEndpoint = true;
+                  if (seg1BaseEnd.x <= seg2BaseEnd.x) {
                     shj.seg1FixedEnd = { x, y: shj.seg1FixedEnd.y };
                     seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
                   } else {
@@ -7353,17 +7382,25 @@ import {
                   }
                   newJunctionPt = { x, y };
                 } else if (x > maxX + 0.1) {
-                  if (seg1OtherEnd.x >= seg2OtherEnd.x) {
+                  atEndpoint = true;
+                  if (seg1BaseEnd.x >= seg2BaseEnd.x) {
                     shj.seg1FixedEnd = { x, y: shj.seg1FixedEnd.y };
                     seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
                   } else {
                     shj.seg2FixedEnd = { x, y: shj.seg2FixedEnd.y };
                     seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
-                    seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
                   }
                   newJunctionPt = { x, y };
                 } else {
                   newJunctionPt = { x: Math.max(minX, Math.min(maxX, x)), y };
+                }
+
+                if (atEndpoint) {
+                  junctions = junctions.filter(j => j.id !== shj.junction.id);
+                  const el = gJunctions.querySelector(`[data-junction-id="${shj.junction.id}"]`) as SVGCircleElement | null;
+                  if (el) el.remove();
+                } else {
+                  if (!junctions.some(j => j.id === shj.junction.id)) junctions.push(shj.junction);
                 }
               }
               
@@ -7376,6 +7413,13 @@ import {
               // Keep the junction dot in sync while dragging.
               if (shj.junction) {
                 shj.junction.at = { x: newJunctionPt.x, y: newJunctionPt.y };
+
+                // Update the DOM circle immediately when it exists (we don't redraw on every mousemove).
+                const el = gJunctions.querySelector(`[data-junction-id="${shj.junction.id}"]`) as SVGCircleElement | null;
+                if (el) {
+                  el.setAttribute('cx', String(newJunctionPt.x));
+                  el.setAttribute('cy', String(newJunctionPt.y));
+                }
               }
 
               // If there is already a real connecting wire from a prior drag, keep its host-side
@@ -8680,6 +8724,20 @@ import {
               if (!j.manual) return false;   // never keep non-manual here
               return keepIds.has(j.id);
             });
+
+            // If the final mended point ended up being just an endpoint connection (degree <= 2),
+            // remove the junction dot entirely (KiCad does not keep junction dots at wire endpoints).
+            for (const k of keysToDedup) {
+              const [x, y] = k.split(',').map(Number);
+              const deg = wiresEndingAt({ x, y }).length;
+              if (deg <= 2) {
+                junctions = junctions.filter(j => {
+                  const jk = Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) });
+                  if (jk !== k) return true;
+                  return j.suppressed; // keep only suppression markers at this location
+                });
+              }
+            }
           }
         }
         
