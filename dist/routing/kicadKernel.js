@@ -7,6 +7,7 @@ export class KiCadRoutingKernel {
         this.state = { wires: [], junctions: [], pins: [], tolerance: 0.5 };
         this.connectivity = null;
         this.snapDelegate = null;
+        this.lineDrawingMode = 'orthogonal';
         this.placement = {
             started: false,
             mode: 'HV',
@@ -34,6 +35,10 @@ export class KiCadRoutingKernel {
     configureSnap(delegate) {
         this.snapDelegate = delegate;
     }
+    setLineDrawingMode(mode) {
+        this.lineDrawingMode = mode;
+        // Placement preview will reflect this on next updatePlacement call.
+    }
     manhattanPath(A, P, mode) {
         if (Math.abs(A.x - P.x) < 1e-6)
             return [{ x: A.x, y: A.y }, { x: A.x, y: P.y }];
@@ -58,21 +63,36 @@ export class KiCadRoutingKernel {
     updatePlacement(cursor) {
         const last = this.placement.committed[this.placement.committed.length - 1];
         const cur = this.snapToGridOrObject(cursor);
-        const seg = this.manhattanPath(last, cur, this.placement.mode);
+        let seg;
+        if (this.lineDrawingMode === 'free') {
+            seg = [{ x: last.x, y: last.y }, { x: cur.x, y: cur.y }];
+        }
+        else {
+            seg = this.manhattanPath(last, cur, this.placement.mode);
+        }
         const preview = [...this.placement.committed, ...seg.slice(1)];
         this.placement.lastPreview = preview;
         return { preview };
     }
     commitCorner() {
         const preview = this.placement.lastPreview || this.placement.committed;
-        if (preview.length >= 3) {
-            const bend = preview[preview.length - 2];
-            const end = preview[preview.length - 1];
-            const tail = this.placement.committed[this.placement.committed.length - 1];
-            if (!(tail.x === bend.x && tail.y === bend.y))
-                this.placement.committed.push(bend);
-            if (!(bend.x === end.x && bend.y === end.y))
-                this.placement.committed.push(end);
+        const tail = this.placement.committed[this.placement.committed.length - 1];
+        if (this.lineDrawingMode === 'free') {
+            if (preview.length >= 2) {
+                const end = preview[preview.length - 1];
+                if (!(tail.x === end.x && tail.y === end.y))
+                    this.placement.committed.push(end);
+            }
+        }
+        else {
+            if (preview.length >= 3) {
+                const bend = preview[preview.length - 2];
+                const end = preview[preview.length - 1];
+                if (!(tail.x === bend.x && tail.y === bend.y))
+                    this.placement.committed.push(bend);
+                if (!(bend.x === end.x && bend.y === end.y))
+                    this.placement.committed.push(end);
+            }
         }
         return { points: [...this.placement.committed] };
     }
@@ -88,6 +108,7 @@ export class KiCadRoutingKernel {
     cancelPlacement() {
         this.placement.started = false;
         this.placement.committed = [];
+        this.placement.lastPreview = null;
     }
     dist(a, b) {
         return Math.hypot(a.x - b.x, a.y - b.y);
@@ -194,15 +215,12 @@ export class KiCadRoutingKernel {
         if (w.points.length < 2)
             return { points: w.points };
         const snapped = this.snapToGridOrObject(newPos, this.state.tolerance);
-        // Special-case a 2-point wire: keep it orthogonal by turning it into an L-path when needed.
+        // Special-case a 2-point wire: preserve diagonals (free-angle) by keeping it a 2-point segment.
+        // Only enforce Manhattan when the segment is already orthogonal.
         if (w.points.length === 2) {
-            const other = w.points[endpointIndex === 0 ? 1 : 0];
-            const start = endpointIndex === 0 ? snapped : other;
-            const end = endpointIndex === 0 ? other : snapped;
-            const dx = Math.abs(end.x - start.x);
-            const dy = Math.abs(end.y - start.y);
-            const mode = dx >= dy ? 'HV' : 'VH';
-            w.points = this.normalizePolyline(this.manhattanPath(start, end, mode), { removeColinear: true });
+            w.points[endpointIndex === 0 ? 0 : 1] = { x: snapped.x, y: snapped.y };
+            // If it is orthogonal, keep it as-is; if diagonal, keep it diagonal.
+            w.points = this.normalizePolyline(w.points, { removeColinear: true });
             this.rebuildConnectivity();
             return { points: [...w.points] };
         }
@@ -211,11 +229,11 @@ export class KiCadRoutingKernel {
         if (endpointIndex === 0) {
             const old1 = w.points[1];
             w.points[0] = { x: snapped.x, y: snapped.y };
-            // Preserve the axis of the first segment by shifting the adjacent vertex accordingly.
+            // Preserve axis for orthogonal segments; for diagonal, do not force orthogonality.
             if (old0.x === old1.x) {
                 w.points[1] = { x: w.points[0].x, y: old1.y };
             }
-            else {
+            else if (old0.y === old1.y) {
                 w.points[1] = { x: old1.x, y: w.points[0].y };
             }
         }
@@ -225,7 +243,7 @@ export class KiCadRoutingKernel {
             if (oldPrev.x === oldN.x) {
                 w.points[w.points.length - 2] = { x: w.points[w.points.length - 1].x, y: oldPrev.y };
             }
-            else {
+            else if (oldPrev.y === oldN.y) {
                 w.points[w.points.length - 2] = { x: oldPrev.x, y: w.points[w.points.length - 1].y };
             }
         }

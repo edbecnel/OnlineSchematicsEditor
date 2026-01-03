@@ -370,24 +370,25 @@ function allPinKeys(components: any[], compPinPositions: (c: any) => Point[]): S
   return s;
 }
 
-/**
- * Determine axis alignment at a wire endpoint (x or y axis).
- */
-function axisAtEndpoint(w: Wire, endIndex: number): 'x' | 'y' | null {
-  const n = w.points.length;
-  if (n < 2) return null;
-  const a = w.points[endIndex];
-  const b = (endIndex === 0) ? w.points[1] : w.points[n - 2];
-  if (a.y === b.y) return 'x';
-  if (a.x === b.x) return 'y';
-  return null;
+function areOppositeCollinear(a: { dx: number; dy: number }, b: { dx: number; dy: number }, eps = 1e-4): boolean {
+  const cross = a.dx * b.dy - a.dy * b.dx;
+  const na = Math.hypot(a.dx, a.dy);
+  const nb = Math.hypot(b.dx, b.dy);
+  if (na === 0 || nb === 0) return false;
+  if (Math.abs(cross) > eps * na * nb) return false;
+  const dot = a.dx * b.dx + a.dy * b.dy;
+  return dot < 0;
+}
+
+function wireNetId(w: Wire): string {
+  return (w as any).netId || 'default';
 }
 
 /**
  * Build a map of wire endpoints grouped by position key.
  */
-function endpointPairsByKey(wires: Wire[]): Map<string, Array<{ w: Wire, endIndex: number, axis: 'x' | 'y' | null, other: Point }>> {
-  const map = new Map<string, Array<{ w: Wire, endIndex: number, axis: 'x' | 'y' | null, other: Point }>>();
+function endpointPairsByKey(wires: Wire[], snapToBaseScalar: (v: number) => number): Map<string, Array<{ w: Wire, endIndex: number, dir: { dx: number; dy: number } | null, other: Point }>> {
+  const map = new Map<string, Array<{ w: Wire, endIndex: number, dir: { dx: number; dy: number } | null, other: Point }>>();
   for (const w of wires) {
     const n = w.points.length;
     if (n < 2) continue;
@@ -395,10 +396,16 @@ function endpointPairsByKey(wires: Wire[]): Map<string, Array<{ w: Wire, endInde
     for (const endIndex of ends) {
       const p = w.points[endIndex];
       const key = keyPt({ x: Math.round(p.x), y: Math.round(p.y) });
-      const ax = axisAtEndpoint(w, endIndex);
-      const other = (endIndex === 0) ? w.points[1] : w.points[n - 2];
+      const a0 = w.points[endIndex];
+      const b0 = (endIndex === 0) ? w.points[1] : w.points[n - 2];
+      const a = { x: snapToBaseScalar(a0.x), y: snapToBaseScalar(a0.y) };
+      const b = { x: snapToBaseScalar(b0.x), y: snapToBaseScalar(b0.y) };
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dir = (dx === 0 && dy === 0) ? null : { dx, dy };
+      const other = b;
       if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push({ w, endIndex, axis: ax, other });
+      map.get(key)!.push({ w, endIndex, dir, other });
     }
   }
   return map;
@@ -435,7 +442,7 @@ export function unifyInlineWires(
     }
     seen.add(sig);
 
-    const pairs = endpointPairsByKey(wires);
+    const pairs = endpointPairsByKey(wires, snapToBaseScalar);
     
     // Try to merge exactly-two-endpoint nodes that are collinear and not at a component pin.
     for (const [key, list] of pairs) {
@@ -443,8 +450,8 @@ export function unifyInlineWires(
       if (list.length !== 2) continue;         // only consider clean 1:1 joins
       const a = list[0], b = list[1];
       if (a.w === b.w) continue;               // ignore self-joins
-      if (!a.axis || !b.axis) continue;        // must both be axis-aligned
-      if (a.axis !== b.axis) continue;         // must be the same axis
+      if (!a.dir || !b.dir) continue;
+      if (!areOppositeCollinear(a.dir, b.dir)) continue;
 
       // Choose the "existing/first" wire as primary by their order in the wires array
       const idxA = wires.indexOf(a.w);
@@ -455,6 +462,8 @@ export function unifyInlineWires(
       
       const primary = (idxA <= idxB) ? a : b;
       const secondary = (primary === a) ? b : a;
+
+      if (wireNetId(primary.w) !== wireNetId(secondary.w)) continue;
 
       // Orient primary (left) so it ENDS at the join, secondary (right) so it STARTS at the join
       const lp = primary.w.points.map(p => ({ x: snapToBaseScalar(p.x), y: snapToBaseScalar(p.y) }));

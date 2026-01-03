@@ -475,6 +475,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
     // Crosshair display mode: 'full' or 'short'
     let crosshairMode = localStorage.getItem('crosshair.mode') || 'full';
     let connectionHint = null;
+    let kicadTrackingHint = null;
     // Visual shift indicator for temporary ortho mode
     let shiftOrthoVisualActive = false;
     // Visual indicator when endpoint circle overrides ortho mode
@@ -1911,11 +1912,16 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         function toggleOrtho() {
             orthoMode = !orthoMode;
             saveOrthoMode();
+            // Keep routing kernel preview mode in sync with Ortho toggle.
+            // Legacy ignores this; KiCad kernel uses it to switch between manhattan vs straight preview.
+            routingFacade.setLineDrawingMode(orthoMode ? 'orthogonal' : 'free');
             updateOrthoButton();
         }
         if (orthoBtn) {
             orthoBtn.addEventListener('click', () => { toggleOrtho(); });
             updateOrthoButton();
+            // Apply persisted state on startup.
+            routingFacade.setLineDrawingMode(orthoMode ? 'orthogonal' : 'free');
         }
         window.addEventListener('keydown', (e) => {
             if (e.altKey || e.ctrlKey || e.metaKey)
@@ -2168,6 +2174,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             // Clear any active connection hint when disabling tracking
             if (!trackingMode) {
                 connectionHint = null;
+                kicadTrackingHint = null;
                 renderConnectionHint();
             }
         }
@@ -3641,11 +3648,161 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                         if (mode === 'move' && currentSel && currentSel.kind === 'wire' && currentSel.id === w.id) {
                             const p0 = { x: snapToBaseScalar(w.points[0].x), y: snapToBaseScalar(w.points[0].y) };
                             const p1 = { x: snapToBaseScalar(w.points[w.points.length - 1].x), y: snapToBaseScalar(w.points[w.points.length - 1].y) };
+                            // Determine whether this is an orthogonal wire (existing stretch behavior) or a free-angle wire.
+                            const isHorizontal = Math.abs(p0.y - p1.y) < 1;
+                            const isVertical = Math.abs(p0.x - p1.x) < 1;
+                            const stretchKind = (isHorizontal || isVertical) ? 'orthogonal' : 'free';
+                            // Helper: detect if a wire endpoint lies on the interior of another wire segment (T-junction).
+                            // Returns the host wire id + segment index.
+                            const findStubHost = (pt, extraExcludeWireIds, includeSegmentEndpoints = false) => {
+                                const EPS = 0.01;
+                                const tol = 1.0;
+                                let best = null;
+                                for (const ww of wires) {
+                                    if (ww.id === w.id)
+                                        continue;
+                                    if (extraExcludeWireIds && extraExcludeWireIds.has(ww.id))
+                                        continue;
+                                    for (let si = 0; si < ww.points.length - 1; si++) {
+                                        const a = ww.points[si];
+                                        const b = ww.points[si + 1];
+                                        const isVert = Math.abs(a.x - b.x) < EPS;
+                                        const isHoriz = Math.abs(a.y - b.y) < EPS;
+                                        if (isVert) {
+                                            const minY = Math.min(a.y, b.y);
+                                            const maxY = Math.max(a.y, b.y);
+                                            if (pt.y < minY - tol || pt.y > maxY + tol)
+                                                continue;
+                                            const d = Math.abs(pt.x - a.x);
+                                            if (d > tol)
+                                                continue;
+                                            // Exclude near segment endpoints unless explicitly requested.
+                                            if (!includeSegmentEndpoints) {
+                                                // (avoid treating endpoint-to-endpoint as a stub)
+                                                if (Math.hypot(pt.x - a.x, pt.y - a.y) <= tol)
+                                                    continue;
+                                                if (Math.hypot(pt.x - b.x, pt.y - b.y) <= tol)
+                                                    continue;
+                                            }
+                                            const { proj, t } = Geometry.projectPointToSegmentWithT(pt, a, b);
+                                            const hostT = Math.max(0, Math.min(1, t));
+                                            const hostPt = { x: proj.x, y: proj.y };
+                                            if (!best || d < best.d)
+                                                best = { hostWireId: ww.id, hostSegIndex: si, d, hostT, hostPt };
+                                        }
+                                        else if (isHoriz) {
+                                            const minX = Math.min(a.x, b.x);
+                                            const maxX = Math.max(a.x, b.x);
+                                            if (pt.x < minX - tol || pt.x > maxX + tol)
+                                                continue;
+                                            const d = Math.abs(pt.y - a.y);
+                                            if (d > tol)
+                                                continue;
+                                            if (!includeSegmentEndpoints) {
+                                                if (Math.hypot(pt.x - a.x, pt.y - a.y) <= tol)
+                                                    continue;
+                                                if (Math.hypot(pt.x - b.x, pt.y - b.y) <= tol)
+                                                    continue;
+                                            }
+                                            const { proj, t } = Geometry.projectPointToSegmentWithT(pt, a, b);
+                                            const hostT = Math.max(0, Math.min(1, t));
+                                            const hostPt = { x: proj.x, y: proj.y };
+                                            if (!best || d < best.d)
+                                                best = { hostWireId: ww.id, hostSegIndex: si, d, hostT, hostPt };
+                                        }
+                                        else {
+                                            // Diagonal host: use projection distance.
+                                            const { proj, t } = Geometry.projectPointToSegmentWithT(pt, a, b);
+                                            if (!includeSegmentEndpoints && (t <= 0 || t >= 1))
+                                                continue;
+                                            const d = Math.hypot(pt.x - proj.x, pt.y - proj.y);
+                                            if (d > tol)
+                                                continue;
+                                            const hostT = Math.max(0, Math.min(1, t));
+                                            const hostPt = { x: proj.x, y: proj.y };
+                                            if (!best || d < best.d)
+                                                best = { hostWireId: ww.id, hostSegIndex: si, d, hostT, hostPt };
+                                        }
+                                    }
+                                }
+                                return best ? { hostWireId: best.hostWireId, hostSegIndex: best.hostSegIndex, hostT: best.hostT, hostPt: best.hostPt } : null;
+                            };
+                            const stubbedInto = [];
+                            if (stretchKind === 'free') {
+                                const ep0 = w.points[0];
+                                const ep1 = w.points[w.points.length - 1];
+                                // If there is already an ortho extension (rubber-band) wire connected to the moved wire,
+                                // its endpoint can coincide with the moved endpoint. On subsequent drags we must NOT treat
+                                // that extension wire as the "host"; instead we keep constraining its far end to the true host.
+                                // Detect such extension wires and exclude them from host detection.
+                                const rubberBandExclude = new Set();
+                                const markRubberBandAt = (pt) => {
+                                    const tol = 1.0;
+                                    for (const ww of wires) {
+                                        if (ww.id === w.id)
+                                            continue;
+                                        if (ww.points.length !== 2)
+                                            continue;
+                                        const a = ww.points[0];
+                                        const b = ww.points[ww.points.length - 1];
+                                        const atA = (Math.hypot(a.x - pt.x, a.y - pt.y) <= tol);
+                                        const atB = (Math.hypot(b.x - pt.x, b.y - pt.y) <= tol);
+                                        if (!atA && !atB)
+                                            continue;
+                                        const far = atA ? b : a;
+                                        const stub = findStubHost(far, new Set([ww.id]), true);
+                                        if (stub)
+                                            rubberBandExclude.add(ww.id);
+                                    }
+                                };
+                                markRubberBandAt(ep0);
+                                markRubberBandAt(ep1);
+                                const s0 = findStubHost(ep0, rubberBandExclude, true);
+                                if (s0) {
+                                    const host = wires.find(ww => ww.id === s0.hostWireId);
+                                    const a = host ? host.points[s0.hostSegIndex] : null;
+                                    const b = host ? host.points[s0.hostSegIndex + 1] : null;
+                                    const tol = 1.0;
+                                    let attach = 'segment';
+                                    let hostEndIndex;
+                                    if (host && a && b) {
+                                        const da = Math.hypot(ep0.x - a.x, ep0.y - a.y);
+                                        const db = Math.hypot(ep0.x - b.x, ep0.y - b.y);
+                                        if (da <= tol || db <= tol) {
+                                            attach = 'endpoint';
+                                            hostEndIndex = (da <= db) ? s0.hostSegIndex : (s0.hostSegIndex + 1);
+                                        }
+                                    }
+                                    stubbedInto.push({ which: 'start', hostWireId: s0.hostWireId, hostSegIndex: s0.hostSegIndex, hostT: s0.hostT, hostPt: s0.hostPt, attach, hostEndIndex });
+                                }
+                                const s1 = findStubHost(ep1, rubberBandExclude, true);
+                                if (s1) {
+                                    const host = wires.find(ww => ww.id === s1.hostWireId);
+                                    const a = host ? host.points[s1.hostSegIndex] : null;
+                                    const b = host ? host.points[s1.hostSegIndex + 1] : null;
+                                    const tol = 1.0;
+                                    let attach = 'segment';
+                                    let hostEndIndex;
+                                    if (host && a && b) {
+                                        const da = Math.hypot(ep1.x - a.x, ep1.y - a.y);
+                                        const db = Math.hypot(ep1.x - b.x, ep1.y - b.y);
+                                        if (da <= tol || db <= tol) {
+                                            attach = 'endpoint';
+                                            hostEndIndex = (da <= db) ? s1.hostSegIndex : (s1.hostSegIndex + 1);
+                                        }
+                                    }
+                                    stubbedInto.push({ which: 'end', hostWireId: s1.hostWireId, hostSegIndex: s1.hostSegIndex, hostT: s1.hostT, hostPt: s1.hostPt, attach, hostEndIndex });
+                                }
+                            }
+                            const excludeHostAtStart = new Set(stubbedInto.filter(s => s.which === 'start').map(s => s.hostWireId));
+                            const excludeHostAtEnd = new Set(stubbedInto.filter(s => s.which === 'end').map(s => s.hostWireId));
                             // Find wires connected at start point
                             // If a junction (manual or automatic) exists at p0, do not treat wires as connected for stretching
                             const hasJunctionAtStart = junctions.some(j => Math.abs(j.at.x - p0.x) < 1 && Math.abs(j.at.y - p0.y) < 1);
                             const connectedAtStart = hasJunctionAtStart ? [] : wires.filter(wire => {
                                 if (wire.id === w.id)
+                                    return false;
+                                if (stretchKind === 'free' && excludeHostAtStart.has(wire.id))
                                     return false;
                                 const wireStart = wire.points[0];
                                 const wireEnd = wire.points[wire.points.length - 1];
@@ -3665,6 +3822,8 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                             const connectedAtEnd = hasJunctionAtEnd ? [] : wires.filter(wire => {
                                 if (wire.id === w.id)
                                     return false;
+                                if (stretchKind === 'free' && excludeHostAtEnd.has(wire.id))
+                                    return false;
                                 const wireStart = wire.points[0];
                                 const wireEnd = wire.points[wire.points.length - 1];
                                 return (Math.hypot(wireStart.x - p1.x, wireStart.y - p1.y) < 1) ||
@@ -3676,10 +3835,40 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                                     : { x: wire.points[wire.points.length - 1].x, y: wire.points[wire.points.length - 1].y };
                                 return { wire, isStart, originalPoint };
                             });
-                            // Determine wire axis
-                            const isHorizontal = Math.abs(p0.y - p1.y) < 1;
-                            const isVertical = Math.abs(p0.x - p1.x) < 1;
+                            // Determine wire axis (only meaningful for orthogonal stretch)
                             const wireAxis = isHorizontal ? 'x' : 'y';
+                            // For free-angle moves: detect any already-existing rubber-band wires connected to this wire,
+                            // whose far end is stubbed into a host wire segment (endpoint-on-segment).
+                            const slidingRubberBands = [];
+                            if (stretchKind === 'free') {
+                                const considerConn = (which, conn) => {
+                                    const rubber = conn.wire;
+                                    const movingEndIndex = conn.isStart ? 0 : (rubber.points.length - 1);
+                                    const hostEndIndex = conn.isStart ? (rubber.points.length - 1) : 0;
+                                    const hostEndPt = rubber.points[hostEndIndex];
+                                    // If there's an explicit junction dot at the far end, treat it as anchored (no sliding).
+                                    const hasExplicitJunction = junctions.some(j => Math.abs(j.at.x - hostEndPt.x) < 1.0 && Math.abs(j.at.y - hostEndPt.y) < 1.0);
+                                    if (hasExplicitJunction)
+                                        return;
+                                    const stub = findStubHost(hostEndPt, new Set([rubber.id]), true);
+                                    if (!stub)
+                                        return;
+                                    slidingRubberBands.push({
+                                        which,
+                                        wire: rubber,
+                                        movingEndIndex,
+                                        hostEndIndex,
+                                        hostWireId: stub.hostWireId,
+                                        hostSegIndex: stub.hostSegIndex,
+                                        hostT: stub.hostT,
+                                        hostPt: stub.hostPt
+                                    });
+                                };
+                                for (const conn of connectedAtStart)
+                                    considerConn('start', conn);
+                                for (const conn of connectedAtEnd)
+                                    considerConn('end', conn);
+                            }
                             // Find 2-pin components that have at least one pin at the wire endpoints OR on connected wires OR on the wire itself
                             const componentsOnWire = components.filter(comp => {
                                 if (!['resistor', 'capacitor', 'inductor', 'diode', 'battery', 'ac'].includes(comp.type)) {
@@ -3799,11 +3988,14 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                                 }
                             }
                             wireStretchState = {
+                                kind: stretchKind,
                                 wire: w,
                                 startMousePos: svgPoint(e),
                                 originalPoints: w.points.map(pt => ({ x: pt.x, y: pt.y })),
                                 originalP0: p0,
                                 originalP1: p1,
+                                stubbedInto,
+                                slidingRubberBands,
                                 connectedWiresStart: connectedAtStart,
                                 connectedWiresEnd: connectedAtEnd,
                                 componentsOnWire,
@@ -4864,6 +5056,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 const ki = new KiCadRoutingKernel();
                 // Use the existing app-level snapping so KiCad routing observes snap settings
                 ki.configureSnap((pos, snapRadius) => snapToGridOrObject(pos, snapRadius));
+                ki.setLineDrawingMode?.(orthoMode ? 'orthogonal' : 'free');
                 routingFacade.setKernel(ki);
                 console.info('[Routing] KiCad kernel enabled via ?routing=kicad.');
             }
@@ -5281,6 +5474,26 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             return best;
         return null;
     }
+    // Find nearest anchor by true (euclidean) distance in screen pixels.
+    // Use this for "start from endpoint/pin" behavior where the start must be fully anchored.
+    function nearestAnchorToEuclid(pt, thresholdPx = 10) {
+        const anchors = collectAnchors();
+        const scale = userScale();
+        let best = null;
+        let bestD = Infinity;
+        for (const a of anchors) {
+            const dx = (a.x - pt.x) * scale;
+            const dy = (a.y - pt.y) * scale;
+            const d = Math.hypot(dx, dy);
+            if (d < bestD) {
+                bestD = d;
+                best = a;
+            }
+        }
+        if (bestD <= thresholdPx)
+            return best;
+        return null;
+    }
     // Debug helper: dump anchors, overlay rects, and wire endpoints to console
     function debugDumpAnchors() {
         try {
@@ -5306,6 +5519,12 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             // Lock to whichever axis is closer
             const dx = Math.abs(a.x - p.x) * scale;
             const dy = Math.abs(a.y - p.y) * scale;
+            // If we're close in BOTH axes, treat this like an endpoint/pin snap: anchor exactly.
+            // This avoids the start point drifting to the grid when the user is trying to start
+            // a new wire from the end of an existing wire.
+            if (dx <= thresholdPx && dy <= thresholdPx) {
+                return { x: a.x, y: a.y };
+            }
             if (dx < dy) {
                 // Closer in X - lock X to anchor, snap Y to grid
                 return { x: a.x, y: snap(p.y) };
@@ -5545,8 +5764,16 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             return;
         }
         let endpointClicked = null;
+        let endpointClickedWireId = null;
+        let endpointClickedWireEndIndex = null;
         if (tgt && (tgt.tagName === 'rect' || tgt.tagName === 'circle') && tgt.endpoint) {
             endpointClicked = tgt.endpoint;
+            if (typeof tgt.wireId === 'string') {
+                endpointClickedWireId = tgt.wireId;
+            }
+            if (typeof tgt.endpointIndex === 'number') {
+                endpointClickedWireEndIndex = tgt.endpointIndex;
+            }
         }
         // For wire clicks: Use T-junction smart snapping to properly align with wire segments
         // This works for both Manhattan and non-Manhattan modes - it preserves wire coordinates
@@ -5913,15 +6140,85 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         if (mode === 'wire') {
             // start drawing if not active, else add point
             if (!drawing.active) {
+                // For starting a new wire: if the user is clicking near an existing wire endpoint or pin,
+                // anchor the start point EXACTLY to that anchor so it can't drift.
+                // Otherwise, fall back to T-junction snapping behavior.
+                let startX = x;
+                let startY = y;
+                if (!endpointClicked) {
+                    const a = nearestAnchorToEuclid({ x: p.x, y: p.y }, 10);
+                    if (a) {
+                        startX = a.x;
+                        startY = a.y;
+                    }
+                    else {
+                        const tj = snapPointForTJunction({ x: p.x, y: p.y });
+                        startX = tj.x;
+                        startY = tj.y;
+                    }
+                }
                 // Use the T-junction smart snap point (x, y) which already handles wire alignment
                 drawing.active = true;
-                drawing.points = [{ x, y }];
-                drawing.cursor = { x, y };
+                drawing.points = [{ x: startX, y: startY }];
+                drawing.cursor = { x: startX, y: startY };
                 if (window.routingKernelMode === 'kicad') {
+                    const minPerpDelta = (snapMode === 'off') ? 1 : (CURRENT_SNAP_USER_UNITS || baseSnapUser());
                     // If we started from the interior of an existing segment, lock the first
                     // segment to be perpendicular to that segment.
                     kicadFirstSegmentPerpLock = null;
-                    const start = { x, y };
+                    const start = { x: startX, y: startY };
+                    // If we started from a wire endpoint, prevent dragging a colinear/coincident
+                    // first segment along that wire until we move away by at least one snap step.
+                    // This matches junction-like behavior: you must "pull away" first.
+                    let beganPlacement = false;
+                    if (endpointClickedWireId && typeof endpointClickedWireEndIndex === 'number') {
+                        const w = wires.find(ww => ww.id === endpointClickedWireId);
+                        if (w && w.points && w.points.length >= 2) {
+                            const endIdx = Math.max(0, Math.min(w.points.length - 1, endpointClickedWireEndIndex));
+                            const adjIdx = (endIdx === 0) ? 1 : (endIdx - 1);
+                            const a = w.points[endIdx];
+                            const b = w.points[adjIdx];
+                            const segIsHorizontal = Math.abs(a.y - b.y) < 0.01;
+                            const segIsVertical = Math.abs(a.x - b.x) < 0.01;
+                            if (segIsHorizontal) {
+                                kicadFirstSegmentPerpLock = { lockAxis: 'x', fixed: start.x, minPerpDelta };
+                                routingFacade.beginPlacement(start, 'VH');
+                                beganPlacement = true;
+                            }
+                            else if (segIsVertical) {
+                                kicadFirstSegmentPerpLock = { lockAxis: 'y', fixed: start.y, minPerpDelta };
+                                routingFacade.beginPlacement(start, 'HV');
+                                beganPlacement = true;
+                            }
+                        }
+                    }
+                    // Fallback: if we didn't click an endpoint marker but still started at a wire endpoint,
+                    // apply the same protection (best-effort).
+                    if (!beganPlacement) {
+                        const ep = findWireEndpointNear(start, 1);
+                        if (ep && ep.w && ep.w.points && ep.w.points.length >= 2) {
+                            const endIdx = ep.endIndex;
+                            const adjIdx = (endIdx === 0) ? 1 : (endIdx - 1);
+                            const a = ep.w.points[endIdx];
+                            const b = ep.w.points[adjIdx];
+                            const segIsHorizontal = Math.abs(a.y - b.y) < 0.01;
+                            const segIsVertical = Math.abs(a.x - b.x) < 0.01;
+                            if (segIsHorizontal) {
+                                kicadFirstSegmentPerpLock = { lockAxis: 'x', fixed: start.x, minPerpDelta };
+                                routingFacade.beginPlacement(start, 'VH');
+                                beganPlacement = true;
+                            }
+                            else if (segIsVertical) {
+                                kicadFirstSegmentPerpLock = { lockAxis: 'y', fixed: start.y, minPerpDelta };
+                                routingFacade.beginPlacement(start, 'HV');
+                                beganPlacement = true;
+                            }
+                        }
+                    }
+                    if (beganPlacement) {
+                        // Placement started; the pointermove handler will enforce the lock.
+                        return;
+                    }
                     const hit = nearestSegmentAtPoint(start, 1);
                     if (hit && hit.w && typeof hit.idx === 'number') {
                         const a = hit.w.points[hit.idx];
@@ -5935,12 +6232,12 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                             const segIsVertical = Math.abs(a.x - b.x) < 0.01;
                             if (segIsHorizontal) {
                                 // Horizontal base: constrain cursor X to start.x => vertical stub.
-                                kicadFirstSegmentPerpLock = { lockAxis: 'x', fixed: start.x, minPerpDelta: 1 };
+                                kicadFirstSegmentPerpLock = { lockAxis: 'x', fixed: start.x, minPerpDelta };
                                 routingFacade.beginPlacement(start, 'VH');
                             }
                             else if (segIsVertical) {
                                 // Vertical base: constrain cursor Y to start.y => horizontal stub.
-                                kicadFirstSegmentPerpLock = { lockAxis: 'y', fixed: start.y, minPerpDelta: 1 };
+                                kicadFirstSegmentPerpLock = { lockAxis: 'y', fixed: start.y, minPerpDelta };
                                 routingFacade.beginPlacement(start, 'HV');
                             }
                             else {
@@ -6129,6 +6426,327 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 const p1 = wireStretchState.originalP1;
                 const isHorizontal = Math.abs(p0.y - p1.y) < 1;
                 const isVertical = Math.abs(p0.x - p1.x) < 1;
+                // Free-angle wire drag: translate the entire wire (and any directly connected wire endpoints).
+                if (wireStretchState.kind === 'free' && !isHorizontal && !isVertical) {
+                    const deltaX = p.x - wireStretchState.startMousePos.x;
+                    const deltaY = p.y - wireStretchState.startMousePos.y;
+                    // Snap the translation by snapping the first point's target.
+                    const base = wireStretchState.originalPoints[0] || { x: p0.x, y: p0.y };
+                    const target = { x: snap(base.x + deltaX), y: snap(base.y + deltaY) };
+                    const dx = target.x - base.x;
+                    const dy = target.y - base.y;
+                    // Move the dragged wire.
+                    w.points = wireStretchState.originalPoints.map(pt => ({ x: pt.x + dx, y: pt.y + dy }));
+                    // Rubber-band ghost for endpoints that were stubbed into another wire (T-junction sliding).
+                    wireStretchState.ghostConnectingWires = [];
+                    const rbByWhich = new Map();
+                    for (const rb of wireStretchState.slidingRubberBands) {
+                        if (!rbByWhich.has(rb.which))
+                            rbByWhich.set(rb.which, rb);
+                    }
+                    for (const stub of wireStretchState.stubbedInto) {
+                        const host = wires.find(ww => ww.id === stub.hostWireId);
+                        if (!host)
+                            continue;
+                        if (stub.hostSegIndex < 0 || stub.hostSegIndex >= host.points.length - 1)
+                            continue;
+                        const a = host.points[stub.hostSegIndex];
+                        const b = host.points[stub.hostSegIndex + 1];
+                        const movedEp = (stub.which === 'start') ? w.points[0] : w.points[w.points.length - 1];
+                        const forcePerp = (orthoMode || globalShiftDown);
+                        const EPS = 0.01;
+                        const isVert = Math.abs(a.x - b.x) < EPS;
+                        const isHoriz = Math.abs(a.y - b.y) < EPS;
+                        const hostLen = host.points.length;
+                        let q;
+                        // If a rubber-band wire already exists for this endpoint, keep using it.
+                        // Do NOT create additional perpendicular segments between the rubber-band and the stub.
+                        const existingRb = rbByWhich.get(stub.which);
+                        if (existingRb) {
+                            if (stub.attach === 'endpoint' && stub.hostEndIndex !== undefined) {
+                                const endIdx = stub.hostEndIndex;
+                                const hasExplicitJunction = junctions.some(j => Math.abs(j.at.x - host.points[endIdx].x) < 1.0 && Math.abs(j.at.y - host.points[endIdx].y) < 1.0);
+                                if (!hasExplicitJunction) {
+                                    if (!forcePerp) {
+                                        host.points[endIdx] = { x: movedEp.x, y: movedEp.y };
+                                        updateWireDOM(host);
+                                        q = { x: movedEp.x, y: movedEp.y };
+                                    }
+                                    else {
+                                        const neighIdx = (endIdx === 0) ? 1 : (endIdx - 1);
+                                        const neigh = host.points[neighIdx];
+                                        const ex = host.points[endIdx].x;
+                                        const ey = host.points[endIdx].y;
+                                        const segVert = Math.abs(neigh.x - ex) < EPS;
+                                        const segHoriz = Math.abs(neigh.y - ey) < EPS;
+                                        if (segVert) {
+                                            const yRaw = snap(movedEp.y);
+                                            host.points[endIdx] = { x: ex, y: yRaw };
+                                            updateWireDOM(host);
+                                            q = { x: ex, y: yRaw };
+                                        }
+                                        else if (segHoriz) {
+                                            const xRaw = snap(movedEp.x);
+                                            host.points[endIdx] = { x: xRaw, y: ey };
+                                            updateWireDOM(host);
+                                            q = { x: xRaw, y: ey };
+                                        }
+                                        else {
+                                            const vx = neigh.x - ex;
+                                            const vy = neigh.y - ey;
+                                            const denom = (vx * vx + vy * vy);
+                                            if (denom < 1e-9) {
+                                                q = { x: ex, y: ey };
+                                            }
+                                            else {
+                                                const t = ((movedEp.x - ex) * vx + (movedEp.y - ey) * vy) / denom;
+                                                q = { x: ex + vx * t, y: ey + vy * t };
+                                                host.points[endIdx] = { x: q.x, y: q.y };
+                                                updateWireDOM(host);
+                                            }
+                                        }
+                                    }
+                                    // Keep the existing rubber-band wire connected: host end follows q.
+                                    existingRb.wire.points[existingRb.hostEndIndex] = { x: q.x, y: q.y };
+                                    updateWireDOM(existingRb.wire);
+                                }
+                            }
+                            // Segment-attach case is handled by the existing rubber-band wire update later.
+                            continue;
+                        }
+                        if (stub.attach === 'endpoint' && stub.hostEndIndex !== undefined) {
+                            // Endpoint-to-endpoint: the stubbed wire controls the host wire endpoint.
+                            // Keep the host endpoint attached across drags by actively moving it.
+                            const endIdx = stub.hostEndIndex;
+                            // If there is an explicit junction dot at this endpoint, treat it as anchored.
+                            const hasExplicitJunction = junctions.some(j => Math.abs(j.at.x - host.points[endIdx].x) < 1.0 && Math.abs(j.at.y - host.points[endIdx].y) < 1.0);
+                            if (!hasExplicitJunction) {
+                                if (!forcePerp) {
+                                    // Ortho off: coincide with moved endpoint (free stretch).
+                                    host.points[endIdx] = { x: movedEp.x, y: movedEp.y };
+                                    updateWireDOM(host);
+                                    q = { x: movedEp.x, y: movedEp.y };
+                                }
+                                else {
+                                    // Ortho on: move endpoint along host's adjacent segment direction so the rubber-band is perpendicular.
+                                    const neighIdx = (endIdx === 0) ? 1 : (endIdx - 1);
+                                    const neigh = host.points[neighIdx];
+                                    const ex = host.points[endIdx].x;
+                                    const ey = host.points[endIdx].y;
+                                    const segVert = Math.abs(neigh.x - ex) < EPS;
+                                    const segHoriz = Math.abs(neigh.y - ey) < EPS;
+                                    if (segVert) {
+                                        const yRaw = snap(movedEp.y);
+                                        host.points[endIdx] = { x: ex, y: yRaw };
+                                        updateWireDOM(host);
+                                        q = { x: ex, y: yRaw };
+                                    }
+                                    else if (segHoriz) {
+                                        const xRaw = snap(movedEp.x);
+                                        host.points[endIdx] = { x: xRaw, y: ey };
+                                        updateWireDOM(host);
+                                        q = { x: xRaw, y: ey };
+                                    }
+                                    else {
+                                        // Diagonal host: move endpoint to the projection on the infinite adjacent segment line.
+                                        const vx = neigh.x - ex;
+                                        const vy = neigh.y - ey;
+                                        const denom = (vx * vx + vy * vy);
+                                        if (denom < 1e-9) {
+                                            q = { x: ex, y: ey };
+                                        }
+                                        else {
+                                            const t = ((movedEp.x - ex) * vx + (movedEp.y - ey) * vy) / denom;
+                                            q = { x: ex + vx * t, y: ey + vy * t };
+                                            host.points[endIdx] = { x: q.x, y: q.y };
+                                            updateWireDOM(host);
+                                        }
+                                    }
+                                }
+                            }
+                            else {
+                                q = { x: host.points[endIdx].x, y: host.points[endIdx].y };
+                            }
+                            // Visual rubber-band from the host endpoint to the moved endpoint (may be zero-length when coincident).
+                            wireStretchState.ghostConnectingWires.push({ from: { x: q.x, y: q.y }, to: { x: movedEp.x, y: movedEp.y } });
+                            continue;
+                        }
+                        if (forcePerp) {
+                            // Ortho active: keep rubber-band segment perpendicular to the host wire.
+                            if (isVert) {
+                                const yRaw = snap(movedEp.y);
+                                const minY = Math.min(a.y, b.y);
+                                const maxY = Math.max(a.y, b.y);
+                                const minIdx = (a.y <= b.y) ? stub.hostSegIndex : (stub.hostSegIndex + 1);
+                                const maxIdx = (a.y <= b.y) ? (stub.hostSegIndex + 1) : stub.hostSegIndex;
+                                const canExtendMin = (minIdx === 0) || (minIdx === hostLen - 1);
+                                const canExtendMax = (maxIdx === 0) || (maxIdx === hostLen - 1);
+                                if (yRaw < minY && canExtendMin) {
+                                    host.points[minIdx] = { x: host.points[minIdx].x, y: yRaw };
+                                    updateWireDOM(host);
+                                }
+                                else if (yRaw > maxY && canExtendMax) {
+                                    host.points[maxIdx] = { x: host.points[maxIdx].x, y: yRaw };
+                                    updateWireDOM(host);
+                                }
+                                q = { x: a.x, y: yRaw };
+                            }
+                            else if (isHoriz) {
+                                const xRaw = snap(movedEp.x);
+                                const minX = Math.min(a.x, b.x);
+                                const maxX = Math.max(a.x, b.x);
+                                const minIdx = (a.x <= b.x) ? stub.hostSegIndex : (stub.hostSegIndex + 1);
+                                const maxIdx = (a.x <= b.x) ? (stub.hostSegIndex + 1) : stub.hostSegIndex;
+                                const canExtendMin = (minIdx === 0) || (minIdx === hostLen - 1);
+                                const canExtendMax = (maxIdx === 0) || (maxIdx === hostLen - 1);
+                                if (xRaw < minX && canExtendMin) {
+                                    host.points[minIdx] = { x: xRaw, y: host.points[minIdx].y };
+                                    updateWireDOM(host);
+                                }
+                                else if (xRaw > maxX && canExtendMax) {
+                                    host.points[maxIdx] = { x: xRaw, y: host.points[maxIdx].y };
+                                    updateWireDOM(host);
+                                }
+                                q = { x: xRaw, y: a.y };
+                            }
+                            else {
+                                // Diagonal host: perpendicular attach is projection onto the infinite line.
+                                // If projection goes beyond the segment and this segment touches a host endpoint,
+                                // extend the host wire by moving that endpoint.
+                                const vx = b.x - a.x;
+                                const vy = b.y - a.y;
+                                const denom = (vx * vx + vy * vy);
+                                if (denom < 1e-9) {
+                                    q = { x: a.x, y: a.y };
+                                }
+                                else {
+                                    const t = ((movedEp.x - a.x) * vx + (movedEp.y - a.y) * vy) / denom;
+                                    q = { x: a.x + vx * t, y: a.y + vy * t };
+                                    if (t < 0 && stub.hostSegIndex === 0) {
+                                        host.points[0] = { x: q.x, y: q.y };
+                                        updateWireDOM(host);
+                                    }
+                                    else if (t > 1 && stub.hostSegIndex === hostLen - 2) {
+                                        host.points[hostLen - 1] = { x: q.x, y: q.y };
+                                        updateWireDOM(host);
+                                    }
+                                }
+                            }
+                        }
+                        else {
+                            // Ortho off: let the rubber-band stretch freely (non-perpendicular). The junction point
+                            // still slides along the host wire based on the dragged wire's translation.
+                            // Ortho off requirement: keep the connection point on the host anchored in place.
+                            q = { x: stub.hostPt.x, y: stub.hostPt.y };
+                        }
+                        wireStretchState.ghostConnectingWires.push({ from: { x: q.x, y: q.y }, to: { x: movedEp.x, y: movedEp.y } });
+                    }
+                    // Update connected wire endpoints to follow (best-effort).
+                    const newP0 = { x: p0.x + dx, y: p0.y + dy };
+                    const newP1 = { x: p1.x + dx, y: p1.y + dy };
+                    for (const conn of wireStretchState.connectedWiresStart) {
+                        const endToUpdate = conn.isStart ? 0 : (conn.wire.points.length - 1);
+                        conn.wire.points[endToUpdate] = { x: newP0.x, y: newP0.y };
+                        updateWireDOM(conn.wire);
+                    }
+                    for (const conn of wireStretchState.connectedWiresEnd) {
+                        const endToUpdate = conn.isStart ? 0 : (conn.wire.points.length - 1);
+                        conn.wire.points[endToUpdate] = { x: newP1.x, y: newP1.y };
+                        updateWireDOM(conn.wire);
+                    }
+                    // If we already have rubber-band wires from previous moves, keep their host-side endpoints
+                    // sliding along the host wire segment so the junction doesn't become anchored after the first drag.
+                    // In Ortho mode, the rubber-band segment stays perpendicular to the host.
+                    if (wireStretchState.slidingRubberBands.length > 0) {
+                        const forcePerp = (orthoMode || globalShiftDown);
+                        const endpointAttachWhich = new Set(wireStretchState.stubbedInto.filter(s => s.attach === 'endpoint').map(s => s.which));
+                        for (const rb of wireStretchState.slidingRubberBands) {
+                            if (endpointAttachWhich.has(rb.which))
+                                continue;
+                            const host = wires.find(ww => ww.id === rb.hostWireId);
+                            if (!host)
+                                continue;
+                            if (rb.hostSegIndex < 0 || rb.hostSegIndex >= host.points.length - 1)
+                                continue;
+                            const a = host.points[rb.hostSegIndex];
+                            const b = host.points[rb.hostSegIndex + 1];
+                            const movedEp = rb.wire.points[rb.movingEndIndex];
+                            const EPS = 0.01;
+                            const isVert = Math.abs(a.x - b.x) < EPS;
+                            const isHoriz = Math.abs(a.y - b.y) < EPS;
+                            const hostLen = host.points.length;
+                            let q;
+                            if (forcePerp) {
+                                if (isVert) {
+                                    const yRaw = snap(movedEp.y);
+                                    const minY = Math.min(a.y, b.y);
+                                    const maxY = Math.max(a.y, b.y);
+                                    const minIdx = (a.y <= b.y) ? rb.hostSegIndex : (rb.hostSegIndex + 1);
+                                    const maxIdx = (a.y <= b.y) ? (rb.hostSegIndex + 1) : rb.hostSegIndex;
+                                    const canExtendMin = (minIdx === 0) || (minIdx === hostLen - 1);
+                                    const canExtendMax = (maxIdx === 0) || (maxIdx === hostLen - 1);
+                                    if (yRaw < minY && canExtendMin) {
+                                        host.points[minIdx] = { x: host.points[minIdx].x, y: yRaw };
+                                        updateWireDOM(host);
+                                    }
+                                    else if (yRaw > maxY && canExtendMax) {
+                                        host.points[maxIdx] = { x: host.points[maxIdx].x, y: yRaw };
+                                        updateWireDOM(host);
+                                    }
+                                    q = { x: a.x, y: yRaw };
+                                }
+                                else if (isHoriz) {
+                                    const xRaw = snap(movedEp.x);
+                                    const minX = Math.min(a.x, b.x);
+                                    const maxX = Math.max(a.x, b.x);
+                                    const minIdx = (a.x <= b.x) ? rb.hostSegIndex : (rb.hostSegIndex + 1);
+                                    const maxIdx = (a.x <= b.x) ? (rb.hostSegIndex + 1) : rb.hostSegIndex;
+                                    const canExtendMin = (minIdx === 0) || (minIdx === hostLen - 1);
+                                    const canExtendMax = (maxIdx === 0) || (maxIdx === hostLen - 1);
+                                    if (xRaw < minX && canExtendMin) {
+                                        host.points[minIdx] = { x: xRaw, y: host.points[minIdx].y };
+                                        updateWireDOM(host);
+                                    }
+                                    else if (xRaw > maxX && canExtendMax) {
+                                        host.points[maxIdx] = { x: xRaw, y: host.points[maxIdx].y };
+                                        updateWireDOM(host);
+                                    }
+                                    q = { x: xRaw, y: a.y };
+                                }
+                                else {
+                                    const vx = b.x - a.x;
+                                    const vy = b.y - a.y;
+                                    const denom = (vx * vx + vy * vy);
+                                    if (denom < 1e-9) {
+                                        q = { x: a.x, y: a.y };
+                                    }
+                                    else {
+                                        const t = ((movedEp.x - a.x) * vx + (movedEp.y - a.y) * vy) / denom;
+                                        q = { x: a.x + vx * t, y: a.y + vy * t };
+                                        if (t < 0 && rb.hostSegIndex === 0) {
+                                            host.points[0] = { x: q.x, y: q.y };
+                                            updateWireDOM(host);
+                                        }
+                                        else if (t > 1 && rb.hostSegIndex === hostLen - 2) {
+                                            host.points[hostLen - 1] = { x: q.x, y: q.y };
+                                            updateWireDOM(host);
+                                        }
+                                    }
+                                }
+                            }
+                            else {
+                                // Ortho off: keep a sliding attach point that follows translation along the host.
+                                // Ortho off requirement: keep the host-side connection point anchored.
+                                q = { x: rb.hostPt.x, y: rb.hostPt.y };
+                            }
+                            rb.wire.points[rb.hostEndIndex] = { x: q.x, y: q.y };
+                            updateWireDOM(rb.wire);
+                        }
+                    }
+                    updateWireDOM(w);
+                    renderDrawing();
+                    return;
+                }
                 if (isHorizontal) {
                     // Horizontal wire - move vertically
                     const delta = p.y - wireStretchState.startMousePos.y;
@@ -6370,6 +6988,77 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 if (prev && prev.length >= 1) {
                     drawing.points = prev;
                     drawing.cursor = prev[prev.length - 1];
+                }
+                // Tracking/connection hints (legacy-style) for KiCad routing: while dragging the wire end,
+                // detect alignment with endpoints of other wires along X or Y and draw a hint line.
+                kicadTrackingHint = null;
+                if (trackingMode && drawing.active && drawing.cursor) {
+                    const scale = svg.clientWidth / Math.max(1, viewW);
+                    const snapTol = HINT_SNAP_TOLERANCE_PX / scale;
+                    const rawX = p.x;
+                    const rawY = p.y;
+                    // Determine the direction of the *current* segment being dragged.
+                    // Hints should be orthogonal to this direction (legacy behavior):
+                    // - If dragging mostly horizontally, only consider X-alignment (vertical hint line)
+                    // - If dragging mostly vertically, only consider Y-alignment (horizontal hint line)
+                    let segStart = null;
+                    if (drawing.points && drawing.points.length >= 2) {
+                        segStart = drawing.points[drawing.points.length - 2];
+                    }
+                    const dxDrag = segStart ? (drawing.cursor.x - segStart.x) : 0;
+                    const dyDrag = segStart ? (drawing.cursor.y - segStart.y) : 0;
+                    const mostlyHorizontal = Math.abs(dxDrag) >= Math.abs(dyDrag);
+                    // Exclude only the current segment endpoints (start + cursor) to avoid self-hints,
+                    // but allow earlier corners in the in-progress wire as candidates.
+                    const excludeKeys = new Set();
+                    if (segStart)
+                        excludeKeys.add(Geometry.keyPt({ x: Math.round(segStart.x), y: Math.round(segStart.y) }));
+                    excludeKeys.add(Geometry.keyPt({ x: Math.round(drawing.cursor.x), y: Math.round(drawing.cursor.y) }));
+                    let bestCand = null;
+                    let bestAxisDist = Infinity;
+                    const considerCandidate = (cand) => {
+                        const k = Geometry.keyPt({ x: Math.round(cand.x), y: Math.round(cand.y) });
+                        if (excludeKeys.has(k))
+                            return;
+                        if (mostlyHorizontal) {
+                            // Only X alignment => vertical hint line, orthogonal to horizontal drag.
+                            const xDist = Math.abs(rawX - cand.x);
+                            if (xDist < snapTol && xDist < bestAxisDist) {
+                                bestAxisDist = xDist;
+                                bestCand = cand;
+                            }
+                        }
+                        else {
+                            // Only Y alignment => horizontal hint line, orthogonal to vertical drag.
+                            const yDist = Math.abs(rawY - cand.y);
+                            if (yDist < snapTol && yDist < bestAxisDist) {
+                                bestAxisDist = yDist;
+                                bestCand = cand;
+                            }
+                        }
+                    };
+                    for (const w of wires) {
+                        if (!w.points || w.points.length < 2)
+                            continue;
+                        const firstPt = w.points[0];
+                        const lastPt = w.points[w.points.length - 1];
+                        considerCandidate(firstPt);
+                        considerCandidate(lastPt);
+                    }
+                    // Also allow corners from earlier segments in the in-progress wire being placed.
+                    if (drawing.points && drawing.points.length >= 3) {
+                        for (let i = 0; i < drawing.points.length - 2; i++) {
+                            considerCandidate(drawing.points[i]);
+                        }
+                    }
+                    if (bestCand) {
+                        const fromPt = drawing.cursor;
+                        // Don't show a zero-length hint.
+                        const d = Math.hypot(fromPt.x - bestCand.x, fromPt.y - bestCand.y);
+                        if (d > 1e-3) {
+                            kicadTrackingHint = { fromPt: { x: fromPt.x, y: fromPt.y }, targetPt: { x: bestCand.x, y: bestCand.y } };
+                        }
+                    }
                 }
                 // Once we've moved far enough in the perpendicular direction, release the
                 // lock so the user can drag out the second orthogonal leg (corner).
@@ -6733,6 +7422,45 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         // Finish wire stretch if active
         if (wireStretchState) {
             if (wireStretchState.dragging) {
+                if (wireStretchState.kind === 'free') {
+                    // Free-angle drag: commit any rubber-band ghost wires, then normalize and rebuild.
+                    const newWireIds = [];
+                    // First, update any connecting wires we created on a previous drag
+                    wireStretchState.createdConnectingWireIds.forEach(wireId => {
+                        const existingWire = wires.find(w => w.id === wireId);
+                        if (existingWire && wireStretchState.ghostConnectingWires.length > 0) {
+                            const ghost = wireStretchState.ghostConnectingWires[0];
+                            existingWire.points[0] = { x: ghost.from.x, y: ghost.from.y };
+                            existingWire.points[1] = { x: ghost.to.x, y: ghost.to.y };
+                            newWireIds.push(wireId);
+                            wireStretchState.ghostConnectingWires.shift();
+                        }
+                    });
+                    // Create new wires for any remaining ghosts
+                    wireStretchState.ghostConnectingWires.forEach(ghost => {
+                        const dist = Math.hypot(ghost.to.x - ghost.from.x, ghost.to.y - ghost.from.y);
+                        if (dist > 5) {
+                            const newWire = {
+                                id: State.uid('wire'),
+                                points: [
+                                    { x: ghost.from.x, y: ghost.from.y },
+                                    { x: ghost.to.x, y: ghost.to.y }
+                                ],
+                                color: wireStretchState.wire.color || defaultWireColor,
+                                netId: wireStretchState.wire.netId
+                            };
+                            wires.push(newWire);
+                            newWireIds.push(newWire.id);
+                        }
+                    });
+                    wireStretchState.createdConnectingWireIds = newWireIds;
+                    normalizeAllWires();
+                    rebuildTopology();
+                    redraw();
+                    wireStretchState = null;
+                    renderDrawing();
+                    return;
+                }
                 // Don't remove any existing wires - let unifyInlineWires handle merging
                 const w = wireStretchState.wire;
                 const newP0 = w.points[0];
@@ -6886,6 +7614,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 gDrawing.replaceChildren();
                 kicadFirstSegmentPerpLock = null;
                 connectionHint = null;
+                kicadTrackingHint = null;
                 renderConnectionHint(); // clear hint visual
                 if (shiftOrthoVisualActive) {
                     shiftOrthoVisualActive = false;
@@ -7310,6 +8039,7 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
         drawing.cursor = null;
         kicadFirstSegmentPerpLock = null;
         connectionHint = null;
+        kicadTrackingHint = null;
         renderConnectionHint(); // clear hint visual
         if (shiftOrthoVisualActive) {
             shiftOrthoVisualActive = false;
@@ -7554,6 +8284,96 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             hintLine.setAttribute('x2', String(connectionHint.targetPt.x));
             hintLine.setAttribute('y2', String(connectionHint.targetPt.y));
             gOverlay.appendChild(hintLine);
+        }
+        if (kicadTrackingHint && drawing.active) {
+            const hintLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            hintLine.setAttribute('data-hint', '1');
+            hintLine.setAttribute('stroke', '#00ff00'); // bright green
+            const strokeWidth = 2;
+            const dashLength = 10;
+            const dashGap = 5;
+            hintLine.setAttribute('stroke-width', String(strokeWidth));
+            hintLine.setAttribute('stroke-dasharray', `${dashLength},${dashGap}`);
+            hintLine.setAttribute('stroke-linecap', 'round');
+            hintLine.setAttribute('pointer-events', 'none');
+            hintLine.setAttribute('opacity', '1');
+            hintLine.setAttribute('x1', String(kicadTrackingHint.fromPt.x));
+            hintLine.setAttribute('y1', String(kicadTrackingHint.fromPt.y));
+            hintLine.setAttribute('x2', String(kicadTrackingHint.targetPt.x));
+            hintLine.setAttribute('y2', String(kicadTrackingHint.targetPt.y));
+            gOverlay.appendChild(hintLine);
+        }
+        // While dragging a non-orthogonal wire with Tracking enabled, highlight when the
+        // current segment is collinear with an existing wire segment at the startpoint.
+        if (trackingMode && drawing.active) {
+            const currentDragSegment = () => {
+                if (drawing.cursor && drawing.points && drawing.points.length > 0) {
+                    const a0 = drawing.points[drawing.points.length - 1];
+                    const b0 = drawing.cursor;
+                    const d = Math.hypot(b0.x - a0.x, b0.y - a0.y);
+                    if (d > 1e-6)
+                        return { a: a0, b: b0 };
+                }
+                if (drawing.points && drawing.points.length >= 2) {
+                    return { a: drawing.points[drawing.points.length - 2], b: drawing.points[drawing.points.length - 1] };
+                }
+                return null;
+            };
+            const areOppositeCollinear = (da, db, eps = 1e-4) => {
+                const cross = da.dx * db.dy - da.dy * db.dx;
+                const na = Math.hypot(da.dx, da.dy);
+                const nb = Math.hypot(db.dx, db.dy);
+                if (na === 0 || nb === 0)
+                    return false;
+                if (Math.abs(cross) > eps * na * nb)
+                    return false;
+                const dot = da.dx * db.dx + da.dy * db.dy;
+                return dot < 0;
+            };
+            const seg = currentDragSegment();
+            if (seg) {
+                const a = { x: snapToBaseScalar(seg.a.x), y: snapToBaseScalar(seg.a.y) };
+                const b = { x: snapToBaseScalar(seg.b.x), y: snapToBaseScalar(seg.b.y) };
+                const isNonOrtho = !(a.x === b.x || a.y === b.y);
+                if (isNonOrtho) {
+                    const startKey = Geometry.keyPt({ x: Math.round(a.x), y: Math.round(a.y) });
+                    const newDir = { dx: b.x - a.x, dy: b.y - a.y };
+                    let highlightSeg = null;
+                    for (const w of wires) {
+                        if (!w.points || w.points.length < 2)
+                            continue;
+                        const pStart0 = w.points[0];
+                        const pEnd0 = w.points[w.points.length - 1];
+                        const key0 = Geometry.keyPt({ x: Math.round(pStart0.x), y: Math.round(pStart0.y) });
+                        const key1 = Geometry.keyPt({ x: Math.round(pEnd0.x), y: Math.round(pEnd0.y) });
+                        if (key0 !== startKey && key1 !== startKey)
+                            continue;
+                        const endIndex = (key0 === startKey) ? 0 : (w.points.length - 1);
+                        const other0 = (endIndex === 0) ? w.points[1] : w.points[w.points.length - 2];
+                        const p0 = { x: snapToBaseScalar(w.points[endIndex].x), y: snapToBaseScalar(w.points[endIndex].y) };
+                        const p1 = { x: snapToBaseScalar(other0.x), y: snapToBaseScalar(other0.y) };
+                        const existingDir = { dx: p1.x - p0.x, dy: p1.y - p0.y };
+                        if (areOppositeCollinear(existingDir, newDir)) {
+                            highlightSeg = { p0, p1 };
+                            break;
+                        }
+                    }
+                    if (highlightSeg) {
+                        const hl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        hl.setAttribute('data-hint', '1');
+                        hl.setAttribute('stroke', '#00ff00');
+                        hl.setAttribute('stroke-width', '3');
+                        hl.setAttribute('stroke-linecap', 'round');
+                        hl.setAttribute('pointer-events', 'none');
+                        hl.setAttribute('opacity', '0.9');
+                        hl.setAttribute('x1', String(highlightSeg.p0.x));
+                        hl.setAttribute('y1', String(highlightSeg.p0.y));
+                        hl.setAttribute('x2', String(highlightSeg.p1.x));
+                        hl.setAttribute('y2', String(highlightSeg.p1.y));
+                        gOverlay.appendChild(hl);
+                    }
+                }
+            }
         }
     }
     // ----- Crosshair overlay -----
@@ -9728,14 +10548,42 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             return null;
         const a = w.points[endIndex];
         const b = (endIndex === 0) ? w.points[1] : w.points[n - 2];
-        if (a.y === b.y)
+        if (a && b && a.y === b.y)
             return 'x';
-        if (a.x === b.x)
+        if (a && b && a.x === b.x)
             return 'y';
         return null;
     }
+    function dirAtEndpoint(w, endIndex) {
+        const n = w.points.length;
+        if (n < 2)
+            return null;
+        const a0 = w.points[endIndex];
+        const b0 = (endIndex === 0) ? w.points[1] : w.points[n - 2];
+        const a = { x: snapToBaseScalar(a0.x), y: snapToBaseScalar(a0.y) };
+        const b = { x: snapToBaseScalar(b0.x), y: snapToBaseScalar(b0.y) };
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        if (dx === 0 && dy === 0)
+            return null;
+        return { dx, dy };
+    }
+    function areOppositeCollinear(a, b, eps = 1e-4) {
+        const cross = a.dx * b.dy - a.dy * b.dx;
+        const na = Math.hypot(a.dx, a.dy);
+        const nb = Math.hypot(b.dx, b.dy);
+        if (na === 0 || nb === 0)
+            return false;
+        if (Math.abs(cross) > eps * na * nb)
+            return false;
+        const dot = a.dx * b.dx + a.dy * b.dy;
+        return dot < 0;
+    }
+    function wireNetId(w) {
+        return w.netId || 'default';
+    }
     function endpointPairsByKey() {
-        // key -> array of { w, endIndex, axis, other }
+        // key -> array of { w, endIndex, dir, other }
         const map = new Map();
         for (const w of wires) {
             const n = w.points.length;
@@ -9745,9 +10593,9 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
             for (const endIndex of ends) {
                 const p = w.points[endIndex];
                 const key = Geometry.keyPt({ x: Math.round(p.x), y: Math.round(p.y) });
-                const ax = axisAtEndpoint(w, endIndex);
+                const dir = dirAtEndpoint(w, endIndex);
                 const other = (endIndex === 0) ? w.points[1] : w.points[n - 2];
-                (map.get(key) || (map.set(key, []), map.get(key))).push({ w, endIndex, axis: ax, other });
+                (map.get(key) || (map.set(key, []), map.get(key))).push({ w, endIndex, dir, other });
             }
         }
         return map;
@@ -9791,10 +10639,10 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 const a = list[0], b = list[1];
                 if (a.w === b.w)
                     continue; // ignore self-joins
-                if (!a.axis || !b.axis)
-                    continue; // must both be axis-aligned
-                if (a.axis !== b.axis)
-                    continue; // must be the same axis
+                if (!a.dir || !b.dir)
+                    continue;
+                if (!areOppositeCollinear(a.dir, b.dir))
+                    continue;
                 // Choose the "existing/first" wire as primary by their order in the
                 // `wires` array (earlier index = older/existing). Primary's properties
                 // will be adopted for the merged segment.
@@ -9808,6 +10656,8 @@ import { PX_PER_MM, pxToNm, nmToPx, mmToPx, nmToUnit, unitToNm, parseDimInput, f
                 }
                 const primary = (idxA <= idxB) ? a : b;
                 const secondary = (primary === a) ? b : a;
+                if (wireNetId(primary.w) !== wireNetId(secondary.w))
+                    continue;
                 // Orient primary (left) so it ENDS at the join, secondary (right) so it STARTS at the join
                 // Ensure endpoints are canonicalized to base-grid before merging to
                 // avoid tiny rounding differences that can re-split after normalization.

@@ -33,6 +33,9 @@ class DefaultLegacyKernel {
     commitCorner() { return { points: [] }; }
     finishPlacement() { return { points: [] }; }
     cancelPlacement() { }
+    setLineDrawingMode(_mode) {
+        // legacy adapter / default kernel does not support this; no-op
+    }
 }
 export class RoutingFacade {
     warnIfDefault(method) {
@@ -89,6 +92,10 @@ export class RoutingFacade {
     cancelPlacement() {
         this.warnIfDefault('cancelPlacement');
         return this.kernel.cancelPlacement();
+    }
+    setLineDrawingMode(mode) {
+        // Optional capability: only some kernels implement it.
+        this.kernel.setLineDrawingMode?.(mode);
     }
 }
 // Export a singleton facade for easy import/use

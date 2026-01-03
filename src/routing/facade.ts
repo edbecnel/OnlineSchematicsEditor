@@ -34,6 +34,10 @@ class DefaultLegacyKernel implements IRoutingKernel {
   commitCorner(): { points: { x: number; y: number }[] } { return { points: [] }; }
   finishPlacement(): { points: { x: number; y: number }[] } { return { points: [] }; }
   cancelPlacement(): void { /* no-op */ }
+
+  setLineDrawingMode(_mode: 'orthogonal' | 'free'): void {
+    // legacy adapter / default kernel does not support this; no-op
+  }
 }
 
 export class RoutingFacade {
@@ -100,6 +104,11 @@ export class RoutingFacade {
   cancelPlacement() {
     this.warnIfDefault('cancelPlacement');
     return this.kernel.cancelPlacement();
+  }
+
+  setLineDrawingMode(mode: 'orthogonal' | 'free') {
+    // Optional capability: only some kernels implement it.
+    this.kernel.setLineDrawingMode?.(mode);
   }
 }
 

@@ -19,6 +19,11 @@ export interface IRoutingKernel {
   finishPlacement(): { points: { x: number; y: number }[] };
   cancelPlacement(): void;
 
+  // Optional: control line drawing mode for preview/placement
+  // 'orthogonal' = manhattan / rectilinear preview
+  // 'free' = straight segment preview
+  setLineDrawingMode?(mode: 'orthogonal' | 'free'): void;
+
   // Optional lifecycle hooks
   init?(): void;
   dispose?(): void;
