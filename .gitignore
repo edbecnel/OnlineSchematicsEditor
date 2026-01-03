@@ -1,8 +1,8 @@
 # dependencies
 node_modules/
 
-# build outputs (keep dist/ committed if you rely on GitHub Pages without CI)
-# dist/
+# build outputs
+dist/
 
 # source maps (optional—ignore if you don’t want to publish them)
 # *.map

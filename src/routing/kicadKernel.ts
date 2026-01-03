@@ -25,6 +25,8 @@ export class KiCadRoutingKernel implements IRoutingKernel {
 		mode: 'HV' as 'HV' | 'VH',
 		committed: [] as { x: number; y: number }[],
 		lastPreview: null as { x: number; y: number }[] | null,
+		activeAxis: null as 'H' | 'V' | null,
+		modeLockedForSegment: false,
 	};
 
 	setState(state: RoutingState) {
@@ -73,6 +75,8 @@ export class KiCadRoutingKernel implements IRoutingKernel {
 		this.placement.mode = mode;
 		this.placement.committed = [s];
 		this.placement.lastPreview = [s];
+		this.placement.activeAxis = null;
+		this.placement.modeLockedForSegment = false;
 	}
 
 	updatePlacement(cursor: { x: number; y: number }) {
@@ -80,9 +84,33 @@ export class KiCadRoutingKernel implements IRoutingKernel {
 		const cur = this.snapToGridOrObject(cursor);
 		let seg: { x: number; y: number }[];
 		if (this.lineDrawingMode === 'free') {
+			// Free angle mode: straight line from last to cursor
 			seg = [{ x: last.x, y: last.y }, { x: cur.x, y: cur.y }];
 		} else {
-			seg = this.manhattanPath(last, cur, this.placement.mode);
+			// Orthogonal mode: track active leg direction and decide HV/VH once,
+			// then keep it for this segment to avoid the bend jumping back to the anchor.
+			const dx = Math.abs(cur.x - last.x);
+			const dy = Math.abs(cur.y - last.y);
+			const MIN_DIST = 0.5;
+
+			// Before meaningful movement, just track straight to avoid spurious bends.
+			if (dx < MIN_DIST && dy < MIN_DIST) {
+				seg = [{ x: last.x, y: last.y }, { x: cur.x, y: cur.y }];
+			} else {
+				// Decide initial active axis only after meaningful movement to avoid jitter.
+				if (!this.placement.activeAxis && (dx >= MIN_DIST || dy >= MIN_DIST)) {
+					this.placement.activeAxis = (dx >= dy) ? 'H' : 'V';
+				}
+
+				// Once we have a chosen axis and both dx/dy are significant, lock the mode
+				// for this segment so the bend doesn't flip mid-drag.
+				if (this.placement.activeAxis && !this.placement.modeLockedForSegment && dx >= MIN_DIST && dy >= MIN_DIST) {
+					this.placement.mode = (this.placement.activeAxis === 'H') ? 'HV' : 'VH';
+					this.placement.modeLockedForSegment = true;
+				}
+
+				seg = this.manhattanPath(last, cur, this.placement.mode);
+			}
 		}
 		const preview = [...this.placement.committed, ...seg.slice(1)];
 		this.placement.lastPreview = preview;
@@ -93,11 +121,13 @@ export class KiCadRoutingKernel implements IRoutingKernel {
 		const preview = this.placement.lastPreview || this.placement.committed;
 		const tail = this.placement.committed[this.placement.committed.length - 1];
 		if (this.lineDrawingMode === 'free') {
+			// Free angle: just add the endpoint
 			if (preview.length >= 2) {
 				const end = preview[preview.length - 1];
 				if (!(tail.x === end.x && tail.y === end.y)) this.placement.committed.push(end);
 			}
 		} else {
+			// Orthogonal: commit the bend point and endpoint from preview
 			if (preview.length >= 3) {
 				const bend = preview[preview.length - 2];
 				const end = preview[preview.length - 1];
@@ -105,6 +135,9 @@ export class KiCadRoutingKernel implements IRoutingKernel {
 				if (!(bend.x === end.x && bend.y === end.y)) this.placement.committed.push(end);
 			}
 		}
+		// Reset direction tracking for the next segment
+		this.placement.activeAxis = null;
+		this.placement.modeLockedForSegment = false;
 		return { points: [...this.placement.committed] };
 	}
 

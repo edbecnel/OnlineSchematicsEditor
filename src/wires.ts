@@ -370,7 +370,7 @@ function allPinKeys(components: any[], compPinPositions: (c: any) => Point[]): S
   return s;
 }
 
-function areOppositeCollinear(a: { dx: number; dy: number }, b: { dx: number; dy: number }, eps = 1e-4): boolean {
+function areOppositeCollinear(a: { dx: number; dy: number }, b: { dx: number; dy: number }, eps = 1e-2): boolean {
   const cross = a.dx * b.dy - a.dy * b.dx;
   const na = Math.hypot(a.dx, a.dy);
   const nb = Math.hypot(b.dx, b.dy);
@@ -424,6 +424,17 @@ export function unifyInlineWires(
   defaultWireColor: string
 ): Wire[] {
   const pinKeys = allPinKeys(components, compPinPositions);
+
+  const MERGE_COLLINEAR_DIST_EPS = 2.5;
+  const distPointToLine = (p: Point, a: Point, b: Point): number => {
+    const vx = b.x - a.x;
+    const vy = b.y - a.y;
+    const wx = p.x - a.x;
+    const wy = p.y - a.y;
+    const denom = Math.hypot(vx, vy);
+    if (denom < 1e-9) return Infinity;
+    return Math.abs(vx * wy - vy * wx) / denom;
+  };
   
   // Iterate merges until stable, but guard against pathological loops.
   const MAX_ITER = 200;
@@ -453,14 +464,23 @@ export function unifyInlineWires(
       if (!a.dir || !b.dir) continue;
       if (!areOppositeCollinear(a.dir, b.dir)) continue;
 
-      // Choose the "existing/first" wire as primary by their order in the wires array
+      // Choose the "existing/first" wire as primary.
+      // Prefer smaller numeric suffix to preserve creation order even if arrays are reordered.
       const idxA = wires.indexOf(a.w);
       const idxB = wires.indexOf(b.w);
       
       // If either wire reference is no longer present, skip this stale pair
       if (idxA === -1 || idxB === -1) continue;
       
-      const primary = (idxA <= idxB) ? a : b;
+      const idNum = (id: string): number | null => {
+        const m = String(id).match(/(\d+)\s*$/);
+        return m ? parseInt(m[1], 10) : null;
+      };
+      const nA = idNum(a.w.id);
+      const nB = idNum(b.w.id);
+      const primary = (nA != null && nB != null && nA !== nB)
+        ? (nA < nB ? a : b)
+        : ((idxA <= idxB) ? a : b);
       const secondary = (primary === a) ? b : a;
 
       if (wireNetId(primary.w) !== wireNetId(secondary.w)) continue;
@@ -472,7 +492,19 @@ export function unifyInlineWires(
       const rPts = (secondary.endIndex === 0) ? rp : rp.reverse();
 
       const mergedPts = lPts.concat(rPts.slice(1));  // drop duplicate join point
-      const merged = normalizedPolylineOrNull(mergedPts);
+      let merged: Point[] | null = null;
+      if (mergedPts.length === 3) {
+        const a0 = mergedPts[0];
+        const mid = mergedPts[1];
+        const b0 = mergedPts[2];
+        const d = distPointToLine(mid, a0, b0);
+        if (d <= MERGE_COLLINEAR_DIST_EPS) {
+          merged = [a0, b0];
+        }
+      }
+      if (!merged) {
+        merged = normalizedPolylineOrNull(mergedPts);
+      }
       if (!merged) continue;
 
       // Prefer primary's stroke; else secondary's; else default
