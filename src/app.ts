@@ -3933,7 +3933,9 @@ import {
                 attach: 'segment' | 'endpoint';
                 hostEndIndex?: number;
               }> = [];
-              if (stretchKind === 'free') {
+              // In KiCad mode, we also want stub/junction behavior when dragging orthogonal stubs.
+              // This enables endpoint rubber-banding + junction removal when the sliding point reaches a host end.
+              if (stretchKind === 'free' || ((window as any).routingKernelMode === 'kicad')) {
                 const ep0 = w.points[0];
                 const ep1 = w.points[w.points.length - 1];
                 
@@ -7330,10 +7332,11 @@ import {
                   // Extend the endpoint at the min side.
                   atEndpoint = true;
                   if (seg1BaseEnd.y <= seg2BaseEnd.y) {
-                    shj.seg1FixedEnd = { x: shj.seg1FixedEnd.x, y };
+                    // Collapse the min-side half so the connection becomes a pure endpoint connection.
+                    shj.seg1FixedEnd = { x, y };
                     seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
                   } else {
-                    shj.seg2FixedEnd = { x: shj.seg2FixedEnd.x, y };
+                    shj.seg2FixedEnd = { x, y };
                     seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
                   }
                   newJunctionPt = { x, y };
@@ -7341,10 +7344,11 @@ import {
                   // Extend the endpoint at the max side.
                   atEndpoint = true;
                   if (seg1BaseEnd.y >= seg2BaseEnd.y) {
-                    shj.seg1FixedEnd = { x: shj.seg1FixedEnd.x, y };
+                    // Collapse the max-side half so the connection becomes a pure endpoint connection.
+                    shj.seg1FixedEnd = { x, y };
                     seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
                   } else {
-                    shj.seg2FixedEnd = { x: shj.seg2FixedEnd.x, y };
+                    shj.seg2FixedEnd = { x, y };
                     seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
                   }
                   newJunctionPt = { x, y };
@@ -7374,20 +7378,22 @@ import {
                 if (x < minX - 0.1) {
                   atEndpoint = true;
                   if (seg1BaseEnd.x <= seg2BaseEnd.x) {
-                    shj.seg1FixedEnd = { x, y: shj.seg1FixedEnd.y };
+                    // Collapse the min-side half so the connection becomes a pure endpoint connection.
+                    shj.seg1FixedEnd = { x, y };
                     seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
                   } else {
-                    shj.seg2FixedEnd = { x, y: shj.seg2FixedEnd.y };
+                    shj.seg2FixedEnd = { x, y };
                     seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
                   }
                   newJunctionPt = { x, y };
                 } else if (x > maxX + 0.1) {
                   atEndpoint = true;
                   if (seg1BaseEnd.x >= seg2BaseEnd.x) {
-                    shj.seg1FixedEnd = { x, y: shj.seg1FixedEnd.y };
+                    // Collapse the max-side half so the connection becomes a pure endpoint connection.
+                    shj.seg1FixedEnd = { x, y };
                     seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
                   } else {
-                    shj.seg2FixedEnd = { x, y: shj.seg2FixedEnd.y };
+                    shj.seg2FixedEnd = { x, y };
                     seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
                   }
                   newJunctionPt = { x, y };
@@ -7625,6 +7631,134 @@ import {
           const newP1Abs = { x: p1.x, y: newY };
           for (const conn of wireStretchState.connectedWiresStart) applyNonOrthoConn(conn as any, newP0Abs);
           for (const conn of wireStretchState.connectedWiresEnd) applyNonOrthoConn(conn as any, newP1Abs);
+
+          // KiCad mode: if this orthogonal drag is part of a stub/mended host junction, keep the host halves
+          // mended and slide the junction along the host axis. When we reach/past the host endpoint, collapse
+          // the split and remove the junction dot so it becomes a pure endpoint connection.
+          if ((window as any).routingKernelMode === 'kicad' && wireStretchState.stubHostJunctions) {
+            for (const shj of wireStretchState.stubHostJunctions) {
+              const seg1 = wires.find(ww => ww.id === shj.segment1.id);
+              const seg2 = wires.find(ww => ww.id === shj.segment2.id);
+              if (!seg1 || !seg2) continue;
+
+              const stub = wireStretchState.stubbedInto.find(s =>
+                s.hostWireId === shj.segment1.id || s.hostWireId === shj.segment2.id
+              );
+              if (!stub) continue;
+
+              const movedEp = (stub.which === 'start') ? w.points[0] : w.points[w.points.length - 1];
+              const seg1BaseEnd = shj.seg1InitialFixedEnd;
+              const seg2BaseEnd = shj.seg2InitialFixedEnd;
+
+              // Lock far endpoints to baseline by default.
+              shj.seg1FixedEnd = { x: seg1BaseEnd.x, y: seg1BaseEnd.y };
+              shj.seg2FixedEnd = { x: seg2BaseEnd.x, y: seg2BaseEnd.y };
+              seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
+              seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
+
+              let newJunctionPt: Point;
+              let atEndpoint = false;
+              let collapsedSeg: Wire | null = null;
+
+              if (shj.hostAxis === 'x') {
+                const xLock = shj.hostLock;
+                const ySlide = snap(movedEp.y);
+                const minY = Math.min(seg1BaseEnd.y, seg2BaseEnd.y);
+                const maxY = Math.max(seg1BaseEnd.y, seg2BaseEnd.y);
+
+                if (ySlide < minY - 0.1) {
+                  atEndpoint = true;
+                  if (seg1BaseEnd.y <= seg2BaseEnd.y) {
+                    shj.seg1FixedEnd = { x: xLock, y: ySlide };
+                    seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
+                    collapsedSeg = seg1;
+                  } else {
+                    shj.seg2FixedEnd = { x: xLock, y: ySlide };
+                    seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
+                    collapsedSeg = seg2;
+                  }
+                  newJunctionPt = { x: xLock, y: ySlide };
+                } else if (ySlide > maxY + 0.1) {
+                  atEndpoint = true;
+                  if (seg1BaseEnd.y >= seg2BaseEnd.y) {
+                    shj.seg1FixedEnd = { x: xLock, y: ySlide };
+                    seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
+                    collapsedSeg = seg1;
+                  } else {
+                    shj.seg2FixedEnd = { x: xLock, y: ySlide };
+                    seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
+                    collapsedSeg = seg2;
+                  }
+                  newJunctionPt = { x: xLock, y: ySlide };
+                } else {
+                  newJunctionPt = { x: xLock, y: Math.max(minY, Math.min(maxY, ySlide)) };
+                }
+              } else {
+                const yLock = shj.hostLock;
+                const xSlide = snap(movedEp.x);
+                const minX = Math.min(seg1BaseEnd.x, seg2BaseEnd.x);
+                const maxX = Math.max(seg1BaseEnd.x, seg2BaseEnd.x);
+
+                if (xSlide < minX - 0.1) {
+                  atEndpoint = true;
+                  if (seg1BaseEnd.x <= seg2BaseEnd.x) {
+                    shj.seg1FixedEnd = { x: xSlide, y: yLock };
+                    seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
+                    collapsedSeg = seg1;
+                  } else {
+                    shj.seg2FixedEnd = { x: xSlide, y: yLock };
+                    seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
+                    collapsedSeg = seg2;
+                  }
+                  newJunctionPt = { x: xSlide, y: yLock };
+                } else if (xSlide > maxX + 0.1) {
+                  atEndpoint = true;
+                  if (seg1BaseEnd.x >= seg2BaseEnd.x) {
+                    shj.seg1FixedEnd = { x: xSlide, y: yLock };
+                    seg1.points[shj.seg1FixedEndIndex] = { x: shj.seg1FixedEnd.x, y: shj.seg1FixedEnd.y };
+                    collapsedSeg = seg1;
+                  } else {
+                    shj.seg2FixedEnd = { x: xSlide, y: yLock };
+                    seg2.points[shj.seg2FixedEndIndex] = { x: shj.seg2FixedEnd.x, y: shj.seg2FixedEnd.y };
+                    collapsedSeg = seg2;
+                  }
+                  newJunctionPt = { x: xSlide, y: yLock };
+                } else {
+                  newJunctionPt = { x: Math.max(minX, Math.min(maxX, xSlide)), y: yLock };
+                }
+              }
+
+              // Keep the tracked junction location accurate for pointer-up cleanup,
+              // even when we temporarily hide/remove the dot at endpoints.
+              shj.junction.at = { x: newJunctionPt.x, y: newJunctionPt.y };
+
+              // Update both segment endpoints to the new junction position.
+              seg1.points[shj.seg1EndIndex] = { x: newJunctionPt.x, y: newJunctionPt.y };
+              seg2.points[shj.seg2EndIndex] = { x: newJunctionPt.x, y: newJunctionPt.y };
+
+              // If we reached/passed a host endpoint, the endpoint-side host half should disappear.
+              // Force it to be truly zero-length (even if it had extra vertices) so later cleanup removes it.
+              if (atEndpoint && collapsedSeg) {
+                collapsedSeg.points = collapsedSeg.points.map(() => ({ x: newJunctionPt.x, y: newJunctionPt.y }));
+              }
+              updateWireDOM(seg1);
+              updateWireDOM(seg2);
+
+              // Maintain junction dot while interior; remove it when we become an endpoint connection.
+              if (atEndpoint) {
+                junctions = junctions.filter(j => j.id !== shj.junction.id);
+                const el = gJunctions.querySelector(`[data-junction-id="${shj.junction.id}"]`) as SVGCircleElement | null;
+                if (el) el.remove();
+              } else {
+                if (!junctions.some(j => j.id === shj.junction.id)) junctions.push(shj.junction);
+                const el = gJunctions.querySelector(`[data-junction-id="${shj.junction.id}"]`) as SVGCircleElement | null;
+                if (el) {
+                  el.setAttribute('cx', String(newJunctionPt.x));
+                  el.setAttribute('cy', String(newJunctionPt.y));
+                }
+              }
+            }
+          }
           
           // Handle connected wires at start endpoint
           const startPos = wireStretchState.originalP0;
@@ -8044,6 +8178,14 @@ import {
         }
         renderDrawing();
         renderConnectionHint();
+
+        // Crosshair must update even in this early-return path.
+        // Use the snapped preview cursor (KiCad-style feedback).
+        if (drawing.cursor) {
+          renderCrosshair(drawing.cursor.x, drawing.cursor.y);
+        } else {
+          renderCrosshair(ux, uy);
+        }
         return;
       }
       // enforce orthogonal preview while Shift is down (or globally tracked) or when ortho mode is on
@@ -8452,12 +8594,12 @@ import {
       hidePolarInputs();
     }
 
-    // crosshair overlay while in wire mode, place mode, select mode, move mode, delete mode, or junction modes
-    // Use raw mouse position (p) for crosshair, not snapped position (x, y)
-    if (mode === 'wire' || mode === 'place' || mode === 'select' || mode === 'move' || mode === 'delete' || mode === 'place-junction' || mode === 'delete-junction') { 
-      renderCrosshair(p.x, p.y); 
-    } else { 
-      clearCrosshair(); 
+    // Crosshair overlay while in wire mode, place mode, select mode, move mode, delete mode, or junction modes.
+    // KiCad-style feedback: jump to the nearest snap point, observing the current snap mode.
+    if (mode === 'wire' || mode === 'place' || mode === 'select' || mode === 'move' || mode === 'delete' || mode === 'place-junction' || mode === 'delete-junction') {
+      renderCrosshair(x, y);
+    } else {
+      clearCrosshair();
     }
   });
 
@@ -8735,6 +8877,27 @@ import {
                   const jk = Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) });
                   if (jk !== k) return true;
                   return j.suppressed; // keep only suppression markers at this location
+                });
+              }
+            }
+
+            // Also clear any stray junction dots that might remain at the *previous* host endpoints
+            // after rubber-banding past the end (the connection should be a simple endpoint, not a node).
+            const oldEndKeys = new Set(
+              wireStretchState.stubHostJunctions.flatMap(shj => [
+                Geometry.keyPt({ x: Math.round(shj.seg1InitialFixedEnd.x), y: Math.round(shj.seg1InitialFixedEnd.y) }),
+                Geometry.keyPt({ x: Math.round(shj.seg2InitialFixedEnd.x), y: Math.round(shj.seg2InitialFixedEnd.y) })
+              ])
+            );
+            for (const k of oldEndKeys) {
+              if (keysToDedup.has(k)) continue;
+              const [x, y] = k.split(',').map(Number);
+              const deg = wiresEndingAt({ x, y }).length;
+              if (deg <= 2) {
+                junctions = junctions.filter(j => {
+                  const jk = Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) });
+                  if (jk !== k) return true;
+                  return j.suppressed;
                 });
               }
             }
