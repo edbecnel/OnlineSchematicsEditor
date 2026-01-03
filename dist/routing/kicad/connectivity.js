@@ -47,9 +47,15 @@ function pointToSegmentDistance(p, a, b) {
     const onSegment = t >= 0 && t <= 1;
     return { distance: d, onSegment };
 }
+function keyPt(p) {
+    // Use rounded coordinates to keep determinism and dedupe.
+    return `${Math.round(p.x)},${Math.round(p.y)}`;
+}
 export function deriveConnectivity(state) {
     const tol = state.tolerance;
     const tol2 = tol * tol;
+    // Track derived implicit T-junction points (endpoint-on-segment). Never persist these.
+    const implicitJunctionsByKey = new Map();
     const nodes = [];
     const endpointNodeIndex = new Map(); // key: wireId:endIdx
     const pinNodeIndex = new Map(); // key: pinId
@@ -113,6 +119,46 @@ export function deriveConnectivity(state) {
                 dsu.union(pIdx, eIdx);
         }
     }
+    // Rule: endpoint-on-segment (T-connection) connects WITHOUT needing an explicit junction.
+    // IMPORTANT: this does NOT make wire crossings connect; it only checks endpoints landing on segments.
+    // For connectivity, union the endpoint node with the target wire's conductor.
+    for (const wEnd of state.wires) {
+        if (!wEnd.points || wEnd.points.length < 2)
+            continue;
+        const endpoints = [
+            { idx: 0, pos: wEnd.points[0] },
+            { idx: 1, pos: wEnd.points[wEnd.points.length - 1] }
+        ];
+        for (const ep of endpoints) {
+            const epNodeIdx = endpointNodeIndex.get(`${wEnd.id}:${ep.idx}`);
+            if (epNodeIdx === undefined)
+                continue;
+            for (const w of state.wires) {
+                if (!w.points || w.points.length < 2)
+                    continue;
+                if (w.id === wEnd.id)
+                    continue;
+                const pts = w.points;
+                for (let s = 0; s < pts.length - 1; s++) {
+                    const a = pts[s], b = pts[s + 1];
+                    const { distance, onSegment } = pointToSegmentDistance(ep.pos, a, b);
+                    if (!onSegment || distance > tol)
+                        continue;
+                    // If it's really just endpoint-to-endpoint (near the segment ends), don't treat as an implicit T-junction.
+                    if (dist2(ep.pos, a) <= tol2 || dist2(ep.pos, b) <= tol2)
+                        continue;
+                    // Union the endpoint with the target wire's conductor.
+                    const targetEndpointIdx = endpointNodeIndex.get(`${w.id}:0`);
+                    if (targetEndpointIdx !== undefined)
+                        dsu.union(epNodeIdx, targetEndpointIdx);
+                    // Record an implicit junction point at the endpoint position (deterministic).
+                    // Note: using ep.pos (not the projected point) matches the user's visual/interaction expectation.
+                    implicitJunctionsByKey.set(keyPt(ep.pos), { x: ep.pos.x, y: ep.pos.y });
+                    break;
+                }
+            }
+        }
+    }
     // Rule: crossings DO NOT connect unless an explicit junction exists.
     // Implementation: For each junction, if it lies on a wire segment (within tol), connect that wire to the junction.
     for (const j of state.junctions) {
@@ -149,6 +195,7 @@ export function deriveConnectivity(state) {
         }
         net.members.push(nodes[i].member);
     }
-    return { nets: Array.from(groups.values()) };
+    const implicitJunctions = Array.from(implicitJunctionsByKey.values());
+    return { nets: Array.from(groups.values()), implicitJunctions };
 }
 //# sourceMappingURL=connectivity.js.map

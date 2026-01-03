@@ -34,4 +34,7 @@ export type DerivedNet = {
 
 export type Connectivity = {
   nets: DerivedNet[];
+  // Derived (non-persistent) implicit junctions, e.g. endpoint-on-segment (T-connections).
+  // These are recomputed each rebuild and must never be written back into RoutingState.
+  implicitJunctions?: KPoint[];
 };

@@ -82,7 +82,7 @@ function assert(condition: unknown, message: string) {
 
 // Test 5: T-junction follows junction rule
 (function testTJunctionRule() {
-  // Without junction: do not connect
+  // Endpoint-on-segment (T-connection) connects implicitly (KiCad-like).
   {
     const wires: KWire[] = [
       makeWire('wa', [[0, 0], [20, 0]]),
@@ -92,9 +92,9 @@ function assert(condition: unknown, message: string) {
     const conn = deriveConnectivity(state);
     const netA = findNetOfWireEndpoint(conn, 'wa', 1);
     const netB = findNetOfWireEndpoint(conn, 'wb', 0);
-    assert(netA !== null && netB !== null && netA !== netB, 'T-junction without explicit junction must not connect');
+    assert(netA && netB && netA === netB, 'T-connection (endpoint-on-segment) should connect without explicit junction');
   }
-  // With junction: DO connect
+  // With explicit junction: still connects.
   {
     const wires: KWire[] = [
       makeWire('wa', [[0, 0], [20, 0]]),
@@ -104,7 +104,7 @@ function assert(condition: unknown, message: string) {
     const conn = deriveConnectivity(state);
     const netA = findNetOfWireEndpoint(conn, 'wa', 1);
     const netB = findNetOfWireEndpoint(conn, 'wb', 0);
-    assert(netA && netB && netA === netB, 'T-junction with explicit junction must connect');
+    assert(netA && netB && netA === netB, 'Explicit junction at T-connection should connect');
   }
 })();
 

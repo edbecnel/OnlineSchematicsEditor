@@ -587,6 +587,10 @@ import {
   // Selection object: supports multiple items
   let selection: Selection = { items: [] };
   let drawing: { active: boolean; points: Point[]; cursor: Point | null } = { active: false, points: [], cursor: null };
+
+  // KiCad routing UX: when starting a wire from the interior of an existing
+  // segment, constrain the *first* rubber-band segment to be perpendicular.
+  let kicadFirstSegmentPerpLock: { lockAxis: 'x' | 'y'; fixed: number; minPerpDelta: number } | null = null;
   
   // ====== Selection Helper Functions ======
   
@@ -1470,6 +1474,9 @@ import {
   }
 
   let junctions: Junction[] = [];
+  // Derived (non-persistent) auto junction dots for KiCad-like T-connections.
+  // These are recomputed each rebuild and must never be saved into editor state.
+  let derivedAutoJunctions: Junction[] = [];
 
   function wireColorNameFromValue(v) {
     const val = (v || '').toLowerCase();
@@ -3992,7 +3999,24 @@ import {
     // junctions: only draw if showJunctionDots is true
     gJunctions.replaceChildren();
     if (showJunctionDots) {
-      for (const j of junctions) {
+      const isKicadMode = (window as any).routingKernelMode === 'kicad';
+      const suppressedKeys = new Set(
+        junctions
+          .filter(j => j.suppressed)
+          .map(j => Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) }))
+      );
+      const manualKeys = new Set(
+        junctions
+          .filter(j => j.manual && !j.suppressed)
+          .map(j => Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) }))
+      );
+      const derived = isKicadMode ? derivedAutoJunctions.filter(j => {
+        const k = Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) });
+        return !manualKeys.has(k) && !suppressedKeys.has(k);
+      }) : [];
+      const toDraw = isKicadMode ? [...junctions, ...derived] : junctions;
+
+      for (const j of toDraw) {
         // Skip suppressed junctions (invisible markers for deleted automatic junctions)
         if (j.suppressed) continue;
 
@@ -4030,24 +4054,30 @@ import {
         dot.setAttribute('fill', color);
         dot.setAttribute('stroke', 'var(--bg)');
         dot.setAttribute('stroke-width', '1');
-        dot.setAttribute('data-junction-id', j.id);
-        dot.style.cursor = 'pointer';
-        
-        // Add click handler to select junction
-        dot.addEventListener('pointerdown', (e) => {
-          if (mode === 'select' || mode === 'move') {
-            selectSingle('junction', j.id, null);
-            renderInspector();
-            Rendering.updateSelectionOutline(selection);
-            e.stopPropagation();
-          } else if (mode === 'none') {
-            setMode('select');
-            selectSingle('junction', j.id, null);
-            renderInspector();
-            Rendering.updateSelectionOutline(selection);
-            e.stopPropagation();
-          }
-        });
+        const isDerivedAuto = isKicadMode && !j.manual && typeof j.id === 'string' && j.id.startsWith('auto:');
+        if (isDerivedAuto) {
+          // Derived auto junctions are visual-only: not selectable and not persisted.
+          dot.setAttribute('data-auto-junction', '1');
+          dot.style.pointerEvents = 'none';
+        } else {
+          dot.setAttribute('data-junction-id', j.id);
+          dot.style.cursor = 'pointer';
+          // Add click handler to select junction
+          dot.addEventListener('pointerdown', (e) => {
+            if (mode === 'select' || mode === 'move') {
+              selectSingle('junction', j.id, null);
+              renderInspector();
+              Rendering.updateSelectionOutline(selection);
+              e.stopPropagation();
+            } else if (mode === 'none') {
+              setMode('select');
+              selectSingle('junction', j.id, null);
+              renderInspector();
+              Rendering.updateSelectionOutline(selection);
+              e.stopPropagation();
+            }
+          });
+        }
         
         gJunctions.appendChild(dot);
       }
@@ -4956,26 +4986,11 @@ import {
       if (value === 'legacy') {
         routingFacade.setKernel(_legacyRoutingAdapter);
       } else {
-        // Dev-only enablement for KiCad kernel
-        const isDev = (() => {
-          try {
-            const h = location.hostname;
-            return h === 'localhost' || h === '127.0.0.1';
-          } catch {
-            return false;
-          }
-        })();
-        if (isDev) {
-          const ki = new KiCadRoutingKernel();
-          // Use the existing app-level snapping so KiCad routing observes snap settings
-          ki.configureSnap((pos, snapRadius) => snapToGridOrObject(pos as any, snapRadius as any));
-          routingFacade.setKernel(ki);
-          console.info('[Routing] KiCad kernel enabled (dev override).');
-        } else {
-          console.warn('KiCad mode ignored outside dev; staying on legacy adapter');
-          routingFacade.setKernel(_legacyRoutingAdapter);
-          routingKernelMode = 'legacy';
-        }
+        const ki = new KiCadRoutingKernel();
+        // Use the existing app-level snapping so KiCad routing observes snap settings
+        ki.configureSnap((pos, snapRadius) => snapToGridOrObject(pos as any, snapRadius as any));
+        routingFacade.setKernel(ki);
+        console.info('[Routing] KiCad kernel enabled via ?routing=kicad.');
       }
     }
   });
@@ -4988,16 +5003,12 @@ import {
     console.warn('RoutingFacade initialization check failed:', e);
   }
 
-  // Dev-only override: allow `?routing=kicad` or localStorage('routingKernelMode'='kicad') to opt-in
-  (function applyDevRoutingOverride() {
-    const isDev = (() => {
-      try { const h = location.hostname; return h === 'localhost' || h === '127.0.0.1'; } catch { return false; }
-    })();
+  // Override: allow `?routing=kicad` to opt-in
+  (function applyRoutingOverride() {
     const params = new URLSearchParams(location.search);
     const q = params.get('routing');
-    const ls = localStorage.getItem('routingKernelMode');
-    const wantKicad = (q === 'kicad') || (ls === 'kicad');
-    if (isDev && wantKicad) {
+    const wantKicad = (q === 'kicad');
+    if (wantKicad) {
       (window as any).routingKernelMode = 'kicad';
     } else {
       (window as any).routingKernelMode = 'legacy';
@@ -6085,7 +6096,39 @@ import {
         drawing.points = [{ x, y }];
         drawing.cursor = { x, y };
         if ((window as any).routingKernelMode === 'kicad') {
-          routingFacade.beginPlacement({ x, y }, 'HV');
+          // If we started from the interior of an existing segment, lock the first
+          // segment to be perpendicular to that segment.
+          kicadFirstSegmentPerpLock = null;
+          const start = { x, y };
+          const hit = nearestSegmentAtPoint(start, 1);
+          if (hit && hit.w && typeof hit.idx === 'number') {
+            const a = hit.w.points[hit.idx];
+            const b = hit.w.points[hit.idx + 1];
+            const eps = 1;
+            const nearA = Math.hypot(start.x - a.x, start.y - a.y) <= eps;
+            const nearB = Math.hypot(start.x - b.x, start.y - b.y) <= eps;
+
+            // Only treat as interior-start if we're not on a wire vertex.
+            if (!nearA && !nearB) {
+              const segIsHorizontal = Math.abs(a.y - b.y) < 0.01;
+              const segIsVertical = Math.abs(a.x - b.x) < 0.01;
+              if (segIsHorizontal) {
+                // Horizontal base: constrain cursor X to start.x => vertical stub.
+                kicadFirstSegmentPerpLock = { lockAxis: 'x', fixed: start.x, minPerpDelta: 1 };
+                routingFacade.beginPlacement(start, 'VH');
+              } else if (segIsVertical) {
+                // Vertical base: constrain cursor Y to start.y => horizontal stub.
+                kicadFirstSegmentPerpLock = { lockAxis: 'y', fixed: start.y, minPerpDelta: 1 };
+                routingFacade.beginPlacement(start, 'HV');
+              } else {
+                routingFacade.beginPlacement(start, 'HV');
+              }
+            } else {
+              routingFacade.beginPlacement(start, 'HV');
+            }
+          } else {
+            routingFacade.beginPlacement(start, 'HV');
+          }
         }
       } else {
         // Check if we clicked on an endpoint circle (during drawing)
@@ -6141,6 +6184,7 @@ import {
           const res = routingFacade.commitCorner();
           drawing.points = res.points;
           drawing.cursor = { x: nx, y: ny };
+          kicadFirstSegmentPerpLock = null;
         } else if (USE_MANHATTAN_ROUTING && drawing.points.length >= 1) {
           const start = drawing.points[drawing.points.length - 1]; // Last placed point
           const end = { x: nx, y: ny };
@@ -6501,10 +6545,41 @@ import {
 
     if (mode === 'wire' && drawing.active) {
       if ((window as any).routingKernelMode === 'kicad') {
-        const prev = routingFacade.updatePlacement({ x, y }).preview;
+        // Apply first-segment perpendicular lock (if armed).
+        let ux = x, uy = y;
+        if (kicadFirstSegmentPerpLock && drawing.points.length > 0) {
+          const start = drawing.points[0];
+          if (kicadFirstSegmentPerpLock.lockAxis === 'x') {
+            // Keep cursor on the vertical line through the start point until the
+            // vertical leg has meaningful length; then allow the second (horizontal)
+            // leg to appear when the user moves sideways.
+            ux = start.x;
+          } else {
+            // Keep cursor on the horizontal line through the start point until the
+            // horizontal leg has meaningful length.
+            uy = start.y;
+          }
+        }
+
+        const prev = routingFacade.updatePlacement({ x: ux, y: uy }).preview;
         if (prev && prev.length >= 1) {
           drawing.points = prev;
           drawing.cursor = prev[prev.length - 1];
+        }
+
+        // Once we've moved far enough in the perpendicular direction, release the
+        // lock so the user can drag out the second orthogonal leg (corner).
+        if (kicadFirstSegmentPerpLock && drawing.points.length > 0) {
+          const start = drawing.points[0];
+          if (kicadFirstSegmentPerpLock.lockAxis === 'x') {
+            if (Math.abs(uy - start.y) >= kicadFirstSegmentPerpLock.minPerpDelta) {
+              kicadFirstSegmentPerpLock = null;
+            }
+          } else {
+            if (Math.abs(ux - start.x) >= kicadFirstSegmentPerpLock.minPerpDelta) {
+              kicadFirstSegmentPerpLock = null;
+            }
+          }
         }
         renderDrawing();
         renderConnectionHint();
@@ -7026,7 +7101,11 @@ import {
       }
       // If a drawing is in progress, cancel it first
       if (drawing.active) {
+        if ((window as any).routingKernelMode === 'kicad') {
+          routingFacade.cancelPlacement();
+        }
         drawing.active = false; drawing.points = []; gDrawing.replaceChildren();
+        kicadFirstSegmentPerpLock = null;
         connectionHint = null;
         renderConnectionHint(); // clear hint visual
         if (shiftOrthoVisualActive) {
@@ -7439,6 +7518,7 @@ import {
     drawing.active = false;
     drawing.points = [];
     drawing.cursor = null;
+    kicadFirstSegmentPerpLock = null;
     connectionHint = null;
     renderConnectionHint(); // clear hint visual
     if (shiftOrthoVisualActive) {
@@ -10731,6 +10811,15 @@ import {
 
   // ====== Topology: nodes, edges, SWPs ======
   function rebuildTopology(): void {
+    const isKicadMode = (window as any).routingKernelMode === 'kicad';
+    derivedAutoJunctions = [];
+
+    // In KiCad mode, never keep legacy auto-generated junctions around.
+    // Only manual junction dots are persistent.
+    if (isKicadMode) {
+      junctions = junctions.filter(j => !!j.manual);
+    }
+
     // Skip automatic junction detection and wire splitting during wire stretch
     // This prevents junctions from appearing to move as wires are dragged
     const skipAutoJunctionLogic = wireStretchState !== null;
@@ -10815,56 +10904,78 @@ import {
     }
     // Remove duplicates
     intersectionPoints = Array.from(new Set(intersectionPoints));
-    // Step 3: Split wire polylines at all intersection points
-    // Build a map: wireId -> array of points to insert (as {x, y})
-    const insertMap = new Map();
-    for (let i = 0; i < segments.length; i++) {
-      const s = segments[i];
+    // In KiCad mode: do NOT mutate wires to insert/split implicit T-junction nodes.
+    // Instead, render these T-junction dots as derived-only markers.
+    if (isKicadMode && intersectionPoints.length) {
+      const suppressed = new Set(junctions.filter(j => j.suppressed).map(j => Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) })));
+      const manual = new Set(junctions.filter(j => j.manual && !j.suppressed).map(j => Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) })));
       for (const k of intersectionPoints) {
-        const [ix, iy] = k.split(',').map(Number);
-        // Is this intersection on this segment?
-        if (
-          ((s.a.x === s.b.x && s.a.x === ix && Math.min(s.a.y, s.b.y) < iy && iy < Math.max(s.a.y, s.b.y)) ||
-            (s.a.y === s.b.y && s.a.y === iy && Math.min(s.a.x, s.b.x) < ix && ix < Math.max(s.a.x, s.b.x)))
-        ) {
-          if (!insertMap.has(s.w.id)) insertMap.set(s.w.id, []);
-          insertMap.get(s.w.id).push({ x: ix, y: iy });
+        if (manual.has(k) || suppressed.has(k)) continue;
+        const [x, y] = k.split(',').map(Number);
+        // Choose a netId from any wire touching this point (best-effort); fallback to default.
+        let netId = 'default';
+        for (const w of wires) {
+          if (!w.points || w.points.length < 2) continue;
+          const a = w.points[0], b = w.points[w.points.length - 1];
+          const on = (Math.round(a.x) === x && Math.round(a.y) === y) || (Math.round(b.x) === x && Math.round(b.y) === y);
+          if (on && (w as any).netId) { netId = (w as any).netId; break; }
         }
+        derivedAutoJunctions.push({ id: `auto:${k}`, at: { x, y }, netId, manual: false });
       }
     }
 
-    // For each wire, insert all intersection points into its polyline, then sort
-    for (const [wid, ptsToInsert] of insertMap.entries()) {
-      const w = wires.find(w => w.id === wid);
-      if (!w || !ptsToInsert.length) continue;
-      // Insert and sort points along the wire
-      let newPts = [w.points[0]];
-      for (let i = 1; i < w.points.length; i++) {
-        const a = w.points[i - 1], b = w.points[i];
-        // Find all intersection points on this segment
-        let segPts = ptsToInsert.filter(pt => {
-          if (a.x === b.x && pt.x === a.x && Math.min(a.y, b.y) < pt.y && pt.y < Math.max(a.y, b.y)) return true;
-          if (a.y === b.y && pt.y === a.y && Math.min(a.x, b.x) < pt.x && pt.x < Math.max(a.x, b.x)) return true;
-          return false;
-        });
-        // Sort along the segment
-        segPts.sort((p1, p2) => (a.x === b.x) ? (p1.y - p2.y) : (p1.x - p2.x));
-        for (const p of segPts) newPts.push(p);
-        newPts.push(b);
+    if (!isKicadMode) {
+      // Step 3: Split wire polylines at all intersection points
+      // Build a map: wireId -> array of points to insert (as {x, y})
+      const insertMap = new Map();
+      for (let i = 0; i < segments.length; i++) {
+        const s = segments[i];
+        for (const k of intersectionPoints) {
+          const [ix, iy] = k.split(',').map(Number);
+          // Is this intersection on this segment?
+          if (
+            ((s.a.x === s.b.x && s.a.x === ix && Math.min(s.a.y, s.b.y) < iy && iy < Math.max(s.a.y, s.b.y)) ||
+              (s.a.y === s.b.y && s.a.y === iy && Math.min(s.a.x, s.b.x) < ix && ix < Math.max(s.a.x, s.b.x)))
+          ) {
+            if (!insertMap.has(s.w.id)) insertMap.set(s.w.id, []);
+            insertMap.get(s.w.id).push({ x: ix, y: iy });
+          }
+        }
       }
-      // Remove duplicates
-      w.points = newPts.filter((pt, idx, arr) => idx === 0 || pt.x !== arr[idx - 1].x || pt.y !== arr[idx - 1].y);
-    }
-    
-    // Now, rebuild segmentPoints from all wires (now split at intersections)
-    segmentPoints = [];
-    for (const w of wires) {
-      const pts = w.points || [];
-      for (let i = 0; i < pts.length - 1; i++) {
-        const a = { x: Math.round(pts[i].x), y: Math.round(pts[i].y) };
-        const b = { x: Math.round(pts[i + 1].x), y: Math.round(pts[i + 1].y) };
-        segmentPoints.push(Geometry.keyPt(a));
-        segmentPoints.push(Geometry.keyPt(b));
+
+      // For each wire, insert all intersection points into its polyline, then sort
+      for (const [wid, ptsToInsert] of insertMap.entries()) {
+        const w = wires.find(w => w.id === wid);
+        if (!w || !ptsToInsert.length) continue;
+        // Insert and sort points along the wire
+        let newPts = [w.points[0]];
+        for (let i = 1; i < w.points.length; i++) {
+          const a = w.points[i - 1], b = w.points[i];
+          // Find all intersection points on this segment
+          let segPts = ptsToInsert.filter(pt => {
+            if (a.x === b.x && pt.x === a.x && Math.min(a.y, b.y) < pt.y && pt.y < Math.max(a.y, b.y)) return true;
+            if (a.y === b.y && pt.y === a.y && Math.min(a.x, b.x) < pt.x && pt.x < Math.max(a.x, b.x)) return true;
+            return false;
+          });
+          // Sort along the segment
+          segPts.sort((p1, p2) => (a.x === b.x) ? (p1.y - p2.y) : (p1.x - p2.x));
+          for (const p of segPts) newPts.push(p);
+          newPts.push(b);
+        }
+        // Remove duplicates
+        w.points = newPts.filter((pt, idx, arr) => idx === 0 || pt.x !== arr[idx - 1].x || pt.y !== arr[idx - 1].y);
+      }
+      
+      // Now, rebuild segmentPoints from all wires (now split at intersections)
+      segmentPoints = [];
+      for (const w of wires) {
+        const pts = w.points || [];
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = { x: Math.round(pts[i].x), y: Math.round(pts[i].y) };
+          const b = { x: Math.round(pts[i + 1].x), y: Math.round(pts[i + 1].y) };
+          segmentPoints.push(Geometry.keyPt(a));
+          segmentPoints.push(Geometry.keyPt(b));
+        }
       }
     }
     // Step 4: Add nodes for all unique points
@@ -11076,9 +11187,9 @@ import {
     }
     topology = { nodes: [...nodes.values()], edges, swps, compToSwp };
 
-    // --- JUNCTION LOGIC: Add junctions for wire-to-wire T-junctions (including at component pins) ---
+    // --- JUNCTION LOGIC: Legacy auto junction creation (disabled in KiCad mode) ---
     // Skip automatic junction detection during wire stretch to prevent junctions from moving
-    if (!skipAutoJunctionLogic) {
+    if (!skipAutoJunctionLogic && !isKicadMode) {
       // Preserve manually placed junctions, reuse automatic junction IDs
       const manualJunctions = junctions.filter(j => j.manual);
       const oldAutomaticJunctions = junctions.filter(j => !j.manual && !j.suppressed);
@@ -11177,7 +11288,8 @@ import {
     // Split wires at junction points (both manual and automatic)
     // This ensures that wires are separated into distinct segments at junctions
     const wiresToSplit = [];
-    for (const junction of junctions) {
+    const junctionsForSplit = isKicadMode ? junctions.filter(j => j.manual) : junctions;
+    for (const junction of junctionsForSplit) {
       const jx = Math.round(junction.at.x);
       const jy = Math.round(junction.at.y);
       
