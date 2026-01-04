@@ -2841,6 +2841,82 @@ import {
         } else {
           moveCollapseCtx = null;
         }
+        
+        // NEW: If not in SWP mode, check for simple wire connections at each pin
+        // Set up wire stretching for components with connected wires
+        if (!moveCollapseCtx && !componentDragState) {
+          componentDragState = { component: c, wires: [], ghostWires: [] };
+          
+          for (let pinIdx = 0; pinIdx < pins0.length; pinIdx++) {
+            const pin = pins0[pinIdx];
+            const connectedWires = wiresEndingAt(pin);
+            
+            // For each wire connected to this pin
+            for (const wire of connectedWires) {
+              // Determine which endpoint of the wire connects to this pin
+              const isStart = Geometry.eqPtEps(wire.points[0], pin, 1);
+              const isEnd = Geometry.eqPtEps(wire.points[wire.points.length - 1], pin, 1);
+              
+              if (!isStart && !isEnd) continue;
+              
+              // Determine wire axis
+              const p0 = wire.points[0];
+              const p1 = wire.points[wire.points.length - 1];
+              const isHorizontal = Math.abs(p0.y - p1.y) < Math.abs(p0.x - p1.x);
+              const wireAxis: 'x' | 'y' = isHorizontal ? 'x' : 'y';
+              
+              // Find the far endpoint (opposite from component)
+              const farEndpoint = isStart ? wire.points[wire.points.length - 1] : wire.points[0];
+              
+              // Check if far end has junction or component connection
+              const farWires = wiresEndingAt(farEndpoint);
+              const shouldBreakAtFarEnd = farWires.length > 1 || components.some(comp => {
+                if (comp.id === c.id) return false;
+                const compPins = Components.compPinPositions(comp);
+                return compPins.some(cp => Geometry.eqPtEps(cp, farEndpoint, 1));
+              });
+              
+              // Track perpendicular wires at far end
+              const perpendicularWires: typeof componentDragState.wires[number]['perpendicularWires'] = [];
+              if (shouldBreakAtFarEnd) {
+                // Find wires perpendicular to this one at the far endpoint
+                for (const perpWire of farWires) {
+                  if (perpWire.id === wire.id) continue;
+                  
+                  const perpP0 = perpWire.points[0];
+                  const perpP1 = perpWire.points[perpWire.points.length - 1];
+                  const perpIsHorizontal = Math.abs(perpP0.y - perpP1.y) < Math.abs(perpP0.x - perpP1.x);
+                  const perpAxis: 'x' | 'y' = perpIsHorizontal ? 'x' : 'y';
+                  
+                  // Only track if perpendicular to main wire
+                  if (perpAxis !== wireAxis) {
+                    const perpEndIndex = Geometry.eqPtEps(perpP0, farEndpoint, 1) ? 0 : 
+                                       (Geometry.eqPtEps(perpP1, farEndpoint, 1) ? 1 : -1);
+                    if (perpEndIndex >= 0) {
+                      perpendicularWires.push({
+                        wire: perpWire,
+                        endpointIndex: perpEndIndex,
+                        originalPoints: perpWire.points.map(pt => ({ x: pt.x, y: pt.y }))
+                      });
+                    }
+                  }
+                }
+              }
+              
+              componentDragState.wires.push({
+                wire,
+                pinIndex: pinIdx,
+                originalPoints: wire.points.map(pt => ({ x: pt.x, y: pt.y })),
+                originalPinPosition: { x: pin.x, y: pin.y },
+                axis: wireAxis,
+                isStart,
+                shouldBreakAtFarEnd,
+                farEndpoint: { x: farEndpoint.x, y: farEndpoint.y },
+                perpendicularWires
+              });
+            }
+          }
+        }
       }
       
       dragStart = {
@@ -3294,6 +3370,85 @@ import {
         updateCoordinateDisplay(c.x, c.y);
         updateCoordinateInputs(c.x, c.y);
         renderInspector();
+        
+        // NEW: Update wire stretching if we have connected wires
+        if (componentDragState && componentDragState.wires.length > 0) {
+          const currentPins = Components.compPinPositions(c).map(p => ({ 
+            x: snapToBaseScalar(p.x), 
+            y: snapToBaseScalar(p.y) 
+          }));
+          
+          componentDragState.ghostWires = [];
+          
+          for (const dragWire of componentDragState.wires) {
+            const currentPin = currentPins[dragWire.pinIndex];
+            const pinDelta = {
+              x: currentPin.x - dragWire.originalPinPosition.x,
+              y: currentPin.y - dragWire.originalPinPosition.y
+            };
+            
+            // Determine movement direction relative to wire axis
+            const alongAxis = dragWire.axis === 'x' ? pinDelta.x : pinDelta.y;
+            const perpToAxis = dragWire.axis === 'x' ? pinDelta.y : pinDelta.x;
+            
+            // If moving along the wire axis (inline), stretch the wire
+            if (Math.abs(alongAxis) > Math.abs(perpToAxis)) {
+              // Inline movement - stretch the wire
+              const ghostStart = dragWire.isStart ? currentPin : dragWire.originalPoints[0];
+              const ghostEnd = dragWire.isStart ? dragWire.originalPoints[dragWire.originalPoints.length - 1] : currentPin;
+              componentDragState.ghostWires.push({ from: ghostStart, to: ghostEnd });
+            } else if (Math.abs(perpToAxis) > 0.1) {
+              // Perpendicular movement - move the wire with the component
+              const newPoints = dragWire.originalPoints.map(pt => {
+                if (dragWire.axis === 'x') {
+                  // Wire is horizontal, move it vertically
+                  return { x: pt.x, y: pt.y + perpToAxis };
+                } else {
+                  // Wire is vertical, move it horizontally
+                  return { x: pt.x + perpToAxis, y: pt.y };
+                }
+              });
+              
+              // Update the component connection endpoint
+              if (dragWire.isStart) {
+                newPoints[0] = currentPin;
+              } else {
+                newPoints[newPoints.length - 1] = currentPin;
+              }
+              
+              // Draw ghost wire segments
+              for (let i = 0; i < newPoints.length - 1; i++) {
+                componentDragState.ghostWires.push({ from: newPoints[i], to: newPoints[i + 1] });
+              }
+              
+              // Also draw perpendicular wire ghosts
+              for (const perpWire of dragWire.perpendicularWires) {
+                const movedFarEnd = newPoints[dragWire.isStart ? newPoints.length - 1 : 0];
+                const perpEndpoint = perpWire.originalPoints[perpWire.endpointIndex];
+                
+                // Update the connecting coordinate while keeping the other fixed
+                let newPerpEnd: Point;
+                if (dragWire.axis === 'x') {
+                  // Main wire is horizontal, perp is vertical - update Y coordinate
+                  newPerpEnd = { x: perpEndpoint.x, y: movedFarEnd.y };
+                } else {
+                  // Main wire is vertical, perp is horizontal - update X coordinate
+                  newPerpEnd = { x: movedFarEnd.x, y: perpEndpoint.y };
+                }
+                
+                // Draw the stretched perpendicular wire
+                const ghostPerpPoints = [...perpWire.originalPoints];
+                ghostPerpPoints[perpWire.endpointIndex] = newPerpEnd;
+                for (let i = 0; i < ghostPerpPoints.length - 1; i++) {
+                  componentDragState.ghostWires.push({ from: ghostPerpPoints[i], to: ghostPerpPoints[i + 1] });
+                }
+              }
+            }
+          }
+          
+          // Render ghost wires
+          renderDrawing();
+        }
       }
     });
     g.addEventListener('pointerup', (e) => {
@@ -3332,72 +3487,90 @@ import {
           // Move each wire to final position and restore perpendicular wires
           for (const dragWire of componentDragState.wires) {
             const finalPin = finalPins[dragWire.pinIndex];
-            const delta = dragWire.axis === 'x' 
-              ? (finalPin.y - dragWire.originalPinPosition.y) 
-              : (finalPin.x - dragWire.originalPinPosition.x);
+            const pinDelta = {
+              x: finalPin.x - dragWire.originalPinPosition.x,
+              y: finalPin.y - dragWire.originalPinPosition.y
+            };
             
-            // Move the wire perpendicular to its axis
-            dragWire.wire.points = dragWire.originalPoints.map((pt, idx) => {
-              if (dragWire.axis === 'x') {
-                return { x: pt.x, y: pt.y + delta };
-              } else {
-                return { x: pt.x + delta, y: pt.y };
-              }
-            });
+            // Determine if movement was primarily along axis (inline/stretch) or perpendicular (move)
+            const alongAxis = dragWire.axis === 'x' ? pinDelta.x : pinDelta.y;
+            const perpToAxis = dragWire.axis === 'x' ? pinDelta.y : pinDelta.x;
             
-            // Update the component connection endpoint to match the new pin position
-            const componentEndIndex = dragWire.isStart ? 0 : dragWire.wire.points.length - 1;
-            dragWire.wire.points[componentEndIndex] = { x: finalPin.x, y: finalPin.y };
-            
-            // Move any MANUAL junction dots that were on this wire segment
-            // Automatic junctions are connection points and should stay fixed
-            const tolerance = 1.0; // tolerance for detecting if junction is on the original wire
-            for (const junction of junctions) {
-              // Skip suppressed junctions and automatic junctions
-              if (junction.suppressed || !junction.manual) continue;
+            if (Math.abs(alongAxis) > Math.abs(perpToAxis)) {
+              // INLINE MOVEMENT - Stretch the wire along its axis
+              // Update only the component-connected endpoint
+              const componentEndIndex = dragWire.isStart ? 0 : dragWire.wire.points.length - 1;
+              dragWire.wire.points[componentEndIndex] = { x: finalPin.x, y: finalPin.y };
               
-              // Check if this junction was on any point of the original wire
-              for (const origPt of dragWire.originalPoints) {
-                const dist = Math.hypot(junction.at.x - origPt.x, junction.at.y - origPt.y);
-                if (dist < tolerance) {
-                  // Move the junction the same delta as the wire
-                  if (dragWire.axis === 'x') {
-                    junction.at.y += delta;
-                  } else {
-                    junction.at.x += delta;
+              // Keep all other points unchanged (wire stretches)
+              // Already have originalPoints copied, just update the one endpoint
+            } else {
+              // PERPENDICULAR MOVEMENT - Move the entire wire perpendicular to its axis
+              const delta = perpToAxis;
+              
+              // Move the wire perpendicular to its axis
+              dragWire.wire.points = dragWire.originalPoints.map((pt, idx) => {
+                if (dragWire.axis === 'x') {
+                  return { x: pt.x, y: pt.y + delta };
+                } else {
+                  return { x: pt.x + delta, y: pt.y };
+                }
+              });
+              
+              // Update the component connection endpoint to match the new pin position
+              const componentEndIndex = dragWire.isStart ? 0 : dragWire.wire.points.length - 1;
+              dragWire.wire.points[componentEndIndex] = { x: finalPin.x, y: finalPin.y };
+              
+              // Move any MANUAL junction dots that were on this wire segment
+              // Automatic junctions are connection points and should stay fixed
+              const tolerance = 1.0; // tolerance for detecting if junction is on the original wire
+              for (const junction of junctions) {
+                // Skip suppressed junctions and automatic junctions
+                if (junction.suppressed || !junction.manual) continue;
+                
+                // Check if this junction was on any point of the original wire
+                for (const origPt of dragWire.originalPoints) {
+                  const dist = Math.hypot(junction.at.x - origPt.x, junction.at.y - origPt.y);
+                  if (dist < tolerance) {
+                    // Move the junction the same delta as the wire
+                    if (dragWire.axis === 'x') {
+                      junction.at.y += delta;
+                    } else {
+                      junction.at.x += delta;
+                    }
+                    break; // Only move each junction once
                   }
-                  break; // Only move each junction once
                 }
               }
-            }
-            
-            // Now update the perpendicular wires at far end - maintain orthogonality
-            for (const perpWire of dragWire.perpendicularWires) {
-              const movedFarEnd = dragWire.wire.points[dragWire.isStart ? dragWire.wire.points.length - 1 : 0];
               
-              // Get the perpendicular wire's endpoint that's being moved
-              const perpEndpoint = perpWire.endpointIndex === 0 
-                ? perpWire.wire.points[0]
-                : perpWire.wire.points[perpWire.wire.points.length - 1];
-              
-              // Update ONLY the coordinate that changed, to maintain orthogonality
-              // If the main wire is horizontal (axis='x'), perpendicular wire is vertical - update only Y
-              // If the main wire is vertical (axis='y'), perpendicular wire is horizontal - update only X
-              if (dragWire.axis === 'x') {
-                // Main wire is horizontal, perpendicular is vertical - keep X, update Y
-                const newEndpoint = { x: perpEndpoint.x, y: movedFarEnd.y };
-                if (perpWire.endpointIndex === 0) {
-                  perpWire.wire.points[0] = newEndpoint;
+              // Now update the perpendicular wires at far end - maintain orthogonality
+              for (const perpWire of dragWire.perpendicularWires) {
+                const movedFarEnd = dragWire.wire.points[dragWire.isStart ? dragWire.wire.points.length - 1 : 0];
+                
+                // Get the perpendicular wire's endpoint that's being moved
+                const perpEndpoint = perpWire.endpointIndex === 0 
+                  ? perpWire.wire.points[0]
+                  : perpWire.wire.points[perpWire.wire.points.length - 1];
+                
+                // Update ONLY the coordinate that changed, to maintain orthogonality
+                // If the main wire is horizontal (axis='x'), perpendicular wire is vertical - update only Y
+                // If the main wire is vertical (axis='y'), perpendicular wire is horizontal - update only X
+                if (dragWire.axis === 'x') {
+                  // Main wire is horizontal, perpendicular is vertical - keep X, update Y
+                  const newEndpoint = { x: perpEndpoint.x, y: movedFarEnd.y };
+                  if (perpWire.endpointIndex === 0) {
+                    perpWire.wire.points[0] = newEndpoint;
+                  } else {
+                    perpWire.wire.points[perpWire.wire.points.length - 1] = newEndpoint;
+                  }
                 } else {
-                  perpWire.wire.points[perpWire.wire.points.length - 1] = newEndpoint;
-                }
-              } else {
-                // Main wire is vertical, perpendicular is horizontal - keep Y, update X
-                const newEndpoint = { x: movedFarEnd.x, y: perpEndpoint.y };
-                if (perpWire.endpointIndex === 0) {
-                  perpWire.wire.points[0] = newEndpoint;
-                } else {
-                  perpWire.wire.points[perpWire.wire.points.length - 1] = newEndpoint;
+                  // Main wire is vertical, perpendicular is horizontal - keep Y, update X
+                  const newEndpoint = { x: movedFarEnd.x, y: perpEndpoint.y };
+                  if (perpWire.endpointIndex === 0) {
+                    perpWire.wire.points[0] = newEndpoint;
+                  } else {
+                    perpWire.wire.points[perpWire.wire.points.length - 1] = newEndpoint;
+                  }
                 }
               }
             }
