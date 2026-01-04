@@ -87,11 +87,11 @@ export class KiCadRoutingKernel implements IRoutingKernel {
 			// Free angle mode: straight line from last to cursor
 			seg = [{ x: last.x, y: last.y }, { x: cur.x, y: cur.y }];
 		} else {
-			// Orthogonal mode: track active leg direction and decide HV/VH once,
-			// then keep it for this segment to avoid the bend jumping back to the anchor.
+			// Orthogonal mode with KiCad-style auto-corner behavior
 			const dx = Math.abs(cur.x - last.x);
 			const dy = Math.abs(cur.y - last.y);
 			const MIN_DIST = 0.5;
+			const TURN_THRESHOLD = 1.0; // Minimum movement to detect direction change
 
 			// Before meaningful movement, just track straight to avoid spurious bends.
 			if (dx < MIN_DIST && dy < MIN_DIST) {
@@ -102,14 +102,44 @@ export class KiCadRoutingKernel implements IRoutingKernel {
 					this.placement.activeAxis = (dx >= dy) ? 'H' : 'V';
 				}
 
+				// Detect direction change: if moving perpendicular to current axis, auto-commit corner
+				if (this.placement.activeAxis) {
+					const movingH = (dx >= dy);
+					const movingV = (dy > dx);
+					
+					if (this.placement.activeAxis === 'H' && movingV && dy >= TURN_THRESHOLD) {
+						// Was horizontal, now moving vertical: commit corner at (cur.x, last.y)
+						const corner = { x: cur.x, y: last.y };
+						if (!(last.x === corner.x && last.y === corner.y)) {
+							this.placement.committed.push(corner);
+						}
+						this.placement.activeAxis = 'V';
+						this.placement.modeLockedForSegment = false;
+					} else if (this.placement.activeAxis === 'V' && movingH && dx >= TURN_THRESHOLD) {
+						// Was vertical, now moving horizontal: commit corner at (last.x, cur.y)
+						const corner = { x: last.x, y: cur.y };
+						if (!(last.x === corner.x && last.y === corner.y)) {
+							this.placement.committed.push(corner);
+						}
+						this.placement.activeAxis = 'H';
+						this.placement.modeLockedForSegment = false;
+					}
+				}
+
+				// Update last after potential corner commit
+				const updatedLast = this.placement.committed[this.placement.committed.length - 1];
+				
 				// Once we have a chosen axis and both dx/dy are significant, lock the mode
 				// for this segment so the bend doesn't flip mid-drag.
-				if (this.placement.activeAxis && !this.placement.modeLockedForSegment && dx >= MIN_DIST && dy >= MIN_DIST) {
+				const updatedDx = Math.abs(cur.x - updatedLast.x);
+				const updatedDy = Math.abs(cur.y - updatedLast.y);
+				
+				if (this.placement.activeAxis && !this.placement.modeLockedForSegment && updatedDx >= MIN_DIST && updatedDy >= MIN_DIST) {
 					this.placement.mode = (this.placement.activeAxis === 'H') ? 'HV' : 'VH';
 					this.placement.modeLockedForSegment = true;
 				}
 
-				seg = this.manhattanPath(last, cur, this.placement.mode);
+				seg = this.manhattanPath(updatedLast, cur, this.placement.mode);
 			}
 		}
 		const preview = [...this.placement.committed, ...seg.slice(1)];

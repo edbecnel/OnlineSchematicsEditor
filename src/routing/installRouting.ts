@@ -14,8 +14,6 @@ import type { Point } from '../types.js';
  * Dependencies required by routing kernels
  */
 export interface RoutingDependencies {
-  /** Manhattan path calculation function */
-  manhattanPath: (A: Point, P: Point, mode: 'HV' | 'VH') => Point[];
   /** Snap to grid or nearby object */
   snapToGridOrObject: (pos: Point, snapRadius?: number) => Point;
   /** Get current ortho mode state */

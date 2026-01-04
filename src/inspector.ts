@@ -970,7 +970,51 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     if (!j) return;
     
     const wrap = document.createElement('div');
-    wrap.appendChild(rowPair('Type', text(j.manual ? 'Manual Junction' : 'Auto Junction', true)));
+    
+    // Type dropdown - allow converting automatic to manual
+    const typeRow = document.createElement('div');
+    typeRow.className = 'row';
+    const typeLbl = document.createElement('label');
+    typeLbl.textContent = 'Type';
+    typeRow.appendChild(typeLbl);
+    
+    const typeSelect = document.createElement('select');
+    typeSelect.style.flex = '1';
+    
+    const autoOption = document.createElement('option');
+    autoOption.value = 'auto';
+    autoOption.textContent = 'Automatic Junction';
+    typeSelect.appendChild(autoOption);
+    
+    const manualOption = document.createElement('option');
+    manualOption.value = 'manual';
+    manualOption.textContent = 'Manual Junction';
+    typeSelect.appendChild(manualOption);
+    
+    typeSelect.value = j.manual ? 'manual' : 'auto';
+    
+    typeSelect.onchange = () => {
+      if (typeSelect.value === 'manual' && !j.manual) {
+        // Convert automatic to manual
+        ctx.pushUndo();
+        j.manual = true;
+        ctx.redrawCanvasOnly();
+        ctx.renderInspector();
+      }
+      // Allow converting manual back to automatic - clears custom properties
+      else if (typeSelect.value === 'auto' && j.manual) {
+        ctx.pushUndo();
+        j.manual = false;
+        // Reset to defaults (remove custom overrides)
+        delete j.size;
+        delete j.color;
+        ctx.redrawCanvasOnly();
+        ctx.renderInspector();
+      }
+    };
+    
+    typeRow.appendChild(typeSelect);
+    wrap.appendChild(typeRow);
     
     // Position (read-only)
     const xNm = ctx.pxToNm(j.at.x);
@@ -988,7 +1032,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     const sizeLabelRow = document.createElement('div');
     sizeLabelRow.className = 'row';
     const sizeLbl = document.createElement('label');
-    sizeLbl.textContent = 'Junction Dot Size';
+    sizeLbl.textContent = j.manual ? 'Junction Dot Size' : 'Junction Dot Size (locked for automatic junctions)';
     sizeLabelRow.appendChild(sizeLbl);
     wrap.appendChild(sizeLabelRow);
     
@@ -1046,13 +1090,18 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
       svg.appendChild(circle);
       btn.appendChild(svg);
       
+      // Disable button for automatic junctions
+      if (!j.manual) {
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+      }
+      
       btn.onclick = () => {
+        // Only allow size changes for manual junctions
+        if (!j.manual) return;
         ctx.pushUndo();
         j.size = preset.mils;
-        // Mark as manual so custom properties persist through topology rebuilds
-        if (!j.manual) {
-          j.manual = true;
-        }
         ctx.redrawCanvasOnly();
         ctx.renderInspector();
       };
@@ -1144,19 +1193,19 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     try { sizeIn.name = `ins-size-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     sizeIn.style.width = '12ch';
     sizeIn.placeholder = 'Optional';
+    sizeIn.disabled = !j.manual; // Disable for automatic junctions
     
     const currentSizeNm = currentSizeMils * 0.0254 * ctx.NM_PER_MM;
     sizeIn.value = ctx.formatDimForDisplay(currentSizeNm, ctx.globalUnits);
     
     sizeIn.onchange = () => {
+      // Only allow size changes for manual junctions
+      if (!j.manual) return;
       ctx.pushUndo();
       const parsed = ctx.parseDimInput(sizeIn.value || '');
       if (parsed && parsed.nm > 0) {
         const sizeMils = parsed.nm / (0.0254 * ctx.NM_PER_MM);
         j.size = sizeMils;
-        if (!j.manual) {
-          j.manual = true;
-        }
         ctx.redrawCanvasOnly();
         ctx.renderInspector();
       } else if (!sizeIn.value.trim()) {
@@ -1174,9 +1223,6 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
         }
         
         j.size = nearestPreset;
-        if (!j.manual) {
-          j.manual = true;
-        }
         ctx.redrawCanvasOnly();
         ctx.renderInspector();
       }
@@ -1189,12 +1235,13 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     const colorRow = document.createElement('div');
     colorRow.className = 'row';
     const colorLbl = document.createElement('label');
-    colorLbl.textContent = 'Color';
+    colorLbl.textContent = j.manual ? 'Color' : 'Color (locked for automatic junctions)';
     colorLbl.style.minWidth = 'auto';
     colorLbl.style.marginRight = '0.5rem';
     
     const colorIn = document.createElement('input');
     colorIn.type = 'color';
+    colorIn.disabled = !j.manual; // Disable for automatic junctions
     try { colorIn.name = `ins-color-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     colorIn.title = 'Pick color';
     colorIn.style.minWidth = '32px';
@@ -1214,6 +1261,7 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     // Opacity slider
     const opacityIn = document.createElement('input');
     opacityIn.type = 'range';
+    opacityIn.disabled = !j.manual; // Disable for automatic junctions
     try { opacityIn.name = `ins-range-${Math.random().toString(36).slice(2,8)}`; } catch (_) {}
     opacityIn.min = '0';
     opacityIn.max = '1';
@@ -1239,6 +1287,8 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
     };
     
     const applyColor = () => {
+      // Only allow color changes for manual junctions
+      if (!j.manual) return;
       const hex = colorIn.value || '#000000';
       const m = hex.replace('#', '');
       const r = parseInt(m.slice(0, 2), 16);
@@ -1246,10 +1296,6 @@ export function renderInspector(ctx: InspectorContext, inspector: HTMLElement, i
       const b = parseInt(m.slice(4, 6), 16);
       const a = parseFloat(opacityIn.value) || 1;
       j.color = `rgba(${r},${g},${b},${a})`;
-      // Mark as manual so custom properties persist through topology rebuilds
-      if (!j.manual) {
-        j.manual = true;
-      }
       ctx.redrawCanvasOnly();
     };
     

@@ -667,15 +667,9 @@ import {
   // doesn't "flip" back to the start point when dy grows larger than dx (or vice versa).
   let manhattanSegmentMode: 'HV' | 'VH' | null = null;
   let manhattanSegmentModePointsLen = 0;
-  // Legacy Manhattan routing: track the active leg direction and auto-insert corners
-  // when the user changes direction while dragging.
-  let manhattanActiveAxis: 'H' | 'V' | null = null;
-  let manhattanLastCornerAt: Point | null = null;
   const resetManhattanSegmentMode = () => {
     manhattanSegmentMode = null;
     manhattanSegmentModePointsLen = drawing?.points?.length || 0;
-    manhattanActiveAxis = null;
-    manhattanLastCornerAt = null;
   };
   let constraintSolver: ConstraintSolver | null = null;
   const DEBUG_MOVES = false;
@@ -748,6 +742,7 @@ import {
     // KiCad mode: stub host wire junctions that need to stay "mended" during drag
     stubHostJunctions?: Array<{
       junction: Junction;
+      initialJunctionPosition: Point; // Original position before drag
       segment1: Wire;
       segment2: Wire;
       seg1EndIndex: number;
@@ -4013,6 +4008,7 @@ import {
               // Track stub host wire junctions that need to be kept "mended" during drag (KiCad mode only)
               const stubHostJunctions: Array<{
                 junction: Junction;
+                initialJunctionPosition: Point; // Original position before drag
                 segment1: Wire;
                 segment2: Wire;
                 seg1EndIndex: number;
@@ -4083,20 +4079,26 @@ import {
                       let tempJunctionId: string | undefined;
                       if (!junctionObj) {
                         tempJunctionId = State.uid('junction');
-                        // Create a real, selectable junction (KiCad behavior) and then move it during drag.
-                        junctionObj = { id: tempJunctionId, at: { x: jx, y: jy }, manual: true };
+                        // Create a real, selectable junction (KiCad behavior)
+                        // Marked as automatic (code-created) but persistent (not derived-only).
+                        junctionObj = { id: tempJunctionId, at: { x: jx, y: jy }, manual: false };
                         junctions.push(junctionObj);
                       }
+                      
+                      // Delete the junction at drag start - rebuildTopology() will recreate it at the new position
+                      if (!junctionObj.manual) {
+                        junctions = junctions.filter(j => j.id !== junctionObj!.id);
+                      }
 
-                      const staleJunctionIds = candidates.map(j => j.id).filter(id => id !== junctionObj!.id);
-                      
-                      const seg1Start = merge.segment1.points[0];
-                      const seg1End = merge.segment1.points[merge.segment1.points.length - 1];
-                      const seg1EndIndex = (Math.hypot(seg1End.x - jx, seg1End.y - jy) < 1) ? merge.segment1.points.length - 1 : 0;
-                      
-                      const seg2Start = merge.segment2.points[0];
-                      const seg2End = merge.segment2.points[merge.segment2.points.length - 1];
-                      const seg2EndIndex = (Math.hypot(seg2End.x - jx, seg2End.y - jy) < 1) ? merge.segment2.points.length - 1 : 0;
+                  const staleJunctionIds = candidates.map(j => j.id).filter(id => id !== junctionObj!.id);
+                  
+                  const seg1Start = merge.segment1.points[0];
+                  const seg1End = merge.segment1.points[merge.segment1.points.length - 1];
+                  const seg1EndIndex = (Math.hypot(seg1End.x - jx, seg1End.y - jy) < 1) ? merge.segment1.points.length - 1 : 0;
+                  
+                  const seg2Start = merge.segment2.points[0];
+                  const seg2End = merge.segment2.points[merge.segment2.points.length - 1];
+                  const seg2EndIndex = (Math.hypot(seg2End.x - jx, seg2End.y - jy) < 1) ? merge.segment2.points.length - 1 : 0;
 
                       const seg1FixedEndIndex = (seg1EndIndex === 0) ? (merge.segment1.points.length - 1) : 0;
                       const seg2FixedEndIndex = (seg2EndIndex === 0) ? (merge.segment2.points.length - 1) : 0;
@@ -4107,8 +4109,10 @@ import {
                       const hostAxis: 'x' | 'y' = isVertHost ? 'x' : 'y';
                       const hostLock = isVertHost ? s1a.x : s1a.y;
                       
+                      // Track this junction info for later cleanup (optional)
                       stubHostJunctions.push({
                         junction: junctionObj,
+                        initialJunctionPosition: { x: junctionObj.at.x, y: junctionObj.at.y },
                         segment1: merge.segment1,
                         segment2: merge.segment2,
                         seg1EndIndex,
@@ -4360,7 +4364,8 @@ import {
                   let tempJunctionId: string | undefined;
                   if (!junctionObj) {
                     tempJunctionId = State.uid('junction');
-                    junctionObj = { id: tempJunctionId, at: { x: jx, y: jy }, manual: true };
+                    // Marked as automatic (code-created) but persistent (not derived-only).
+                    junctionObj = { id: tempJunctionId, at: { x: jx, y: jy }, manual: false };
                     junctions.push(junctionObj);
                   }
 
@@ -4381,6 +4386,7 @@ import {
 
                   stubHostJunctions.push({
                     junction: junctionObj,
+                    initialJunctionPosition: { x: junctionObj.at.x, y: junctionObj.at.y },
                     segment1: merge.segment1,
                     segment2: merge.segment2,
                     seg1EndIndex,
@@ -4674,12 +4680,13 @@ import {
             }
 
             if (mode === 'select' || mode === 'move' || mode === 'none') {
-              // Promote to a real manual junction so it becomes selectable and Inspector-aware.
+              // Select the auto junction (or promote a derived one to a real persistent auto junction)
               pushUndo();
               const existing = junctions.find(jj => !jj.suppressed && Math.hypot(jj.at.x - at.x, jj.at.y - at.y) <= 1e-3);
               const id = existing?.id || State.uid('junction');
               if (!existing) {
-                junctions.push({ id, at: { x: at.x, y: at.y }, manual: true });
+                // Create as automatic junction (was derived, now becomes persistent automatic)
+                junctions.push({ id, at: { x: at.x, y: at.y }, manual: false });
               }
               if (mode === 'none') setMode('select');
               selectSingle('junction', id, null);
@@ -5557,26 +5564,6 @@ import {
    * @param mode 'HV' = horizontal first, then vertical; 'VH' = vertical first, then horizontal
    * @returns Array of points: [A, ..., P] with 0 or 1 intermediate bend point
    */
-  function manhattanPath(A: Point, P: Point, mode: 'HV' | 'VH'): Point[] {
-    // If A and P already share X or Y, only need straight segment
-    if (Math.abs(A.x - P.x) < 0.01) {
-      return [{ x: A.x, y: A.y }, { x: A.x, y: P.y }];
-    }
-    if (Math.abs(A.y - P.y) < 0.01) {
-      return [{ x: A.x, y: A.y }, { x: P.x, y: A.y }];
-    }
-
-    // Need a bend - create intermediate point
-    if (mode === 'HV') {
-      // Horizontal first, then vertical
-      const B: Point = { x: P.x, y: A.y };
-      return [{ x: A.x, y: A.y }, B, { x: P.x, y: P.y }];
-    } else {
-      // Vertical first, then horizontal
-      const B: Point = { x: A.x, y: P.y };
-      return [{ x: A.x, y: A.y }, B, { x: P.x, y: P.y }];
-    }
-  }
 
   /**
    * Snap to grid or nearby object (pin, wire endpoint, junction).
@@ -5599,7 +5586,6 @@ import {
   // --------- Wire routing facade setup (Phase 1)
   // Install routing kernels via dedicated module
   installRouting({
-    manhattanPath: (A, P, mode) => manhattanPath(A, P, mode),
     snapToGridOrObject: (pos, snapRadius) => snapToGridOrObject(pos, snapRadius),
     getOrthoMode: () => orthoMode
   });
@@ -7239,7 +7225,7 @@ import {
           }
 
           // Keep stub host wire segments "mended" at junctions (KiCad mode only)
-          // Update both segment endpoints to stay together as the junction slides
+          // Note: Junctions are deleted at drag start and recreated by rebuildTopology() at drag end
           if (wireStretchState.stubHostJunctions) {
             for (const shj of wireStretchState.stubHostJunctions) {
               const seg1 = wires.find(ww => ww.id === shj.segment1.id);
@@ -7371,18 +7357,6 @@ import {
               seg2.points[shj.seg2EndIndex] = { x: newJunctionPt.x, y: newJunctionPt.y };
               updateWireDOM(seg1);
               updateWireDOM(seg2);
-
-              // Keep the junction dot in sync while dragging.
-              if (shj.junction) {
-                shj.junction.at = { x: newJunctionPt.x, y: newJunctionPt.y };
-
-                // Update the DOM circle immediately when it exists (we don't redraw on every mousemove).
-                const el = gJunctions.querySelector(`[data-junction-id="${shj.junction.id}"]`) as SVGCircleElement | null;
-                if (el) {
-                  el.setAttribute('cx', String(newJunctionPt.x));
-                  el.setAttribute('cy', String(newJunctionPt.y));
-                }
-              }
 
               // If there is already a real connecting wire from a prior drag, keep its host-side
               // endpoint attached to the mended junction. This prevents the existing connecting
@@ -8166,76 +8140,6 @@ import {
         const last = drawing.points[drawing.points.length - 1];
         const dx = Math.abs(x - last.x), dy = Math.abs(y - last.y);
 
-        // Manhattan+Ortho: anchor at the last placed point, draw out in the direction
-        // of the mouse movement, and when the mouse changes direction, insert a corner
-        // at the projected mouse position and flip the active direction.
-        if (USE_MANHATTAN_ROUTING && orthoRequested) {
-          const minStep = (snapMode === 'off') ? 1 : (CURRENT_SNAP_USER_UNITS || baseSnapUser());
-          const TURN_EPS = Math.max(1, minStep);
-          const MIN_LEG = Math.max(1, minStep);
-
-          const rawX = p.x;
-          const rawY = p.y;
-
-          // If points changed (a corner/point was placed), reset direction tracking.
-          if (!manhattanLastCornerAt || Math.abs(manhattanLastCornerAt.x - last.x) > 1e-6 || Math.abs(manhattanLastCornerAt.y - last.y) > 1e-6) {
-            manhattanLastCornerAt = { x: last.x, y: last.y };
-            manhattanActiveAxis = null;
-          }
-
-          // Decide initial axis only after the user has moved enough to make the
-          // intent clear. This avoids picking the wrong axis due to tiny jitter
-          // right after anchoring the start point.
-          if (!manhattanActiveAxis) {
-            const ddx = Math.abs(rawX - last.x);
-            const ddy = Math.abs(rawY - last.y);
-            const START_DIR_EPS = TURN_EPS;
-            if (ddx >= START_DIR_EPS || ddy >= START_DIR_EPS) {
-              manhattanActiveAxis = (ddx >= ddy) ? 'H' : 'V';
-            }
-          }
-
-          // Constrain cursor only once we have a chosen axis.
-          if (manhattanActiveAxis === 'H') {
-            y = last.y;
-          } else if (manhattanActiveAxis === 'V') {
-            x = last.x;
-          }
-
-          // Detect direction change: if user moves significantly in the perpendicular axis,
-          // commit a corner at the projected point and flip direction.
-          if (manhattanActiveAxis === 'H') {
-            const perp = Math.abs(rawY - last.y);
-            const along = Math.abs(rawX - last.x);
-            if (perp >= TURN_EPS && along >= MIN_LEG) {
-              const corner = { x, y }; // projected (rawX, last.y) with snapping applied
-              const prev = drawing.points[drawing.points.length - 1];
-              if (!prev || Math.abs(prev.x - corner.x) > 1e-6 || Math.abs(prev.y - corner.y) > 1e-6) {
-                drawing.points.push(corner);
-              }
-              manhattanLastCornerAt = { x: corner.x, y: corner.y };
-              manhattanActiveAxis = 'V';
-              // Now constrain along new axis from the new corner.
-              x = corner.x;
-              y = y; // allow y to move
-            }
-          } else if (manhattanActiveAxis === 'V') {
-            const perp = Math.abs(rawX - last.x);
-            const along = Math.abs(rawY - last.y);
-            if (perp >= TURN_EPS && along >= MIN_LEG) {
-              const corner = { x, y }; // projected (last.x, rawY) with snapping applied
-              const prev = drawing.points[drawing.points.length - 1];
-              if (!prev || Math.abs(prev.x - corner.x) > 1e-6 || Math.abs(prev.y - corner.y) > 1e-6) {
-                drawing.points.push(corner);
-              }
-              manhattanLastCornerAt = { x: corner.x, y: corner.y };
-              manhattanActiveAxis = 'H';
-              y = corner.y;
-              x = x; // allow x to move
-            }
-          }
-        }
-
         // Apply standard ortho constraint FIRST (if no hint is active yet)
         if (!connectionHint && forceOrtho) {
           if (dx >= dy) y = last.y; else x = last.x;
@@ -8317,17 +8221,10 @@ import {
             const rawY = p.y;
 
             // Only show hints orthogonal to the *current* segment being placed.
-            // In Manhattan routing, once you have a bend preview, the "current segment"
-            // is the LAST leg (which depends on HV vs VH), not the vector from the start anchor.
             let considerXAlignment = true; // X alignment => vertical hint (lock X)
             let considerYAlignment = true; // Y alignment => horizontal hint (lock Y)
 
-            if (USE_MANHATTAN_ROUTING && orthoRequested && manhattanActiveAxis) {
-              // Use the active Manhattan leg direction: hints must be orthogonal to it.
-              // H leg => vertical hint only (X alignment). V leg => horizontal hint only (Y alignment).
-              considerXAlignment = (manhattanActiveAxis === 'H');
-              considerYAlignment = (manhattanActiveAxis === 'V');
-            } else if (USE_MANHATTAN_ROUTING) {
+            if (USE_MANHATTAN_ROUTING) {
               const start0 = last; // last placed point (segment origin)
               const dx0 = Math.abs(rawX - start0.x);
               const dy0 = Math.abs(rawY - start0.y);
@@ -8792,74 +8689,6 @@ import {
         splitWiresAtTJunctions();
         normalizeAllWires();
 
-        // KiCad stub drag cleanup: ensure a single manual junction at the final mended junction point.
-        // This prevents duplicate selectable junctions stacking up across repeated drags.
-        if ((window as any).routingKernelMode === 'kicad' && wireStretchState.stubHostJunctions) {
-          const keepIds = new Set<string>();
-          const keysToDedup = new Set(
-            wireStretchState.stubHostJunctions
-              .map(shj => Geometry.keyPt({ x: Math.round(shj.junction.at.x), y: Math.round(shj.junction.at.y) }))
-          );
-
-          // For each key, keep the first non-suppressed manual junction encountered.
-          const seen = new Set<string>();
-          for (const j of junctions) {
-            const k = Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) });
-            if (!keysToDedup.has(k)) continue;
-            if (j.suppressed) continue;
-            if (!j.manual) continue;
-            if (!seen.has(k)) {
-              keepIds.add(j.id);
-              seen.add(k);
-            }
-          }
-
-          if (keysToDedup.size > 0) {
-            junctions = junctions.filter(j => {
-              const k = Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) });
-              if (!keysToDedup.has(k)) return true;
-              if (j.suppressed) return true; // keep suppression markers
-              if (!j.manual) return false;   // never keep non-manual here
-              return keepIds.has(j.id);
-            });
-
-            // If the final mended point ended up being just an endpoint connection (degree <= 2),
-            // remove the junction dot entirely (KiCad does not keep junction dots at wire endpoints).
-            for (const k of keysToDedup) {
-              const [x, y] = k.split(',').map(Number);
-              const deg = wiresEndingAt({ x, y }).length;
-              if (deg <= 2) {
-                junctions = junctions.filter(j => {
-                  const jk = Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) });
-                  if (jk !== k) return true;
-                  return j.suppressed; // keep only suppression markers at this location
-                });
-              }
-            }
-
-            // Also clear any stray junction dots that might remain at the *previous* host endpoints
-            // after rubber-banding past the end (the connection should be a simple endpoint, not a node).
-            const oldEndKeys = new Set(
-              wireStretchState.stubHostJunctions.flatMap(shj => [
-                Geometry.keyPt({ x: Math.round(shj.seg1InitialFixedEnd.x), y: Math.round(shj.seg1InitialFixedEnd.y) }),
-                Geometry.keyPt({ x: Math.round(shj.seg2InitialFixedEnd.x), y: Math.round(shj.seg2InitialFixedEnd.y) })
-              ])
-            );
-            for (const k of oldEndKeys) {
-              if (keysToDedup.has(k)) continue;
-              const [x, y] = k.split(',').map(Number);
-              const deg = wiresEndingAt({ x, y }).length;
-              if (deg <= 2) {
-                junctions = junctions.filter(j => {
-                  const jk = Geometry.keyPt({ x: Math.round(j.at.x), y: Math.round(j.at.y) });
-                  if (jk !== k) return true;
-                  return j.suppressed;
-                });
-              }
-            }
-          }
-        }
-        
         // If wire was temporarily merged, restore the split (KiCad mode only)
         const isKicadMode = (window as any).routingKernelMode === 'kicad';
         if (isKicadMode && (wireStretchState as any).mergedSegments) {
@@ -13060,10 +12889,13 @@ import {
     const isKicadMode = (window as any).routingKernelMode === 'kicad';
     derivedAutoJunctions = [];
 
-    // In KiCad mode, never keep legacy auto-generated junctions around.
-    // Only manual junction dots are persistent.
+    // In KiCad mode: Keep manual junctions AND automatic junctions that have explicit IDs
+    // (indicating they were created by code, not derived). Derived junctions go into
+    // derivedAutoJunctions and are recreated each rebuild.
     if (isKicadMode) {
-      junctions = junctions.filter(j => !!j.manual);
+      // Keep manual junctions and persistent automatic junctions (those with non-auto IDs)
+      // but exclude suppressed junctions
+      junctions = junctions.filter(j => !j.suppressed && (j.manual || !j.id.startsWith('auto:')));
     }
 
     // Skip automatic junction detection and wire splitting during wire stretch
