@@ -382,15 +382,32 @@ import {
     const id = State.uid(type);
     const counterValue = (State.counters[type] ?? 1) - 1;
     const labelCounter = counterValue > 0 ? counterValue : 1;
+    
+    // Get anchor point offset for this component type
+    const anchor = Components.getDefaultAnchor(type);
+    
+    // Apply anchor offset (rotated by component rotation)
+    const radians = (rot * Math.PI) / 180;
+    const cosR = Math.cos(radians);
+    const sinR = Math.sin(radians);
+    const anchorWorldX = anchor.x * cosR - anchor.y * sinR;
+    const anchorWorldY = anchor.x * sinR + anchor.y * cosR;
+    
+    // Position component so anchor point is at the specified position
+    const componentX = position.x - anchorWorldX;
+    const componentY = position.y - anchorWorldY;
+    
     const comp: Component = {
       id,
       type,
-      x: position.x,
-      y: position.y,
+      x: componentX,
+      y: componentY,
       rot,
       label: Components.getDefaultLabel(type, labelCounter),
       value: '',
-      props: {}
+      props: {},
+      anchorX: anchor.x,
+      anchorY: anchor.y
     };
 
     if (type === 'diode') {
@@ -2585,10 +2602,14 @@ import {
 
     // (selection ring removed; selection is shown by tinting the symbol graphics)
 
-    // big invisible hit for easy click/drag
+    // Invisible hit rect for easy click/drag - sized to component graphics bounds only (not labels)
+    const bounds = Components.getComponentBounds(c);
+    const padding = 5; // Small padding for easier clicking
     const hit = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    setAttr(hit, 'x', c.x - 40); setAttr(hit, 'y', c.y - 40);
-    setAttr(hit, 'width', 80); setAttr(hit, 'height', 80);
+    setAttr(hit, 'x', bounds.minX - padding);
+    setAttr(hit, 'y', bounds.minY - padding);
+    setAttr(hit, 'width', (bounds.maxX - bounds.minX) + (padding * 2));
+    setAttr(hit, 'height', (bounds.maxY - bounds.minY) + (padding * 2));
     hit.setAttribute('fill', 'transparent');
     g.appendChild(hit);
 
@@ -4931,8 +4952,14 @@ import {
           circle.setAttribute('fill', 'rgba(0,200,0,0.08)');
           circle.setAttribute('stroke', 'lime');
           circle.setAttribute('stroke-width', String(1 / Math.max(1e-6, scale)));
-          circle.style.cursor = 'pointer';
-          circle.style.pointerEvents = 'all'; // Ensure circle captures pointer events
+          // Disable interaction during place mode to allow component placement
+          if (mode === 'place') {
+            circle.style.pointerEvents = 'none';
+            circle.style.cursor = 'default';
+          } else {
+            circle.style.cursor = 'pointer';
+            circle.style.pointerEvents = 'all'; // Ensure circle captures pointer events
+          }
           circle.style.zIndex = '9999'; // Force on top
           (circle as any).endpoint = { x: pt.x, y: pt.y };
           (circle as any).wireId = w.id;
@@ -10189,16 +10216,33 @@ import {
       const hit = nearestSegmentAtPoint(pos, 18);
       if (hit) { at = hit.q; rot = normDeg(hit.angle); }
     }
+    
+    // Get anchor point offset for this component type
+    const anchor = Components.getDefaultAnchor(type);
+    
+    // Apply anchor offset (rotated by component rotation)
+    const radians = (rot * Math.PI) / 180;
+    const cosR = Math.cos(radians);
+    const sinR = Math.sin(radians);
+    const anchorWorldX = anchor.x * cosR - anchor.y * sinR;
+    const anchorWorldY = anchor.x * sinR + anchor.y * cosR;
+    
+    // Position component so anchor point is at cursor position
+    const componentX = at.x - anchorWorldX;
+    const componentY = at.y - anchorWorldY;
+    
     const labelCounter = State.counters[type] ?? 1;
     const ghost: Component = {
       id: '__ghost__',
       type,
-      x: at.x,
-      y: at.y,
+      x: componentX,
+      y: componentY,
       rot,
       label: Components.getDefaultLabel(type, labelCounter),
       value: '',
-      props: {}
+      props: {},
+      anchorX: anchor.x,
+      anchorY: anchor.y
     };
     if (pendingLibrarySymbol && pendingLibrarySymbol.placeType === type) {
       ghost.pins = pendingLibrarySymbol.pins.map(clonePin);
