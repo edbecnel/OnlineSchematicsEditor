@@ -25,8 +25,7 @@ import * as UI from './ui.js';
 import * as Input from './input.js';
 import type { ClientXYEvent } from './utils.js';
 import { routingFacade } from './routing/facade.js';
-import { LegacyRoutingKernelAdapter } from './routing/legacyAdapter.js';
-import { KiCadRoutingKernel } from './routing/kicadKernel.js';
+import { installRouting } from './routing/installRouting.js';
 import { ConstraintSolver } from './constraints/index.js';
 import type { Entity } from './constraints/types.js';
 import { initializeProjectSettings, updateProjectSettings, DEFAULT_THEME_BACKGROUND, getDefaultSymbolTheme } from './projectSettings.js';
@@ -5598,55 +5597,12 @@ import {
   }
 
   // --------- Wire routing facade setup (Phase 1)
-  // Create legacy adapter that delegates to the existing local implementations
-  const _legacyRoutingAdapter = new LegacyRoutingKernelAdapter({
-    manhattanPath: (A, P, mode) => manhattanPath(A as any, P as any, mode as any),
-    snapToGridOrObject: (pos, snapRadius) => snapToGridOrObject(pos as any, snapRadius as any)
+  // Install routing kernels via dedicated module
+  installRouting({
+    manhattanPath: (A, P, mode) => manhattanPath(A, P, mode),
+    snapToGridOrObject: (pos, snapRadius) => snapToGridOrObject(pos, snapRadius),
+    getOrthoMode: () => orthoMode
   });
-
-  // Default kernel mode (feature flag). 'legacy' uses the adapter which delegates to current functions.
-  let routingKernelMode: 'legacy' | 'kicad' = 'legacy';
-
-  // Wire the legacy adapter into the facade by default
-  routingFacade.setKernel(_legacyRoutingAdapter);
-
-  // Expose routingKernelMode on window for runtime toggling
-  Object.defineProperty(window, 'routingKernelMode', {
-    get() { return routingKernelMode; },
-    set(value: 'legacy' | 'kicad') {
-      routingKernelMode = value;
-      if (value === 'legacy') {
-        routingFacade.setKernel(_legacyRoutingAdapter);
-      } else {
-        const ki = new KiCadRoutingKernel();
-        // Use the existing app-level snapping so KiCad routing observes snap settings
-        ki.configureSnap((pos, snapRadius) => snapToGridOrObject(pos as any, snapRadius as any));
-        ki.setLineDrawingMode?.(orthoMode ? 'orthogonal' : 'free');
-        routingFacade.setKernel(ki);
-        console.info('[Routing] KiCad kernel enabled via ?routing=kicad.');
-      }
-    }
-  });
-
-  // Quick verification (Phase 1): ensure adapter responds without changing behavior
-  try {
-    const sample = routingFacade.manhattanPath({ x: 0, y: 0 }, { x: 20, y: 15 }, 'HV');
-    console.debug('RoutingFacade initialized (legacy). Sample Manhattan path:', sample);
-  } catch (e) {
-    console.warn('RoutingFacade initialization check failed:', e);
-  }
-
-  // Override: allow `?routing=kicad` to opt-in
-  (function applyRoutingOverride() {
-    const params = new URLSearchParams(location.search);
-    const q = params.get('routing');
-    const wantKicad = (q === 'kicad');
-    if (wantKicad) {
-      (window as any).routingKernelMode = 'kicad';
-    } else {
-      (window as any).routingKernelMode = 'legacy';
-    }
-  })();
 
   // Initialize default wire color after DOM is ready
   initializeDefaultWireColor();
