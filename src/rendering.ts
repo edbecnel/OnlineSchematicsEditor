@@ -37,6 +37,7 @@ const SYMBOL_THEME_FILL_KEYS: Record<SymbolFillCategory, keyof SymbolTheme> = {
 
 const FIFTY_MILS_PX = mmToPx(1.27);
 const HUNDRED_MILS_PX = mmToPx(2.54);
+const TWO_FIFTY_MILS_PX = mmToPx(6.35);  // 250 mils = 0.25 inches
 const TEXT_FONT_SIZE = 12;
 
 let currentSymbolTheme: SymbolTheme | null = null;
@@ -492,8 +493,9 @@ export function buildSymbolGroup(
     labelAnchor = 'start';
     valueAnchor = 'start';
   } else {
-    const valueWorldY = topY - HUNDRED_MILS_PX;
-    const labelWorldY = valueWorldY - (TEXT_FONT_SIZE + FIFTY_MILS_PX);
+    // For vertical/horizontal components: place labels 250 mils above center
+    const labelWorldY = centerY - TWO_FIFTY_MILS_PX;
+    const valueWorldY = labelWorldY + (TEXT_FONT_SIZE + FIFTY_MILS_PX);
     const labelWorldX = centerX;
     const valueWorldX = centerX;
     const labelLocal = toLocalCoords(labelWorldX, labelWorldY);
@@ -883,6 +885,9 @@ function drawGround(
   y: number,
   line: (x1: number, y1: number, x2: number, y2: number, strokeCategory?: SymbolStrokeCategory) => SVGElement
 ) {
+  // Vertical line at top (connection point) - height equals the symbol height (12 pixels)
+  line(x, y - 12, x, y, 'powerSymbol');
+  // Three horizontal bars (longest at top, shortest at bottom)
   line(x - 16, y, x + 16, y, 'powerSymbol');
   line(x - 10, y + 6, x + 10, y + 6, 'powerSymbol');
   line(x - 4, y + 12, x + 4, y + 12, 'powerSymbol');

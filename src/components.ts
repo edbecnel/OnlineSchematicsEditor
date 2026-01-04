@@ -7,7 +7,7 @@
 //
 // ================================================================================
 
-import type { Component, Point, DiodeSubtype, ResistorStyle, Pin, ComponentBounds } from './types.js';
+import type { Component, Point, DiodeSubtype, ResistorStyle, Pin, ComponentBounds, PlaceType } from './types.js';
 import { BUILTIN_SYMBOL_SCALE, BUILTIN_PIN_OFFSET_PX } from './symbolScale.js';
 
 // Grid constant (from app.ts, should eventually be imported from constants or config)
@@ -81,8 +81,9 @@ export function compPinPositions(c: Component): Array<{
       electricalType: p.electricalType
     }));
   } else if (c.type === 'ground') {
-    // single pin at top of ground symbol
-    return [{ name: 'G', id: 'G', x: c.x, y: c.y, electricalType: 'power_in' as const }];
+    // single pin at top of vertical line (connection point)
+    // The vertical line extends 12 pixels up from the center
+    return [{ name: 'G', id: 'G', x: c.x, y: c.y - 12, electricalType: 'power_in' as const }];
   } else {
     // Generic 2-pin (resistor, capacitor, inductor, diode, battery, ac)
     const L = pinOffset;
@@ -426,4 +427,22 @@ export function getDiodeSubtypes(): DiodeSubtype[] {
     'tvs_uni',
     'tvs_bi'
   ];
+}
+
+/**
+ * Get the anchor/reference point for a component type.
+ * Returns offset from component center where the cursor should attach during placement.
+ * KiCad-compatible: allows components to be placed by their connection point rather than center.
+ * Note: Built-in symbols are scaled by BUILTIN_SYMBOL_SCALE, so anchor offsets must account for this.
+ */
+export function getDefaultAnchor(type: PlaceType): { x: number; y: number } {
+  switch (type) {
+    case 'ground':
+      // Anchor at the top of the vertical connection line (12 pixels above center in unscaled coordinates)
+      // Built-in symbols are scaled by BUILTIN_SYMBOL_SCALE (0.4), so multiply by the scale factor
+      return { x: 0, y: -12 * BUILTIN_SYMBOL_SCALE };
+    default:
+      // Default: anchor at component center
+      return { x: 0, y: 0 };
+  }
 }

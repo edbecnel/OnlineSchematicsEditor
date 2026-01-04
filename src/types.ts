@@ -126,6 +126,12 @@ export interface Component {
   pins?: Pin[];              // if defined, use these pins instead of computing from type
   graphics?: GraphicElement[]; // if defined, render these graphics instead of built-in symbol
   
+  // Anchor/reference point for placement (KiCad compatibility)
+  // Defines which point on the component should track the cursor during placement
+  // If undefined, defaults to (0, 0) which is the component center
+  anchorX?: number;          // X offset from component center to anchor point
+  anchorY?: number;          // Y offset from component center to anchor point
+  
   // Symbol library metadata (for imported components)
   libraryId?: string;        // reference to symbol library
   symbolName?: string;       // original symbol name from library

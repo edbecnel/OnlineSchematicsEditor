@@ -574,8 +574,8 @@ export function handlePointerMove(ctx: InputContext, e: PointerEvent): void {
     hidePolarInputs(ctx);
   }
   
-  // Crosshair in wire mode
-  if (ctx.mode === 'wire') {
+  // Crosshair in wire mode and component placement mode
+  if (ctx.mode === 'wire' || ctx.mode === 'place') {
     ctx.renderCrosshair(p.x, p.y);
   } else {
     ctx.clearCrosshair();

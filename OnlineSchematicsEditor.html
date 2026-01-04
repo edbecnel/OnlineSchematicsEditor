@@ -793,6 +793,11 @@
         cursor: crosshair;
       }
 
+      /* Crosshair cursor for component placement */
+      body.mode-place #svg {
+        cursor: crosshair;
+      }
+
       /* Pan cursors */
       body.mode-pan #svg {
         cursor: grab;
@@ -1233,6 +1238,9 @@
               stroke-width="4"
               stroke-linecap="round"
             >
+              <!-- Vertical connection line at top -->
+              <line x1="32" y1="0" x2="32" y2="12" />
+              <!-- Three horizontal bars (longest at top, shortest at bottom) -->
               <line x1="12" y1="12" x2="52" y2="12" />
               <line x1="20" y1="26" x2="44" y2="26" />
               <line x1="28" y1="40" x2="36" y2="40" />
